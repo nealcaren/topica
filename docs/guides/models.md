@@ -728,13 +728,53 @@ res = topica.evaluate.reply_completion(
 res.delta["lda"], res.delta["stm"]   # tree minus the named tool, same CI machinery
 ```
 
+Two more off-the-shelf comparators cover the tools a reviewer reaches for after LDA and
+STM (issue #860). `"keyatm"` is keyATM, on the same supervision axis as STM: with a
+covariate of at least two groups it is fit as the **covariate** keyATM on the same
+one-hot design STM gets, and without one it falls back to the base model, so unlike
+`"stm"` it always runs. It is keyword-free by default — keyATM's own `weightedLDA`, not
+a second copy of the `lda` baseline — and `keyatm_keywords={"topic": [...]}` switches to
+the seeded model. `"rtm"` is the Relational Topic Model, the nearest *structural*
+neighbor to ThreadTM: it models document links, but generic undirected ones with no
+directed parent-conditional prior. `rtm_links` picks the graph it sees:
+
+```python
+res = topica.evaluate.reply_completion(
+    docs, parents, num_topics=25, covariates=group,
+    baselines=("no_tree", "keyatm", "rtm"),
+    rtm_links="thread")                  # the default: intra-thread co-membership
+res.delta["keyatm"], res.delta["rtm"]
+res.settings["rtm_n_links"], res.settings["rtm_reply_share"]
+```
+
+`rtm_links="thread"` (the default) links every pair of comments that share a thread, so
+RTM sees conversation membership without being told which pairs are replies — read
+`delta["rtm"]` as the reply edge's gain over a generic link model that already has thread
+structure. The reply pairs are *in* that graph, as unlabeled undirected edges among the
+thread's others; `settings["rtm_reply_share"]` reports what share of the fitted links are
+reply pairs and the fit warns when shallow threads push it past a half, because then
+co-membership is no wider than the reply relation. The co-membership graph grows with the
+square of thread length, so `rtm_max_links` (default 20000) caps it and thins uniformly
+with a warning. `rtm_links="reply"` is the complementary read — the same edges with their
+direction dropped, leaving only the directed, parent-conditional prior between the two
+models — and `rtm_links="none"` fits RTM with an inert link model (close to a second LDA).
+
+One caveat to report with `delta["keyatm"]`: keyATM's `theta` is `(weighted counts +
+alpha) / total`, and its default information-theory weighting multiplies each token's
+count by its surprisal, which swamps the prior and leaves a near one-hot `theta` on a
+short leaf. That is the same overconfidence issue #838 fixed for the logistic-normal
+models, except that here it is part of keyATM's weighting rather than of the estimator, so
+no posterior-predictive average undoes it: some of `delta["keyatm"]` is that sharpness on
+thin leaves rather than the reply tree. `keyatm_weights="none"` fits the unweighted,
+estimator-matched keyATM; reporting both is the honest read.
+
 Read `delta["no_tree"]` for the tree-attributable gain: it is the same model with the
-tree switched off, so it isolates the reply structure. `delta["lda"]` and `delta["stm"]`
-fold in every difference from that tool (Dirichlet vs logistic-normal, the covariate
-anchor, the estimator), so a large value there is not evidence the tree helps, and
+tree switched off, so it isolates the reply structure. `delta["lda"]`, `delta["stm"]`,
+`delta["keyatm"]`, and `delta["rtm"]` fold in every difference from that tool (Dirichlet
+vs logistic-normal, the covariate anchor, the estimator), so a large value there is not evidence the tree helps, and
 ThreadTM can beat `no_tree` while still losing to LDA or STM on the same data. Cite
-`delta["no_tree"]` for the structural claim, `delta["lda"]`/`delta["stm"]` for the
-"vs off-the-shelf tool" claim.
+`delta["no_tree"]` for the structural claim, `delta["lda"]`/`delta["stm"]`/
+`delta["keyatm"]`/`delta["rtm"]` for the "vs off-the-shelf tool" claim.
 
 The interval clusters on the thread, not the comment, because comments within a thread
 are correlated. The placebo is a no-op on chain-like threads (one node per depth layer),

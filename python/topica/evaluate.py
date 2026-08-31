@@ -837,8 +837,8 @@ class ReplyCompletionResult:
         """Thread-clustered CI on the paired difference ``first - second``.
 
         ``first`` and ``second`` are scored-model names (``"tree"``, ``"no_tree"``,
-        ``"permuted"``, ``"root"``, ``"blend"``, ``"lda"``, ``"stm"``). The paired
-        per-token log-likelihoods are taken from :attr:`paired` over the eval
+        ``"permuted"``, ``"root"``, ``"blend"``, ``"lda"``, ``"stm"``, ``"keyatm"``,
+        ``"rtm"``). The paired per-token log-likelihoods are taken from :attr:`paired` over the eval
         leaves BOTH models scored, and resampled by thread root exactly as
         :func:`reply_completion` does for :attr:`delta`. ``n_boot`` and ``seed``
         default to the values the result was computed with.
@@ -884,7 +884,7 @@ class ReplyCompletionResult:
         # fold in the whole modeling stack (covariates, estimator), so a reader who saw
         # only the flattering tree-no_tree line could misattribute a covariate/tool gain
         # to the reply tree. Order no_tree/permuted (tree ablations) before lda/stm.
-        order = ["no_tree", "permuted", "root", "blend", "lda", "stm"]
+        order = ["no_tree", "permuted", "root", "blend", "lda", "stm", "keyatm", "rtm"]
         parts = []
         for name in order:
             d = self.delta.get(name)
@@ -929,6 +929,61 @@ def _reply_tree_meta(parents):
     return children, depth, root, is_leaf
 
 
+def _thread_comembership_links(root, cap, rng):
+    """The reply-BLIND document graph for the ``rtm`` baseline (issue #860).
+
+    Returns ``(links, n_full)``: undirected ``(i, j)`` pairs of comments that share a
+    thread, and how many such pairs the corpus has before any thinning. The graph says
+    only which comments sit in the same conversation, so RTM gets a real link structure
+    to fit its link model on without being handed the reply relation ThreadTM is being
+    credited for. Every reply pair IS in the graph — a parent and its child share a
+    thread — but it is one unlabeled edge among the thread's other ``m(m-1)/2 - 1``
+    pairs, and nothing marks it as the reply or gives its direction. The exception is a
+    two-comment thread, whose only pair is its reply edge, so on a corpus of very
+    shallow threads this graph converges on the undirected reply edges; the caller
+    warns when that is where the corpus sits.
+
+    A thread of ``m`` comments contributes ``m(m-1)/2`` pairs, so a handful of large
+    threads can swamp the fit. When the full graph exceeds ``cap`` the pairs are thinned
+    uniformly, each thread keeping its share, under the caller's RNG.
+    """
+    import itertools
+    from collections import defaultdict
+
+    members = defaultdict(list)
+    for d, r in enumerate(root):
+        members[r].append(d)
+    threads = [m for m in members.values() if len(m) > 1]
+    counts = [len(m) * (len(m) - 1) // 2 for m in threads]
+    n_full = sum(counts)
+    if cap is None or n_full <= cap:
+        return [pair for m in threads for pair in itertools.combinations(m, 2)], n_full
+
+    keep = cap / n_full
+    links = []
+    for m, cnt in zip(threads, counts):
+        k = int(round(keep * cnt))
+        if k <= 0:
+            continue
+        if cnt <= 4 * k:  # dense enough to enumerate and subsample without replacement
+            pairs = list(itertools.combinations(m, 2))
+            idx = rng.choice(len(pairs), size=min(k, len(pairs)), replace=False)
+            links.extend(pairs[i] for i in sorted(idx.tolist()))
+        else:  # thin slice of a big thread: rejection-sample distinct pairs
+            drawn = set()
+            while len(drawn) < k:
+                i, j = int(rng.integers(len(m))), int(rng.integers(len(m)))
+                if i == j:
+                    continue
+                a, b = (m[i], m[j]) if m[i] < m[j] else (m[j], m[i])
+                drawn.add((a, b))
+            links.extend(sorted(drawn))
+    if len(links) > cap:  # per-thread rounding can overshoot; hold the stated cap
+        idx = rng.choice(len(links), size=cap, replace=False)
+        links = [links[i] for i in sorted(idx.tolist())]
+    return links, n_full
+
+
 def _permute_parents_within_depth(parents, depth, root, rng):
     """Depth-stratified within-thread parent permutation (the placebo tree).
 
@@ -952,6 +1007,55 @@ def _permute_parents_within_depth(parents, depth, root, rng):
     return perm
 
 
+def _dense_group_ids(covariates):
+    """Per-document covariate values as dense integer group ids ``0..G-1``.
+
+    Integer ids pass through unchanged; string / categorical labels (which
+    ``ThreadTM.fit`` accepts directly) are encoded in sorted order, so the
+    one-hot prevalence design the off-the-shelf baselines are fit on can be
+    built from the same ``covariates`` argument the tree model got.
+    """
+    try:
+        return np.asarray(covariates, dtype=int)
+    except (TypeError, ValueError):
+        _, ids = np.unique(np.asarray(covariates, dtype=object), return_inverse=True)
+        return np.asarray(ids, dtype=int)
+
+
+def _rtm_link_pairs(mode, parents, root, n, cap, rng):
+    """The ``(i, j)`` document pairs the ``rtm`` baseline is fit on (issue #860).
+
+    Returns ``(pairs, n_full)``, where ``n_full`` is the link count before any cap.
+    ``mode`` is ``"thread"`` (reply-blind intra-thread co-membership), ``"reply"``
+    (the reply edges with their direction dropped), ``"none"``, or an explicit
+    sequence of pairs.
+    """
+    if not isinstance(mode, str):
+        pairs = []
+        for pair in mode:
+            a, b = (int(x) for x in pair)
+            if not (0 <= a < n and 0 <= b < n):
+                raise ValueError(
+                    f"rtm_links pair ({a}, {b}) refers to a document outside the {n} passed"
+                )
+            pairs.append((a, b))
+        return pairs, len(pairs)
+    if mode == "none":
+        return [], 0
+    if mode == "reply":
+        pairs = [(d, parents[d]) for d in range(n) if parents[d] >= 0]
+        return pairs, len(pairs)
+    return _thread_comembership_links(root, cap, rng)
+
+
+# Every comparator reply_completion can fit. The off-the-shelf ones are the named
+# tools (issues #828, #860): they are fit through topica's public model API on a
+# fixed-vocabulary Corpus rather than as another ThreadTM, so they are indexed
+# through kept_indices and can drop an eval leaf the Corpus emptied.
+_OFF_SHELF_BASELINES = ("lda", "stm", "keyatm", "rtm")
+_KNOWN_BASELINES = ("no_tree", "permuted", "root", "blend") + _OFF_SHELF_BASELINES
+
+
 def reply_completion(
     docs,
     parents,
@@ -969,13 +1073,17 @@ def reply_completion(
     seed=13,
     n_boot=1000,
     predictive_samples=400,
+    keyatm_keywords=None,
+    keyatm_weights="information-theory",
+    rtm_links="thread",
+    rtm_max_links=20000,
 ):
     """Held-out leaf-token comparison of ThreadTM against matched baselines.
 
     This is the turnkey preference test for ThreadTM: does the reply tree add
     predictive information on real data, and does the gain come from the
     observed edge? It fits the matched models named in ``baselines`` (the tree
-    plus up to six comparators) on the SAME reduced corpus (identical
+    plus up to eight comparators) on the SAME reduced corpus (identical
     vocabulary, ``num_topics``, ``min_count``, and ``seed``) and scores held-out
     tokens of short leaf comments under each.
 
@@ -984,7 +1092,9 @@ def reply_completion(
     of the modeling stack. ``delta["lda"]`` / ``delta["stm"]`` instead answer the
     "why not just an off-the-shelf tool" question and fold in every difference
     (Dirichlet vs logistic-normal, covariate anchors, the estimator), not the
-    tree alone.
+    tree alone; ``delta["keyatm"]`` and ``delta["rtm"]`` (issue #860) answer it for
+    the two tools a reviewer reaches for next — a keyword-assisted model on STM's
+    supervision axis, and the nearest *structural* neighbor, a document-link model.
 
     Protocol. We select non-root leaf comments (a reply with no replies of its
     own) that have at least ``min_eval_tokens`` tokens, and for each we hold out
@@ -1031,6 +1141,27 @@ def reply_completion(
       protocol, so ``delta["lda"]``/``delta["stm"]`` are the tree-minus-tool
       difference with the same thread-clustered interval. ``stm`` requires a
       covariate with at least two groups.
+    - ``keyatm`` (issue #860): keyATM, the keyword-assisted model. With no
+      ``keyatm_keywords`` it is keyATM's own ``weightedLDA`` — keyword-free, but with
+      keyATM's token weighting and estimated asymmetric alpha, so it is a distinct
+      model from the plain ``lda`` baseline rather than a second copy of it. Pass
+      ``keyatm_keywords`` for the seeded model. When ``covariates`` has at least two
+      groups it is fit as the COVARIATE keyATM on the same one-hot design ``stm``
+      gets (a DMR document-topic prior), which is what puts it on STM's
+      supervision/covariate axis; without a usable covariate it is the base model.
+      Read ``delta["keyatm"]`` with ``keyatm_weights`` in mind: under keyATM's own
+      information-theory weighting its ``theta`` is a weighted-count plug-in that is
+      near one-hot on a short leaf, so part of the gap is that sharpness rather than
+      the reply tree.
+    - ``rtm`` (issue #860): the Relational Topic Model, the nearest structural
+      neighbor to ThreadTM — it models document LINKS, but generic undirected ones,
+      with no directed parent-conditional prior. ``rtm_links`` chooses the graph it
+      sees; the default is reply-BLIND intra-thread co-membership (which comments
+      share a conversation, without saying which pairs are replies), so ``delta["rtm"]`` reads as
+      the reply edge's gain over a generic link model given thread structure. Use
+      ``rtm_links="reply"`` for the complementary read: the same edges undirected, so
+      the only thing left between the two models is the directed, parent-conditional
+      prior.
 
     Aggregation clusters on the thread root, not the comment, because comments
     within a thread are correlated. The paired difference (tree minus baseline)
@@ -1052,7 +1183,7 @@ def reply_completion(
     eval_frac : float. Share of eligible leaves to evaluate (sampled with
         ``seed``); ``1.0`` uses them all.
     baselines : which comparators to fit, any of ``"no_tree"``, ``"permuted"``,
-        ``"root"``, ``"blend"``, ``"lda"``, ``"stm"``.
+        ``"root"``, ``"blend"``, ``"lda"``, ``"stm"``, ``"keyatm"``, ``"rtm"``.
     contrasts : optional paired *baseline-vs-baseline* contrasts to report with a
         thread-clustered CI (issue #852), in addition to the tree-minus-baseline
         ``delta``. Each entry is either a ``(first, second)`` pair of scored-model
@@ -1066,8 +1197,8 @@ def reply_completion(
         (``result.paired``) and :meth:`ReplyCompletionResult.contrast_ci` forms
         an arbitrary pair on demand.
     em_iters : EM iterations for the ThreadTM fits (tree, no_tree, permuted, root, blend). Match
-        this to the analysis fit. The off-the-shelf ``lda`` / ``stm`` comparators
-        run at their own default iteration counts, not ``em_iters``.
+        this to the analysis fit. The off-the-shelf ``lda`` / ``stm`` / ``keyatm`` /
+        ``rtm`` comparators run at their own default iteration counts, not ``em_iters``.
     min_count : words rarer than this are dropped (shared across models).
     seed : RNG seed for leaf sampling, the token split, the permutation, the
         bootstrap, and the posterior-predictive theta draws; also the model seed.
@@ -1076,6 +1207,43 @@ def reply_completion(
         ``E[softmax(η)]`` that scores each logistic-normal model (see Notes). The
         default (400) matches the estimate that validated the fix in issue #838; a
         much smaller value makes the scored likelihoods noisy.
+    keyatm_keywords : optional ``{topic_name: [keyword, ...]}`` dictionary for the
+        ``keyatm`` baseline (issue #860). The default (``None``) fits keyATM's
+        keyword-free ``weightedLDA``, so the baseline runs turnkey like ``lda``;
+        pass a dictionary for the seeded model (keywords absent from the reduced
+        vocabulary are dropped by keyATM). It is an error to pass this without
+        ``"keyatm"`` in ``baselines``.
+    keyatm_weights : keyATM's token weighting for the ``keyatm`` baseline:
+        ``"information-theory"`` (the default, keyATM's own), ``"inv-freq"``, or
+        ``"none"``. This is not a cosmetic knob here. keyATM's ``theta`` is
+        ``(weighted counts + alpha) / total``, and the information-theory weights
+        multiply a token's count by its surprisal (~10x on a small vocabulary), which
+        swamps the prior and leaves a near one-hot ``theta`` on a short leaf — the same
+        overconfidence issue #838 fixed for the logistic-normal models, except that
+        here it is baked into the model's weighting rather than into the estimator, so
+        no posterior-predictive average undoes it. Keep the default for keyATM as
+        published (and expect part of ``delta["keyatm"]`` to be that sharpness on thin
+        leaves); pass ``"none"`` for an unweighted, estimator-matched keyATM whose
+        ``theta`` hedges like LDA's. Reporting both is the honest read.
+    rtm_links : the document graph the ``rtm`` baseline is fit on (issue #860).
+        ``"thread"`` (default) is reply-blind intra-thread co-membership: every pair
+        of comments in the same thread, so RTM sees conversation membership without
+        being told which pairs are replies (a reply pair is in the graph, but as one
+        unlabeled, undirected edge among the thread's others;
+        ``settings["rtm_reply_share"]`` reports what fraction of the fitted links are
+        reply pairs, and the fit warns when shallow threads push that past a half).
+        ``"none"`` fits RTM with an empty link set (its link model is then inert, which
+        makes it close to a second ``lda``). ``"reply"`` hands it the parent-child pairs
+        with their direction dropped — NOT reply-blind, but the
+        sharpest isolation of ThreadTM's contribution: the same edges under a generic
+        symmetric link model instead of a directed parent-conditional prior. An
+        explicit sequence of ``(i, j)`` document-index pairs is also accepted. The
+        resolved choice and the fitted link count are reported in ``settings``
+        (``rtm_links``, ``rtm_n_links``).
+    rtm_max_links : int or None. Cap on the ``"thread"`` co-membership graph, whose
+        size grows with the square of thread length. Above it the pairs are thinned
+        uniformly (each thread keeping its share) under ``seed``, with a warning;
+        ``None`` disables the cap. Ignored for the other ``rtm_links`` modes.
 
     Returns
     -------
@@ -1097,12 +1265,34 @@ def reply_completion(
     if not (0.0 < eval_frac <= 1.0):
         raise ValueError("eval_frac must be in (0, 1]")
     baselines = tuple(baselines)
-    _known_baselines = ("no_tree", "permuted", "root", "blend", "lda", "stm")
     for b in baselines:
-        if b not in _known_baselines:
+        if b not in _KNOWN_BASELINES:
             raise ValueError(
-                f"unknown baseline {b!r}; use any of {_known_baselines}"
+                f"unknown baseline {b!r}; use any of {_KNOWN_BASELINES}"
             )
+    if keyatm_keywords is not None:
+        if not isinstance(keyatm_keywords, dict) or not keyatm_keywords:
+            raise ValueError(
+                "keyatm_keywords must be a non-empty {topic_name: [keyword, ...]} dict"
+            )
+        if "keyatm" not in baselines:
+            raise ValueError(
+                "keyatm_keywords was passed but 'keyatm' is not in baselines; add it "
+                "or drop the keywords"
+            )
+    if keyatm_weights not in ("information-theory", "info", "inv-freq", "none"):
+        raise ValueError(
+            f"unknown keyatm_weights {keyatm_weights!r}; use 'information-theory' "
+            "(keyATM's own default), 'inv-freq', or 'none'"
+        )
+    if isinstance(rtm_links, str) and rtm_links not in ("thread", "reply", "none"):
+        raise ValueError(
+            f"unknown rtm_links {rtm_links!r}; use 'thread' (reply-blind intra-thread "
+            "co-membership), 'reply' (the undirected reply edges), 'none', or an "
+            "explicit sequence of (i, j) document-index pairs"
+        )
+    if rtm_max_links is not None and int(rtm_max_links) < 1:
+        raise ValueError("rtm_max_links must be >= 1, or None for no cap")
 
     # normalize requested paired contrasts to (first, second) name pairs. "edge" is
     # the built-in permuted - no_tree edge-attribution quantity (issue #852).
@@ -1234,7 +1424,8 @@ def reply_completion(
     # is indexed through kept_indices; a `None` row means the leaf was dropped and it
     # is excluded from every model's paired arrays below.
     row_map = {name: None for name in models}  # None => identity (the ThreadTM fits)
-    off_shelf = [b for b in baselines if b in ("lda", "stm")]
+    off_shelf = [b for b in baselines if b in _OFF_SHELF_BASELINES]
+    rtm_n_links = rtm_reply_share = None
     if off_shelf:
         import topica
 
@@ -1246,6 +1437,21 @@ def reply_completion(
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", category=UserWarning)
                 return build()
+
+        # The shared prevalence design: the categorical covariate one-hot encoded with
+        # level 0 as the reference (STM and keyATM each prepend their own intercept),
+        # aligned to the documents the fixed-vocabulary Corpus kept. `stm` requires it;
+        # `keyatm` uses it when it exists and falls back to the base model when it does
+        # not, so it still runs turnkey on a corpus with no covariate.
+        n_groups, design_kept = 0, None
+        if covariates is not None:
+            group_ids = _dense_group_ids(covariates)
+            n_groups = int(group_ids.max()) + 1 if group_ids.size else 1
+            if n_groups >= 2:
+                design = np.zeros((n, n_groups - 1), dtype=np.float64)
+                for j in range(1, n_groups):
+                    design[:, j - 1] = (group_ids == j).astype(np.float64)
+                design_kept = design[base_corpus.kept_indices]
 
         if "lda" in off_shelf:
             models["lda"] = _fit_offshelf(
@@ -1260,25 +1466,108 @@ def reply_completion(
                     "from baselines (use 'no_tree' for the covariate-aware logistic-normal "
                     "comparator)."
                 )
-            cov_arr = np.asarray(covariates, dtype=int)
-            ng = int(cov_arr.max()) + 1 if cov_arr.size else 1
-            if ng < 2:
+            if n_groups < 2:
                 raise ValueError(
                     "the 'stm' baseline needs at least two covariate groups for a prevalence "
                     "design (got one); drop 'stm' from baselines."
                 )
-            # one-hot the categorical covariate, dropping level 0 as the reference (STM
-            # prepends its own intercept), then align to the surviving documents.
-            design = np.zeros((n, ng - 1), dtype=np.float64)
-            for j in range(1, ng):
-                design[:, j - 1] = (cov_arr == j).astype(np.float64)
-            design_kept = design[base_corpus.kept_indices]
             models["stm"] = _fit_offshelf(
                 lambda: topica.STM(num_topics, seed=seed).fit(
                     base_corpus, prevalence=design_kept
                 )
             )
             row_map["stm"] = orig_to_row
+        if "keyatm" in off_shelf:
+            # keyATM (issue #860). Keyword-free by default, so it runs turnkey: keyATM's own
+            # weightedLDA, which is not the `lda` baseline over again (it adds keyATM's token
+            # weighting and its estimated asymmetric alpha). With a usable covariate it is the
+            # COVARIATE keyATM on the same design STM gets — a DMR document-topic prior — which
+            # is what places it on STM's supervision axis rather than beside plain LDA.
+            def _build_keyatm():
+                if keyatm_keywords:
+                    km = topica.KeyATM(
+                        {str(k): list(v) for k, v in keyatm_keywords.items()},
+                        num_topics=num_topics,
+                        seed=seed,
+                    )
+                else:
+                    km = topica.KeyATM.weighted_lda(num_topics, seed=seed)
+                return km.fit(
+                    base_corpus, covariates=design_kept, weights=keyatm_weights
+                )
+
+            models["keyatm"] = _fit_offshelf(_build_keyatm)
+            row_map["keyatm"] = orig_to_row
+        if "rtm" in off_shelf:
+            # RTM (issue #860): the nearest structural neighbor to ThreadTM. It gets a document
+            # graph, but a generic undirected one with no parent-conditional prior. The default
+            # graph is reply-BLIND (intra-thread co-membership), so the comparison is the reply
+            # edge against a link model that knows only which comments share a conversation;
+            # `rtm_links="reply"` instead hands it the same edges undirected, which isolates the
+            # directed parent-conditional prior. Links are indexed by CORPUS ROW, so a pair whose
+            # document the fixed-vocabulary Corpus dropped is dropped with it.
+            # A dedicated RNG stream: the link thinning must not consume draws from the
+            # shared `rng`, or adding the rtm baseline would shift every other baseline's
+            # bootstrap interval (the pairing invariance the off-the-shelf fits keep).
+            links, n_full = _rtm_link_pairs(
+                rtm_links, parents, root, n, rtm_max_links,
+                np.random.default_rng([int(seed), 860]),
+            )
+            reply_pairs = {
+                (d, parents[d]) if d < parents[d] else (parents[d], d)
+                for d in range(n)
+                if parents[d] >= 0
+            }
+            n_reply = 0
+            rows, seen = [], set()
+            for a, b in links:
+                ra, rb = orig_to_row.get(a), orig_to_row.get(b)
+                if ra is None or rb is None or ra == rb:
+                    continue
+                pair = (ra, rb) if ra < rb else (rb, ra)
+                if pair in seen:
+                    continue
+                seen.add(pair)
+                rows.append(pair)
+                n_reply += ((a, b) if a < b else (b, a)) in reply_pairs
+            rtm_n_links = len(rows)
+            rtm_reply_share = (n_reply / rtm_n_links) if rtm_n_links else None
+            if (
+                rtm_links == "thread"
+                and rtm_max_links is not None
+                and n_full > rtm_max_links
+            ):
+                warnings.warn(
+                    f"the 'rtm' baseline's intra-thread co-membership graph has {n_full} "
+                    f"links, above rtm_max_links={rtm_max_links}; it was thinned uniformly "
+                    f"to {rtm_n_links}. Raise rtm_max_links (or pass rtm_max_links=None) to "
+                    "fit RTM on the full graph, at a cost that grows with the square of "
+                    "thread length.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            if rtm_links == "thread" and rtm_reply_share is not None and rtm_reply_share > 0.5:
+                warnings.warn(
+                    f"{rtm_reply_share:.0%} of the 'rtm' baseline's intra-thread "
+                    "co-membership links are reply pairs: the threads are too shallow for "
+                    "co-membership to be meaningfully wider than the reply relation, so this "
+                    "RTM is close to the rtm_links='reply' fit and is not a reply-blind "
+                    "comparator. Interpret delta['rtm'] accordingly.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            if not rows and rtm_links != "none":
+                warnings.warn(
+                    "the 'rtm' baseline was fit with no links: its link model is inert, so it "
+                    "reduces to a variational LDA and delta['rtm'] is not a structural "
+                    "comparison. The corpus may have no multi-comment threads.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            models["rtm"] = _fit_offshelf(
+                lambda: topica.RTM(num_topics, seed=seed).fit(base_corpus, rows)
+            )
+            row_map["rtm"] = orig_to_row
 
     def _predictive_theta(model):
         """The θ to score held-out tokens with, matched in estimator quality across models.
@@ -1382,7 +1671,7 @@ def reply_completion(
     n_threads = len(np.unique(tree_tids))
 
     # distinct eval leaves an off-the-shelf baseline could not score (fixed-vocab drop)
-    off_shelf_names = [nm for nm in models if nm in ("lda", "stm")]
+    off_shelf_names = [nm for nm in models if nm in _OFF_SHELF_BASELINES]
     dropped_leaf_set = {
         d for d in eligible if tree_pt[d]
         for nm in off_shelf_names
@@ -1391,8 +1680,8 @@ def reply_completion(
     if dropped_leaf_set:
         warnings.warn(
             f"{len(dropped_leaf_set)} eval leaf/leaves could not be scored by an off-the-shelf "
-            "baseline (lda/stm): their seen tokens are all below min_count, so the "
-            "fixed-vocabulary Corpus emptied and dropped them. Those leaves are excluded only "
+            f"baseline ({'/'.join(off_shelf_names)}): their seen tokens are all below "
+            "min_count, so the fixed-vocabulary Corpus emptied and dropped them. Those leaves are excluded only "
             "from the affected baseline's delta (the tree-vs-no_tree/permuted contrasts are "
             "unaffected). Lower min_count to keep them.",
             UserWarning,
@@ -1475,6 +1764,15 @@ def reply_completion(
             "n_boot": n_boot,
             "perm_changed_frac": perm_changed_frac,
             "predictive_samples": predictive_samples,
+            "keyatm_keywords": (sorted(keyatm_keywords) if keyatm_keywords else None),
+            "keyatm_weights": keyatm_weights if "keyatm" in baselines else None,
+            "keyatm_covariate": bool(design_kept is not None) if "keyatm" in baselines else None,
+            "rtm_links": (
+                (rtm_links if isinstance(rtm_links, str) else "explicit")
+                if "rtm" in baselines else None
+            ),
+            "rtm_n_links": rtm_n_links,
+            "rtm_reply_share": rtm_reply_share,
         },
     )
 

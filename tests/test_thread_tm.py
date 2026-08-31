@@ -999,6 +999,156 @@ def test_reply_completion_repr_shows_all_deltas():
 
 
 # ---------------------------------------------------------------------------
+# reply_completion keyATM / RTM baselines (issue #860)
+# ---------------------------------------------------------------------------
+
+def _shallow_pair_corpus(n_threads=40, seed=0):
+    """Two-comment threads (a root and one reply). The only intra-thread pair IS the reply
+    edge, so co-membership cannot be wider than the reply relation here."""
+    rng = np.random.default_rng(seed)
+    docs, parents = [], []
+    for _ in range(n_threads):
+        docs.append([f"w{int(rng.integers(20))}" for _ in range(8)])
+        parents.append(-1)
+        docs.append([f"w{int(rng.integers(20))}" for _ in range(8)])
+        parents.append(len(docs) - 2)
+    return docs, parents
+
+
+def test_reply_completion_keyatm_and_rtm_baselines():
+    """keyATM and RTM are fit on the same reduced corpus and scored through the identical
+    protocol, so they land in delta with the same thread-clustered CI as lda/stm, and the
+    resolved keyword/link choices are recorded in settings (issue #860)."""
+    docs, parents = _branching_corpus(seed=1, persistence=0.92)
+    cov = [i % 2 for i in range(len(docs))]
+    with pytest.warns(UserWarning, match="rtm_max_links"):
+        res = topica.evaluate.reply_completion(
+            docs, parents, num_topics=5, covariates=cov, covariate_names=["g0", "g1"],
+            baselines=("no_tree", "lda", "keyatm", "rtm"), em_iters=40, seed=13, n_boot=200,
+            rtm_max_links=2000)
+    for name in ("keyatm", "rtm"):
+        assert name in res.per_token_ll and name in res.delta
+        lo, hi = res.delta[name]["ci"]
+        assert np.isfinite(lo) and np.isfinite(hi) and lo <= hi
+        assert np.isfinite(res.delta[name]["estimate"])
+    # the fit documents which graph RTM saw and how keyATM was set up (the issue asks for this)
+    assert res.settings["rtm_links"] == "thread"
+    assert res.settings["rtm_n_links"] == 2000
+    assert 0.0 <= res.settings["rtm_reply_share"] <= 1.0
+    assert res.settings["keyatm_keywords"] is None          # keyword-free weightedLDA default
+    assert res.settings["keyatm_weights"] == "information-theory"
+    assert res.settings["keyatm_covariate"] is True         # covariate keyATM, like stm
+    r = repr(res)
+    assert "tree-keyatm=" in r and "tree-rtm=" in r
+
+
+def test_reply_completion_keyatm_covariate_only_with_two_groups():
+    """Unlike stm, the keyatm baseline runs turnkey without a covariate: it falls back to the
+    base model instead of raising, so a covariate-free corpus can still answer 'why not keyATM'."""
+    docs, parents = _branching_corpus(seed=1, persistence=0.9)
+    res = topica.evaluate.reply_completion(
+        docs, parents, num_topics=4, baselines=("keyatm",), em_iters=30, seed=13, n_boot=50)
+    assert np.isfinite(res.delta["keyatm"]["estimate"])
+    assert res.settings["keyatm_covariate"] is False
+
+
+def test_reply_completion_keyatm_accepts_keywords():
+    docs, parents = _branching_corpus(seed=1, persistence=0.9)
+    res = topica.evaluate.reply_completion(
+        docs, parents, num_topics=4, baselines=("keyatm",),
+        keyatm_keywords={"a": ["w1", "w2"], "b": ["w3"]}, em_iters=30, seed=13, n_boot=50)
+    assert np.isfinite(res.delta["keyatm"]["estimate"])
+    assert res.settings["keyatm_keywords"] == ["a", "b"]
+
+
+def test_reply_completion_keyatm_weights_control_theta_sharpness():
+    """keyATM's information-theory weighting multiplies its counts by each token's surprisal,
+    which swamps the prior and leaves a near one-hot theta on a thin leaf. That sharpness is
+    part of delta['keyatm'], so keyatm_weights='none' — the estimator-matched fit — must give a
+    visibly smaller delta. Both are reported; neither is silently substituted."""
+    docs, parents = _branching_corpus(seed=1, persistence=0.92)
+    kw = dict(num_topics=5, baselines=("keyatm",), em_iters=40, seed=13, n_boot=100)
+    weighted = topica.evaluate.reply_completion(docs, parents, **kw)
+    unweighted = topica.evaluate.reply_completion(docs, parents, keyatm_weights="none", **kw)
+    assert unweighted.delta["keyatm"]["estimate"] < weighted.delta["keyatm"]["estimate"]
+    assert unweighted.settings["keyatm_weights"] == "none"
+
+
+def test_reply_completion_rtm_link_modes():
+    """Each rtm_links mode fits a different documented graph, and the count that was actually
+    fit is reported. 'reply' is one link per non-root comment; 'none' is the inert-link fit."""
+    docs, parents = _branching_corpus(seed=1, persistence=0.9)
+    kw = dict(num_topics=4, baselines=("rtm",), em_iters=30, seed=13, n_boot=50)
+    thread = topica.evaluate.reply_completion(
+        docs, parents, rtm_links="thread", rtm_max_links=None, **kw)
+    reply = topica.evaluate.reply_completion(docs, parents, rtm_links="reply", **kw)
+    none = topica.evaluate.reply_completion(docs, parents, rtm_links="none", **kw)
+    explicit = topica.evaluate.reply_completion(docs, parents, rtm_links=[(0, 1), (1, 2)], **kw)
+    assert reply.settings["rtm_n_links"] == sum(1 for p in parents if p >= 0)
+    assert reply.settings["rtm_reply_share"] == 1.0
+    assert thread.settings["rtm_n_links"] > reply.settings["rtm_n_links"]
+    assert none.settings["rtm_links"] == "none" and none.settings["rtm_n_links"] == 0
+    assert explicit.settings["rtm_links"] == "explicit"
+    assert explicit.settings["rtm_n_links"] == 2
+    for res in (thread, reply, none, explicit):
+        assert np.isfinite(res.delta["rtm"]["estimate"])
+
+
+def test_reply_completion_rtm_thins_to_the_cap():
+    """The co-membership graph grows with the square of thread length, so rtm_max_links holds a
+    hard ceiling and says so rather than silently fitting a huge graph."""
+    docs, parents = _branching_corpus(seed=1, persistence=0.9)
+    with pytest.warns(UserWarning, match="rtm_max_links"):
+        res = topica.evaluate.reply_completion(
+            docs, parents, num_topics=4, baselines=("rtm",), rtm_max_links=300,
+            em_iters=30, seed=13, n_boot=50)
+    assert res.settings["rtm_n_links"] == 300
+
+
+def test_reply_completion_rtm_warns_when_comembership_is_the_reply_relation():
+    """On two-comment threads the only intra-thread pair is the reply edge, so the default graph
+    is not reply-blind. That must be surfaced, not left for the reader to infer."""
+    docs, parents = _shallow_pair_corpus()
+    with pytest.warns(UserWarning, match="co-membership links are reply pairs"):
+        res = topica.evaluate.reply_completion(
+            docs, parents, num_topics=3, baselines=("rtm",), em_iters=30, seed=13, n_boot=50)
+    assert res.settings["rtm_reply_share"] == 1.0
+
+
+def test_reply_completion_rtm_does_not_shift_core_deltas():
+    """Link thinning draws on its own RNG stream, so asking for rtm cannot move another
+    baseline's estimate OR its bootstrap interval."""
+    docs, parents = _branching_corpus(seed=1, persistence=0.9)
+    kw = dict(num_topics=4, em_iters=30, seed=13, n_boot=100)
+    base = topica.evaluate.reply_completion(docs, parents, baselines=("no_tree",), **kw)
+    with pytest.warns(UserWarning, match="rtm_max_links"):
+        withrtm = topica.evaluate.reply_completion(
+            docs, parents, baselines=("no_tree", "rtm"), rtm_max_links=500, **kw)
+    assert base.delta["no_tree"] == withrtm.delta["no_tree"]
+
+
+def test_reply_completion_new_baseline_argument_validation():
+    docs, parents = _branching_corpus(seed=1, persistence=0.9)
+    kw = dict(num_topics=4, em_iters=20, seed=13, n_boot=50)
+    with pytest.raises(ValueError, match="unknown rtm_links"):
+        topica.evaluate.reply_completion(docs, parents, baselines=("rtm",), rtm_links="star", **kw)
+    with pytest.raises(ValueError, match="rtm_max_links"):
+        topica.evaluate.reply_completion(docs, parents, baselines=("rtm",), rtm_max_links=0, **kw)
+    with pytest.raises(ValueError, match="unknown keyatm_weights"):
+        topica.evaluate.reply_completion(
+            docs, parents, baselines=("keyatm",), keyatm_weights="surprisal", **kw)
+    with pytest.raises(ValueError, match="not in baselines"):
+        topica.evaluate.reply_completion(
+            docs, parents, baselines=("no_tree",), keyatm_keywords={"a": ["w1"]}, **kw)
+    with pytest.raises(ValueError, match="keyatm_keywords must be"):
+        topica.evaluate.reply_completion(
+            docs, parents, baselines=("keyatm",), keyatm_keywords=["w1"], **kw)
+    with pytest.raises(ValueError, match="outside the"):
+        topica.evaluate.reply_completion(
+            docs, parents, baselines=("rtm",), rtm_links=[(0, len(docs))], **kw)
+
+
+# ---------------------------------------------------------------------------
 # seed words (β) and prevalence anchors (θ) — user supervision (issue #854)
 # ---------------------------------------------------------------------------
 
