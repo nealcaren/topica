@@ -6,8 +6,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.56.0] - 2026-08-31
+
 ### Changed
 
+- **The workflow namespaces are now the taught default** (#757, #763–#773). Helpers
+  live under `topica.<stage>` — `select` (choosing K), `inspect` (reading topics),
+  `evaluate` (validation), `effects` (covariate effects), `data` / `design`,
+  `compare` / `provenance` / `embeddings` / `robustness`. Docs, docstrings, and error
+  messages now teach the namespaced form (`topica.select.search_k`,
+  `topica.inspect.topic_table`, …). Model constructors and `Corpus` stay at the top
+  level. The flat helper names still resolve as legacy compatibility aliases.
+- **Default random seed is 13, not 42** (#673). Every model's default `seed` changed;
+  runs pinned to the old default reproduce by passing `seed=42` explicitly.
 - **Coherence is consistent across the model method and the standalone function**
   (#686). Every model's `m.coherence(n=10)` now accepts `coherence_type=` (`"u_mass"`
   default, plus `"c_v"` / `"c_uci"` / `"c_npmi"`) and an optional `texts=` reference
@@ -63,6 +74,44 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`ThreadTM` — the threaded topic model** (#823, #849). A CTM whose per-document
+  logistic-normal prior is coupled along a conversation's reply tree: a child
+  comment's topic mean reverts toward its parent (or root, or a blend) instead of
+  toward a shared corpus mean, so topics persist and drift down a thread the way real
+  discussion does. `fit(docs, parents=)` on a reply forest; `coupling=` selects
+  parent-anchored, root-anchored, or blended persistence. Adds soft `seed_words` (β)
+  and `prevalence_anchor` (θ) priors (#855) and a `thread_stability` robustness table
+  (#857). Paired with `topica.evaluate.reply_completion`, a held-out leaf-token
+  predictive test that scores whether the reply tree buys anything over a tree-free
+  baseline (#826, #853). **Experimental** (`enable_experimental()`); validation lives
+  in a separate repo.
+- **`ART` — the Author-Recipient-Topic model** (Rosen-Zvi / McCallum et al.; #813).
+  Author-Topic extended to directed messages: each token's topic is drawn from an
+  author-recipient pair, so topics condition on who is talking to whom. Fits from
+  `(author, recipients)` metadata alongside the documents.
+- **Live fit progress across the roster** (#785–#798). `topica.progress()` renders a
+  fit bar with an ETA and a metric sparkline; every iterative model takes a
+  `progress=` (or `verbose=`) callback on the standard 3-argument contract
+  (`iter, total, metric`), and interactive terminals show a progress bar by default.
+  `KeyboardInterrupt` propagates cleanly out of the Rust loops.
+- **Cross-validation framework** (#701–#707). A model-agnostic fold engine with a
+  topic path (held-out coherence / perplexity per fold) and a supervised
+  out-of-fold path, plus `plot_cv` and keyATM covariate-effect fold-stability. Reuses
+  the held-out and manifest machinery so a CV run records its own provenance.
+- **More evaluation metrics** (#805, #844). OCTIS/TopMost-style topic-quality metrics
+  and document-based topic alignment (#805), and a FREX-ranked `topic_diversity` with
+  a companion exclusivity measure (#844).
+- **`embedding_regression` — a validated conText replacement** (Rodriguez, Spirling &
+  Stewart 2023; #669). À-la-carte embedding regression with the group-and-bootstrap
+  inference conText users expect.
+- **LLM-assisted topic reading** (#583; #675–#678). `topica.llm.judge` (pairwise
+  topic-document Elo ranking), `topica.llm.refine` (LLM-cleaned top words per topic),
+  and `topica.llm.human_agreement` (coherence/intrusion agreement with human labels).
+- **Two new bundled datasets** (#736, #851). `load_congress()` — House press releases
+  2013–2024, the STM party+time example — and `load_threads()` — the two-subreddit
+  reply-tree vignette for `ThreadTM`.
+- **`topica.guide()` — an in-REPL cheat sheet** (#816) of task recipes for agents and
+  newcomers.
 - **`CSATM` — Conversational Structure Aware Topic Model** (Sun, Loparo &
   Kolacinski 2020; #811). A collapsed-Gibbs LDA for threaded forum discussions that
   weights each comment's tokens by a reply-tree "popularity" score and, after
