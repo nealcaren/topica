@@ -1242,6 +1242,28 @@ def test_thread_tm_seed_words_unnamed_default_and_mixed_keys():
         _fit_seeded(docs, parents, groups, seed_words={0: block_words[0], "b1": block_words[1]})
 
 
+def test_thread_tm_seed_newbie_guards():
+    """Guards for natural mistakes (PR #862 review): orphaned strength knobs warn, an index-looking
+    string key warns that it names (not indexes) a topic, and a bool key is rejected."""
+    docs, parents, groups, block_words, _ = _planted_block_corpus(n_threads=20)
+
+    def fit(**kw):
+        return topica.ThreadTM(4, em_iters=40, seed=13, coupling="parent").fit(
+            docs, parents=parents, covariates=groups, covariate_names=["g0", "g1"],
+            min_count=1, **kw)
+
+    with pytest.warns(UserWarning, match="weight/seed_strength was set but seed_words is None"):
+        fit(weight=0.5)
+    with pytest.warns(UserWarning, match="prevalence_strength was set but prevalence_anchor is None"):
+        fit(prevalence_strength=0.9)
+    # An index-looking string key NAMES a topic at the next leading slot, not that index.
+    with pytest.warns(UserWarning, match="is a string, so it NAMES a topic"):
+        m = fit(seed_words={"2": block_words[0]})
+    assert list(m.topic_names)[0] == "2"  # slot 0, named "2" (NOT index 2)
+    with pytest.raises(ValueError, match="not a bool"):
+        fit(seed_words={True: block_words[0]})
+
+
 def test_thread_tm_seed_is_soft_learns_beyond_seeds():
     """Seeding only a FEW of a block's words still pulls the whole block in: seeded topics keep
     substantial mass on the UNSEEDED block words (a soft prior, not a lock on the seeds), while

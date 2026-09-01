@@ -3126,9 +3126,12 @@ class ThreadTM:
         `content_prior_var` (default 0.5) is the deviation-prior scale. Read the shift with
         `content_topic_word` / `content_top_words` / `content_kappa`.
 
-        User supervision (issue #854), both orthogonal to the reply tree. `seed_words` biases
-        seeded topics' word distributions toward the keywords (SeededLDA-style Dirichlet seeding)
-        and pins them to fixed slots; unseeded topics are learned freely. Keys are EITHER int topic
+        User supervision (issue #854): two INDEPENDENT axes, both orthogonal to the reply tree —
+        (A) word seeding (`seed_words` + `weight`/`seed_strength`, `seed_prior`, `seed_match`) shapes
+        what seeded topics MEAN; (B) prevalence anchoring (`prevalence_anchor` + `prevalence_strength`)
+        steers a covariate group's topic MIX. They compose and never share a knob.
+        (A) `seed_words` biases seeded topics' word distributions toward the keywords (SeededLDA-style
+        Dirichlet seeding) and pins them to fixed slots; unseeded topics are learned freely. Keys are EITHER int topic
         indices (explicit slots) OR string topic names (which name the seeded topics and take the
         leading slots in insertion order, as SeededLDA/KeyATM do, and populate `topic_names`); keys
         must be all-int or all-string, not mixed. `weight` matches SeededLDA's `weight` (a ``[0, 1]`` fraction,

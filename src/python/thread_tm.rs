@@ -14,7 +14,7 @@
 
 use super::*;
 use numpy::{PyArray1, PyArray2, PyArray3, ToPyArray};
-use pyo3::types::{PyDict, PyList, PyType};
+use pyo3::types::{PyBool, PyDict, PyList, PyType};
 use rand::Rng;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -504,12 +504,17 @@ impl ThreadTM {
     /// `covariate_names` names the groups for the readouts (overriding auto-encoded labels).
     /// `min_count` drops words rarer than it (the same vocabulary knob `Corpus` spells `min_cf`).
     ///
-    /// Seeding and prevalence anchoring (both orthogonal to the reply tree). `seed_words` is a
-    /// dict biasing seeded topics' word distributions toward the keywords and pinning them to
+    /// Two INDEPENDENT supervision axes, both orthogonal to the reply tree:
+    /// (A) WORD SEEDING — `seed_words` (+ `weight`/`seed_strength`, `seed_prior`, `seed_match`) shapes
+    /// what seeded topics MEAN; (B) PREVALENCE ANCHORING — `prevalence_anchor` (+ `prevalence_strength`)
+    /// steers a covariate group's topic MIX. They compose and never share a knob.
+    ///
+    /// (A) `seed_words` biases seeded topics' word distributions toward the keywords and pins them to
     /// fixed slots, while unseeded topics are learned freely. Its keys are EITHER int topic
     /// indices (`{0: [...]}`, explicit slots) OR string topic names (`{"space": [...]}`, which name
     /// the seeded topics and take the leading slots in insertion order, as SeededLDA/KeyATM do, and
-    /// populate `topic_names`); keys must be all-int or all-string, not mixed.
+    /// populate `topic_names`); keys must be all-int or all-string, not mixed. Audit which vocabulary
+    /// words each pattern matched with the `seed_matches` property after fitting.
     /// `weight` matches SeededLDA's `weight` (a `[0, 1]` fraction, default `0.01`).
     /// `seed_prior="frequency"` (default) gives each matched seed word a pseudocount of
     /// `corpus_count(word) * weight * 100`; `"uniform"` a flat `weight * 100` per word;
@@ -906,6 +911,28 @@ impl ThreadTM {
             // string-keyed (a {name: [words]} dict names the seeded topics, as SeededLDA/KeyATM do).
             // Always length-K so `topic_names` is defined for every fit, seeded or not.
             let mut topic_names: Vec<String> = (0..k).map(|i| format!("topic_{i}")).collect();
+            // Warn on an orphaned supervision knob: a strength set without its companion collection
+            // is a silent no-op, and usually a forgotten arg. Two independent axes — word seeding
+            // (weight/seed_strength ↔ seed_words) and prevalence anchoring (prevalence_strength ↔
+            // prevalence_anchor). `!= default` via abs-diff to dodge the float_cmp lint.
+            if seed_words.is_none() && ((weight - 0.01).abs() > 1e-12 || seed_strength.is_some()) {
+                PyErr::warn_bound(
+                    py,
+                    &py.get_type_bound::<pyo3::exceptions::PyUserWarning>(),
+                    "weight/seed_strength was set but seed_words is None; the word-seeding knobs \
+                     are ignored (pass seed_words to seed topics).",
+                    1,
+                )?;
+            }
+            if prevalence_anchor.is_none() && (prevalence_strength - 0.5).abs() > 1e-12 {
+                PyErr::warn_bound(
+                    py,
+                    &py.get_type_bound::<pyo3::exceptions::PyUserWarning>(),
+                    "prevalence_strength was set but prevalence_anchor is None; prevalence \
+                     anchoring is ignored (pass prevalence_anchor to steer prevalence).",
+                    1,
+                )?;
+            }
             if let Some(obj) = &seed_words {
                 // Validate the seeding knobs only on the path that uses them. Guard finiteness and
                 // sign so a NaN/negative pseudocount cannot silently poison β (a negative pseudocount
@@ -947,6 +974,14 @@ impl ThreadTM {
                     let words: Vec<String> = val.extract().map_err(|_| {
                         PyValueError::new_err("seed_words values must be a list of keyword strings")
                     })?;
+                    // A Python bool is a subclass of int, so it would slip into the usize branch and
+                    // be read as a topic index (True->1, False->0). Reject it explicitly.
+                    if key.is_instance_of::<PyBool>() {
+                        return Err(PyValueError::new_err(
+                            "seed_words keys must be an int topic index or a string topic name, \
+                             not a bool",
+                        ));
+                    }
                     if let Ok(name) = key.extract::<String>() {
                         saw_str = true;
                         if str_slot >= k {
@@ -954,6 +989,24 @@ impl ThreadTM {
                                 "seed_words names {} topics but num_topics={k}; pass at most K names",
                                 str_slot + 1
                             )));
+                        }
+                        // A string key NAMES a topic and takes the next leading slot, unlike an int
+                        // key that selects a slot. Warn when the name looks like a valid index, since
+                        // {"2": ...} and {2: ...} then diverge silently (the string seeds the next
+                        // leading slot, named "2", not index 2).
+                        if let Ok(as_idx) = name.parse::<usize>() {
+                            if as_idx < k {
+                                PyErr::warn_bound(
+                                    py,
+                                    &py.get_type_bound::<pyo3::exceptions::PyUserWarning>(),
+                                    &format!(
+                                        "seed_words key {name:?} is a string, so it NAMES a topic and \
+                                         takes the next leading slot (slot {str_slot}), not index \
+                                         {as_idx}; pass the int {as_idx} for a positional slot."
+                                    ),
+                                    1,
+                                )?;
+                            }
                         }
                         per_topic[str_slot] = words;
                         topic_names[str_slot] = name;
@@ -1971,7 +2024,12 @@ impl ThreadTM {
     /// Load a model saved with `save`.
     #[classmethod]
     fn load(_cls: &Bound<'_, PyType>, path: &str) -> PyResult<Self> {
-        let s: ThreadTmState = read_state(path, MODEL_TAG_THREADTM)?;
+        let mut s: ThreadTmState = read_state(path, MODEL_TAG_THREADTM)?;
+        // Preserve the "topic_names is length K when fitted" invariant for a state that predates the
+        // field (serde default -> empty): backfill positional names from the topic-word row count.
+        if s.fitted && s.topic_names.is_empty() {
+            s.topic_names = (0..s.beta.len()).map(|i| format!("topic_{i}")).collect();
+        }
         Ok(ThreadTM {
             num_topics: s.num_topics,
             em_iters: s.em_iters,
