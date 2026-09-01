@@ -1,0 +1,3662 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Fast, all-purpose topic modeling for Python — a Rust core with the MALLET, STM, tomotopy, and gensim toolkits in one package.">
+      
+      
+      
+        <link rel="canonical" href="https://nealcaren.github.io/topica/guides/embedding/">
+      
+      
+        <link rel="prev" href="../short-text/">
+      
+      
+        <link rel="next" href="../llm/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../images/topica-favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Embedding topics - Topica</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#embedding-topics" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Topica" class="md-header__button md-logo" aria-label="Topica" data-md-component="logo">
+      
+  <img src="../../images/topica-mark.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Topica
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Embedding topics
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/nealcaren/topica" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nealcaren/topica
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Topica" class="md-nav__button md-logo" aria-label="Topica" data-md-component="logo">
+      
+  <img src="../../images/topica-mark.svg" alt="logo">
+
+    </a>
+    Topica
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/nealcaren/topica" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nealcaren/topica
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../can-do/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Start here
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Start here
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agent-cheatsheet/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent cheat sheet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../publishing/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    From corpus to credible result
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    From corpus to credible result
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/corpus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. Build a defensible corpus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/choosing-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Pick the right model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/choosing-k/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Choose and justify K
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Validate the topics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/effects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Measure effects properly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/reporting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Report and make reproducible
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Methods & models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Methods & models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The model catalog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparing the models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../covariates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Covariates & STM
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guided/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guided topics (seed words)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../short-text/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Short text
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedding topics
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedding topics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bertopic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BERTopic
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="BERTopic">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#topic-word-weighting-c-tf-idf-vs-cetopics-tfidfidf_i" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic-word weighting: c-TF-IDF vs CETopic's TFIDF×IDF_i
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#where-topica-differs-from-the-bertopic-package" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where topica differs from the bertopic package
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#top2vec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Top2Vec
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#etm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ETM
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ETM">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#inference-em-or-vae" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inference: EM or VAE
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fastopic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FASTopic
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#embeddinglda" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        EmbeddingLDA
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#combinedtm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CombinedTM
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#zeroshottm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ZeroShotTM
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#detm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DETM
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#post-fit-diagnostics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Post-fit diagnostics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#avoiding-the-1-noise-bucket" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Avoiding the -1 noise bucket
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inspecting-and-adjusting-clustering-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspecting and adjusting clustering models
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-shared-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The shared surface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#richer-topic-words-n-grams" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Richer topic words: n-grams
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tuning-and-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tuning and notes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM-based topics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analyze & validate
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Analyze & validate
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../preprocessing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Preprocessing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagnostics & validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../uncertainty/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reporting uncertainty
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../keywords/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Distinguishing words
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../transform/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Held-out inference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cross-validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cross-validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/dubois/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Du Bois in The Crisis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/congress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Congress (STM party & time)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/poliblog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Political blogs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/content_time/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Party platforms (STM content_time)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/nmf-neural/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NMF vs neural (labeled)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/guided/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guided topics (keyATM)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/dmr-sentiment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sentiment covariate (DMR)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/short-text/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Short text (GSDMM/BTM)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/threads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Threaded conversations (ThreadTM)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/llm-topics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM embeddings & labels
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../replications/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Replications
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Replications
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../replications/stm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STM (the stm vignette)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../replications/keyatm-dynamic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dynamic keyATM (Supreme Court)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../replications/tlda/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TensorLDA validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../replications/sts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STS reference profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/datasets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Datasets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedding models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/manifest/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analysis manifest
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/content/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Content-covariate diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viz/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/stm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STM toolkit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/keyatm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    keyATM toolkit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/keywords/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keywords & preprocessing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Contributing
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/conventions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API conventions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/keyword-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keyword & seed parameters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/estimator-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Estimator contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/model-map/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model implementation map
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation & graduation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/release-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../citing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Citing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bertopic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BERTopic
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="BERTopic">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#topic-word-weighting-c-tf-idf-vs-cetopics-tfidfidf_i" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic-word weighting: c-TF-IDF vs CETopic's TFIDF×IDF_i
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#where-topica-differs-from-the-bertopic-package" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where topica differs from the bertopic package
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#top2vec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Top2Vec
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#etm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ETM
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ETM">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#inference-em-or-vae" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inference: EM or VAE
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fastopic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FASTopic
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#embeddinglda" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        EmbeddingLDA
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#combinedtm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CombinedTM
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#zeroshottm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ZeroShotTM
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#detm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DETM
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#post-fit-diagnostics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Post-fit diagnostics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#avoiding-the-1-noise-bucket" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Avoiding the -1 noise bucket
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inspecting-and-adjusting-clustering-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspecting and adjusting clustering models
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-shared-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The shared surface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#richer-topic-words-n-grams" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Richer topic words: n-grams
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tuning-and-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tuning and notes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="embedding-topics">Embedding topics<a class="headerlink" href="#embedding-topics" title="Permanent link">&para;</a></h1>
+<p>The models elsewhere in topica learn topics from word counts. The models here
+start from <em>embeddings</em>, in three flavors. <strong>BERTopic</strong> and <strong>Top2Vec</strong> <em>cluster</em>
+document embeddings and read one topic off each cluster; <strong>ETM</strong> is <em>generative</em>,
+LDA with the topic-word distribution factored through embeddings; <strong>FASTopic</strong>
+reads topics off two <em>optimal-transport</em> plans between embedding sets. topica fits
+all four with no PyTorch, no UMAP/numba, and no sentence-transformers in the
+shipped wheel.</p>
+<p>You bring the embeddings. topica does not call an embedding model; you pass a
+document-vector matrix (and, for Top2Vec, a matching word-vector matrix) from
+wherever you like, a sentence-transformer, an API, or a local model such as
+ollama. Everything downstream is in the wheel.</p>
+<p>If you would rather not wire up an embedder yourself, <code>topica.embeddings.llm_embed</code> produces
+the matrix through Simon Willison's <a href="https://llm.datasette.io/"><code>llm</code></a> library
+(the optional <code>topica[llm]</code> extra), which reaches OpenAI embeddings and local
+sentence-transformers via plugins:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">doc_emb</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">embeddings</span><span class="o">.</span><span class="n">llm_embed</span><span class="p">(</span><span class="n">texts</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s2">"text-embedding-3-small"</span><span class="p">)</span>          <span class="c1"># API</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">doc_emb</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">embeddings</span><span class="o">.</span><span class="n">llm_embed</span><span class="p">(</span><span class="n">texts</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s2">"sentence-transformers/all-MiniLM-L6-v2"</span><span class="p">)</span>  <span class="c1"># local</span>
+</code></pre></div>
+<p>Embeddings are costly, so cache them. Pass <code>cache=path</code> to embed a corpus once and
+reuse it on later runs (it reloads when the file matches the same <code>texts</code>, and
+recomputes otherwise), or save and load any embedding matrix yourself:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">doc_emb</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">embeddings</span><span class="o">.</span><span class="n">llm_embed</span><span class="p">(</span><span class="n">texts</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s2">"text-embedding-3-small"</span><span class="p">,</span> <span class="n">cache</span><span class="o">=</span><span class="s2">"emb.npz"</span><span class="p">)</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">topica</span><span class="o">.</span><span class="n">embeddings</span><span class="o">.</span><span class="n">save_embeddings</span><span class="p">(</span><span class="s2">"emb.npz"</span><span class="p">,</span> <span class="n">doc_emb</span><span class="p">,</span> <span class="n">texts</span><span class="o">=</span><span class="n">texts</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s2">"all-MiniLM-L6-v2"</span><span class="p">)</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">doc_emb</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">embeddings</span><span class="o">.</span><span class="n">load_embeddings</span><span class="p">(</span><span class="s2">"emb.npz"</span><span class="p">)</span>
+</code></pre></div>
+<p>End to end, from raw text to a fitted model, with <code>llm_embed</code> doing the
+text-to-vectors step offline (no API key, runs in the wheel):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">topica</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">texts</span> <span class="o">=</span> <span class="p">[</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="s2">"The economy added jobs as the unemployment rate fell again."</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="s2">"Inflation cooled and the central bank held interest rates steady."</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="s2">"Markets rallied on the strong payrolls and wage-growth report."</span><span class="p">,</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="s2">"The home team scored late to win the playoff game in extra innings."</span><span class="p">,</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="s2">"He threw a complete-game shutout in the opener of the series."</span><span class="p">,</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="s2">"The rookie hit two home runs and drove in five for the win."</span><span class="p">,</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="p">]</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="c1"># text -&gt; (num_docs, E) vectors; the topica[llm] extra, sentence-transformers backend</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="n">doc_emb</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">embeddings</span><span class="o">.</span><span class="n">llm_embed</span><span class="p">(</span><span class="n">texts</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s2">"sentence-transformers/all-MiniLM-L6-v2"</span><span class="p">)</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="n">docs</span> <span class="o">=</span> <span class="p">[</span><span class="n">topica</span><span class="o">.</span><span class="n">tokenize</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="n">stopwords</span><span class="o">=</span><span class="n">topica</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">ENGLISH_STOPWORDS</span><span class="p">)</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">texts</span><span class="p">]</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">BERTopic</span><span class="p">(</span><span class="n">min_cluster_size</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">doc_emb</span><span class="p">)</span>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="nb">print</span><span class="p">(</span><span class="n">topica</span><span class="o">.</span><span class="n">report</span><span class="p">(</span><span class="n">model</span><span class="p">))</span>
+</code></pre></div>
+<h2 id="bertopic">BERTopic<a class="headerlink" href="#bertopic" title="Permanent link">&para;</a></h2>
+<p>BERTopic defines a topic by <strong>class-based TF-IDF</strong> over its documents' words, so
+it needs only the document embeddings. The topic count is discovered by the
+clustering, not set in advance.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">BERTopic</span><span class="p">(</span><span class="n">min_cluster_size</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">doc_emb</span><span class="p">)</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">model</span><span class="o">.</span><span class="n">num_topics</span>                       <span class="c1"># discovered</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">model</span><span class="o">.</span><span class="n">top_words</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="n">topic</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>            <span class="c1"># [(word, c-TF-IDF weight), ...]</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="n">model</span><span class="o">.</span><span class="n">topic_word</span>                       <span class="c1"># (num_topics, vocab), row-normalized c-TF-IDF</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="n">model</span><span class="o">.</span><span class="n">doc_topic</span>                        <span class="c1"># (num_docs, num_topics) soft membership</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="n">model</span><span class="o">.</span><span class="n">labels</span>                           <span class="c1"># hard cluster per doc; -1 is noise</span>
+</code></pre></div>
+<p>Two BERTopic features carry over. <code>nr_topics</code> reduces the discovered topics down
+to a target count:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">BERTopic</span><span class="p">(</span><span class="n">min_cluster_size</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span> <span class="n">nr_topics</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">doc_emb</span><span class="p">)</span>
+</code></pre></div>
+<p>and <code>approximate_distribution</code> gives a soft topic distribution by sliding a
+window over a document's words and comparing each window's c-TF-IDF to every
+topic. It is the default <code>doc_topic</code>, and you can also run it on new documents:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">dist</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">approximate_distribution</span><span class="p">(</span><span class="n">new_docs</span><span class="p">,</span> <span class="n">window</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">stride</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (n, num_topics)</span>
+</code></pre></div>
+<p><code>min_similarity</code> (default <code>0.0</code>) drops any window-to-topic cosine below its value
+before averaging; a document with no surviving evidence becomes a <em>uniform</em> row
+so <code>doc_topic</code> stays a valid distribution.</p>
+<h3 id="topic-word-weighting-c-tf-idf-vs-cetopics-tfidfidf_i">Topic-word weighting: c-TF-IDF vs CETopic's TFIDF×IDF_i<a class="headerlink" href="#topic-word-weighting-c-tf-idf-vs-cetopics-tfidfidf_i" title="Permanent link">&para;</a></h3>
+<p><code>weighting</code> chooses how topic words are scored. The default <code>"c-tf-idf"</code> is
+BERTopic's class-based TF-IDF (tuned by <code>bm25</code> / <code>reduce_frequent</code>). Pass
+<code>weighting="tfidf-idf"</code> for <strong>CETopic</strong>'s TFIDF×IDF_i scheme (Zhang et al., "Is
+Neural Topic Modelling Better than Clustering?", NAACL 2022):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">BERTopic</span><span class="p">(</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="n">reducer</span><span class="o">=</span><span class="s2">"umap"</span><span class="p">,</span> <span class="n">clusterer</span><span class="o">=</span><span class="s2">"kmeans"</span><span class="p">,</span> <span class="n">num_clusters</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="n">weighting</span><span class="o">=</span><span class="s2">"tfidf-idf"</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="p">)</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">doc_emb</span><span class="p">)</span>   <span class="c1"># exactly CETopic's contextual-embeddings → UMAP → K-Means → TFIDF×IDF_i pipeline</span>
+</code></pre></div>
+<p>CETopic multiplies a <strong>corpus-level TF-IDF</strong> (a term's importance across the whole
+corpus, averaged over each cluster's documents) by a <strong>cross-cluster IDF</strong> that
+penalizes terms appearing in many clusters. c-TF-IDF asks only "frequent here, rare
+across clusters"; TFIDF×IDF_i keeps globally salient words <em>and</em> actively demotes
+words several clusters share, which lifts topic <strong>diversity</strong> (the paper's Table 3
+ablation finds this the decisive win over plain per-cluster TF/TF-IDF). It is
+topica's faithful port of the reference (<code>hyintell/topicx</code>, MIT), reproducing its
+scikit-learn <code>TfidfTransformer</code> defaults (smoothed idf, per-document L2 norm, then
+L1-normalized scores). Under <code>"tfidf-idf"</code> the <code>bm25</code> / <code>reduce_frequent</code> knobs do
+not apply (they belong to class-based TF-IDF), and <code>doc_topic</code> still uses the
+class-based-TF-IDF window geometry. CETopic's canonical clusterer is K-Means, which
+leaves no <code>-1</code> noise; with the default HDBSCAN, noise documents are excluded from
+both the corpus and the cluster means.</p>
+<h3 id="where-topica-differs-from-the-bertopic-package">Where topica differs from the <code>bertopic</code> package<a class="headerlink" href="#where-topica-differs-from-the-bertopic-package" title="Permanent link">&para;</a></h3>
+<p>topica reproduces the reference <code>bertopic</code> package on its default c-TF-IDF path,
+but a few knobs diverge on purpose (issue #488), so name them when you report a
+BERTopic run:</p>
+<ul>
+<li><strong>Reducer default matches the package.</strong> topica defaults to <code>reducer="umap"</code>
+  (<code>n_components=5</code>, <code>n_neighbors=15</code>, <code>min_dist=0</code>, cosine), as the package does;
+  topica's UMAP is the in-house, seed-reproducible reducer, so the layout is
+  deterministic for a fixed <code>seed</code>. Pass <code>reducer="pca"</code> for a linear, lighter
+  projection (L2-normalized onto the unit sphere before clustering so a Euclidean
+  clusterer sees the cosine geometry). topica still keeps <code>min_cluster_size=15</code>
+  where the package uses <code>min_topic_size=10</code>, so name that when you report a run.</li>
+<li><strong><code>nr_topics</code> reduction.</strong> topica greedily folds the most c-TF-IDF-similar pair
+  of topics; the package fits one ward <code>AgglomerativeClustering</code> over the topic
+  <em>embeddings</em>. Different distance space and merge tree, so the two can pick
+  different merges. topica also reads <code>nr_topics</code> as the number of <em>real</em> topics
+  (the <code>-1</code> noise topic is never counted), whereas the package counts <code>-1</code> toward
+  the total.</li>
+<li><strong><code>bm25=True</code></strong> matches the package's class-based BM25 idf exactly, including the
+  unclamped log that goes <em>negative</em> for a term common to every class (which ranks
+  such terms last). The normalized <code>topic_word</code> surface floors those negatives to
+  zero so it stays a valid distribution; ranking is unaffected.</li>
+<li><strong><code>approximate_distribution</code></strong> weights each window with the same
+  <code>bm25</code>/<code>reduce_frequent</code> idf the topics used. The <code>min_similarity</code> gate defaults
+  to <code>0.0</code>; the package uses <code>0.1</code> for its own approximate distribution, so pass
+  <code>min_similarity=0.1</code> to match it. topica returns a uniform row for a document
+  with no surviving evidence where the package returns a zero row.</li>
+</ul>
+<h2 id="top2vec">Top2Vec<a class="headerlink" href="#top2vec" title="Permanent link">&para;</a></h2>
+<p>Top2Vec places each topic <em>in the embedding space</em>: the topic vector is the mean
+of its documents' embeddings, and its words are the vocabulary terms nearest that
+vector. Pass <code>word_embeddings</code> with the aligned <code>vocabulary</code> (same space as the
+document embeddings) to get those nearest-word topics.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">vocab</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">({</span><span class="n">w</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">docs</span> <span class="k">for</span> <span class="n">w</span> <span class="ow">in</span> <span class="n">d</span><span class="p">})</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">word_emb</span> <span class="o">=</span> <span class="n">embed</span><span class="p">(</span><span class="n">vocab</span><span class="p">)</span>                          <span class="c1"># (len(vocab), E)</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">Top2Vec</span><span class="p">(</span><span class="n">min_cluster_size</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">doc_emb</span><span class="p">,</span> <span class="n">word_embeddings</span><span class="o">=</span><span class="n">word_emb</span><span class="p">,</span> <span class="n">vocabulary</span><span class="o">=</span><span class="n">vocab</span><span class="p">)</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="n">model</span><span class="o">.</span><span class="n">top_words</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="n">topic</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>            <span class="c1"># default: centroid view (nearest word vectors)</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="n">model</span><span class="o">.</span><span class="n">topic_neighbors</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>          <span class="c1"># same centroid words, as (word, cosine)</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="n">model</span><span class="o">.</span><span class="n">top_words</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="n">topic</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">representation</span><span class="o">=</span><span class="s2">"c-tf-idf"</span><span class="p">)</span>  <span class="c1"># the shared c-TF-IDF view</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="n">model</span><span class="o">.</span><span class="n">topic_vectors</span>                    <span class="c1"># (num_topics, E) topic positions</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="n">model</span><span class="o">.</span><span class="n">topic_sizes</span>                      <span class="c1"># documents per topic, largest first</span>
+</code></pre></div>
+<p>Top2Vec and BERTopic share the class-based TF-IDF <code>topic_word</code> matrix, so given
+the same clusters their <code>topic_word</code> and <code>topic_table</code> match. Top2Vec's distinct
+view is the <strong>centroid</strong> representation, the vocabulary nearest the cluster
+centroid in embedding space. When you pass <code>word_embeddings</code>, <code>top_words</code> (and so
+<code>summary</code>) returns that by default; pass <code>representation="c-tf-idf"</code> for the
+shared view. Without <code>word_embeddings</code> Top2Vec still fits and <code>top_words</code> is
+c-TF-IDF.</p>
+<p>Like the reference package, topica orders topics by size (topic 0 is the
+largest, read <code>topic_sizes</code> for the counts) and exposes the reference search
+surface — <code>search_documents_by_topic</code>, <code>search_documents_by_keywords</code>,
+<code>search_words_by_vector</code>, <code>similar_words</code>, and <code>search_topics</code> — when fit with
+<code>word_embeddings</code>. To collapse to a target topic count the reference way, call
+<code>hierarchical_topic_reduction(n)</code>, which repeatedly merges the smallest topic
+into its nearest topic by topic-vector cosine until <code>n</code> remain:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">model</span><span class="o">.</span><span class="n">hierarchical_topic_reduction</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>   <span class="c1"># reduce to 5 topics, then re-order by size</span>
+</code></pre></div>
+<h2 id="etm">ETM<a class="headerlink" href="#etm" title="Permanent link">&para;</a></h2>
+<p>ETM (the Embedded Topic Model) is not a clustering pipeline; it is LDA with the
+topic-word distribution factored through embeddings,
+<code>β_{k,v} = softmax(ρ_v · α_k)</code>, and a logistic-normal document prior. Each topic
+is a <em>point</em> <code>α_k</code> in the embedding space, and semantically related words share
+topic mass even when a topic never saw them. You bring the word embeddings <code>ρ</code>;
+topica fits the topic embeddings <code>α</code> and the prior by the same variational EM as
+<a href="../models/"><code>CTM</code></a>, no PyTorch.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">topica</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">vocab</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">({</span><span class="n">w</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">docs</span> <span class="k">for</span> <span class="n">w</span> <span class="ow">in</span> <span class="n">d</span><span class="p">})</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="n">word_emb</span> <span class="o">=</span> <span class="n">embed</span><span class="p">(</span><span class="n">vocab</span><span class="p">)</span>                          <span class="c1"># (len(vocab), E)</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">ETM</span><span class="p">(</span><span class="n">num_topics</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">word_emb</span><span class="p">,</span> <span class="n">vocab</span><span class="p">)</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="n">model</span><span class="o">.</span><span class="n">topic_word</span>                       <span class="c1"># (num_topics, vocab) β</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="n">model</span><span class="o">.</span><span class="n">doc_topic</span>                        <span class="c1"># (num_docs, num_topics) θ</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="n">model</span><span class="o">.</span><span class="n">topic_embeddings</span>                 <span class="c1"># (num_topics, E) the α points</span>
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="n">model</span><span class="o">.</span><span class="n">top_words</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="n">topic</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="n">model</span><span class="o">.</span><span class="n">bound</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">converged</span>           <span class="c1"># the variational evidence bound</span>
+</code></pre></div>
+<p>Because ETM is generative and mixed-membership, you get a proper <code>θ</code> and the full
+<a href="../../publishing/effects/">effects</a> and diagnostics stack, not a hard partition.
+It fits in a fraction of a second on a few thousand documents.</p>
+<h3 id="inference-em-or-vae">Inference: EM or VAE<a class="headerlink" href="#inference-em-or-vae" title="Permanent link">&para;</a></h3>
+<p>ETM has two inference engines, selected with <code>inference=</code>. The default <code>"em"</code> is
+the per-document variational EM above: accurate per document, but it runs an
+optimizer for every document, so it does not minibatch. <code>"vae"</code> is the reference's
+amortized autoencoder, an encoder network that maps a document's word counts
+straight to its topic proportions. It trains by minibatch Adam, scales to large
+corpora, and maps a new document with a single encoder pass rather than a
+per-document optimization.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">ETM</span><span class="p">(</span><span class="n">num_topics</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">inference</span><span class="o">=</span><span class="s2">"vae"</span><span class="p">,</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>                   <span class="n">hidden_size</span><span class="o">=</span><span class="mi">800</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.005</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">word_emb</span><span class="p">,</span> <span class="n">vocab</span><span class="p">,</span> <span class="n">iters</span><span class="o">=</span><span class="mi">150</span><span class="p">)</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">model</span><span class="o">.</span><span class="n">transform</span><span class="p">(</span><span class="n">new_docs</span><span class="p">)</span>              <span class="c1"># fast: one encoder forward pass</span>
+</code></pre></div>
+<p>The reference fits the VAE with PyTorch autograd; topica hand-codes the encoder's
+forward and backward (every gradient checked against finite differences) and steps
+with Adam, so the VAE path is the same model with no PyTorch. Both engines return
+the same surface (<code>topic_word</code>, <code>doc_topic</code>, <code>topic_embeddings</code>); <code>bound</code> is the
+variational bound for EM and the ELBO for VAE. The trade is the usual one: EM is
+more accurate per document, the VAE scales.</p>
+<p>The VAE path also accepts the shared <code>prior=</code> and <code>contrastive=</code> flags described
+under <a href="../models/#objective-and-prior-options">ProdLDA</a>: a Weibull-reparameterized
+Dirichlet prior and a CLNTM-style InfoNCE term on the topic vectors. They are
+ignored on the EM path and default off.</p>
+<h2 id="fastopic">FASTopic<a class="headerlink" href="#fastopic" title="Permanent link">&para;</a></h2>
+<p>FASTopic also drops the encoder, but it is not a clustering pipeline and not a
+generative LDA. It places topics, words, and documents in one embedding space and
+reads the topic proportions <code>theta</code> and topic-word matrix <code>beta</code> straight off two
+<em>optimal-transport</em> plans: documents are transported to topics, topics to words.
+You bring the document embeddings; topica learns the topic embeddings, the word
+embeddings (in the same space), and the transport marginals, minimizing a
+bag-of-words reconstruction plus the two transport costs.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">topica</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">FASTopic</span><span class="p">(</span><span class="n">num_topics</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="n">theta</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">fit_transform</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">doc_emb</span><span class="p">)</span>   <span class="c1"># (num_docs, num_topics)</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="n">model</span><span class="o">.</span><span class="n">topic_word</span>                       <span class="c1"># (num_topics, vocab) beta</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="n">model</span><span class="o">.</span><span class="n">doc_topic</span>                        <span class="c1"># (num_docs, num_topics) theta</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="n">model</span><span class="o">.</span><span class="n">topic_embeddings</span>                 <span class="c1"># (num_topics, E) topic points</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="n">model</span><span class="o">.</span><span class="n">word_embeddings</span>                  <span class="c1"># (vocab, E) learned word points</span>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="n">model</span><span class="o">.</span><span class="n">top_words</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="n">topic</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="n">model</span><span class="o">.</span><span class="n">loss_history</span>                     <span class="c1"># the objective at each epoch</span>
+</code></pre></div>
+<p>Unlike Top2Vec and BERTopic, FASTopic is mixed-membership: each document gets a
+full <code>theta</code> over topics, so it carries the <a href="../../publishing/effects/">effects</a>
+and diagnostics stack. New documents are mapped to topics by a distance-softmax
+over the fitted topic embeddings, so <code>transform</code> needs only their embeddings, no
+tokens:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">theta_new</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">transform</span><span class="p">(</span><span class="n">new_doc_emb</span><span class="p">)</span>   <span class="c1"># (n, num_topics)</span>
+</code></pre></div>
+<p>The reference trains by autodiff through the unrolled Sinkhorn iterations; topica
+has no autodiff, so it differentiates the fixed point of a hand-coded reverse-mode
+Sinkhorn (every gradient checked against finite differences) and steps with Adam.
+<code>dt_alpha</code>/<code>tw_alpha</code> are the inverse entropic regularizations for the two
+transport problems (reference defaults 3.0 and 2.0); larger is sharper.</p>
+<h2 id="embeddinglda">EmbeddingLDA<a class="headerlink" href="#embeddinglda" title="Permanent link">&para;</a></h2>
+<div class="admonition warning">
+<p class="admonition-title">Experimental — validated by planted-recovery only</p>
+<p><code>EmbeddingLDA</code> is a topica original: it ships before a published paper and a
+reference-implementation parity check (topica's bar for a validated model). Its
+gold (<code>parity/embeddinglda_gold.py</code>) is a planted-recovery/determinism lock,
+not cross-implementation parity — on the planted corpus, plain LDA and even
+shuffled/random embeddings score the same block purity, and on real labeled
+text (20 Newsgroups) <code>EmbeddingLDA</code>'s label recovery sits <em>below</em> plain LDA. It
+is sound but not demonstrably superior. It is <strong>gated</strong>: call
+<code>topica.enable_experimental()</code> (or set <code>TOPICA_EXPERIMENTAL=1</code>) before
+constructing or loading it. It may change or be removed without a deprecation
+cycle (issue #660). The <code>SeededLDA</code> core it delegates to is itself validated;
+what is unproven is the embedding-seeding <em>benefit</em>.</p>
+</div>
+<p><code>EmbeddingLDA</code> is a fixed-K, every-document LDA anchored by embeddings on <strong>both
+sides</strong>. The <em>word</em> embeddings define the topics: k-means clusters them into
+<code>num_topics</code> groups and seeds each topic with the <code>top_m</code> words nearest its
+centroid (a prior on the topic-word side, via <a href="../models/#guided-topics"><code>SeededLDA</code></a>).
+Optionally, <em>document</em> embeddings in the same space bias each document's topic
+mixture toward the topics it is closest to (a per-document prior on the
+document-topic side). Both are priors: the Gibbs sampler reconciles them with word
+co-occurrence and can override either. Unlike BERTopic/Top2Vec there is no noise
+bucket (every document is modeled), and unlike them K is set in advance.</p>
+<p><strong>When to reach for it.</strong> <code>EmbeddingLDA</code> is worth it when you want <em>both</em> mixed
+membership (a full topic distribution per document) <em>and</em> the semantic nudge of
+embeddings, most of all on short or ambiguous documents where the
+<code>doc_embeddings=</code> prior injects outside knowledge that bag-of-words co-occurrence
+lacks. On normal-length text, plain <a href="../models/"><code>LDA</code></a> is simpler and about as good;
+if you only need hard cluster assignments on well-separated documents, <code>BERTopic</code>
+usually recovers them better. In our benchmarks <code>EmbeddingLDA</code>'s consistent edge is
+topic-word <em>coherence</em>, not cluster recovery.</p>
+<p>No embedder needed here. The <code>load_ng20_minilm</code> dataset (downloaded and cached on
+first use, no <code>sentence-transformers</code>/<code>torch</code> install) carries a word-embedding
+matrix with its aligned vocabulary, so nothing calls an embedding model:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">topica</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="n">topica</span><span class="o">.</span><span class="n">enable_experimental</span><span class="p">()</span>              <span class="c1"># EmbeddingLDA is experimental and gated</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="n">ng</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">datasets</span><span class="o">.</span><span class="n">load_ng20_minilm</span><span class="p">()</span>   <span class="c1"># documents + labels + MiniLM embeddings</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="n">docs</span> <span class="o">=</span> <span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">split</span><span class="p">()</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">ng</span><span class="p">[</span><span class="s2">"texts"</span><span class="p">]]</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="c1"># Word-seed mode: the vocabulary embeddings anchor the topics.</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">embeddings</span><span class="o">.</span><span class="n">EmbeddingLDA</span><span class="p">(</span>
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>    <span class="n">num_topics</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a>    <span class="n">embeddings</span><span class="o">=</span><span class="n">ng</span><span class="p">[</span><span class="s2">"word_embeddings"</span><span class="p">],</span>      <span class="c1"># (vocab, E), one row per word</span>
+<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a>    <span class="n">vocabulary</span><span class="o">=</span><span class="n">ng</span><span class="p">[</span><span class="s2">"vocab"</span><span class="p">],</span>                <span class="c1"># aligned to the embedding rows</span>
+<a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a>    <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+<a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a><span class="p">)</span>
+<a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">iters</span><span class="o">=</span><span class="mi">1000</span><span class="p">)</span>
+<a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a><span class="k">for</span> <span class="n">topic</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">top_words</span><span class="p">(</span><span class="mi">8</span><span class="p">):</span>
+<a id="__codelineno-13-17" name="__codelineno-13-17" href="#__codelineno-13-17"></a>    <span class="nb">print</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">topic</span><span class="p">))</span>
+</code></pre></div>
+<p><strong>Seed strength (<code>weight</code>).</strong> The embedding-cluster seed words are <em>semantically</em>
+grouped but do not necessarily <em>co-occur</em> in the corpus, so anchoring them hard
+pulls topics away from co-occurrence and lowers coherence, increasingly at larger
+K. At <code>weight=1.0</code> (100 pseudocounts per seed) topic coherence fell well below plain
+LDA on the 20-newsgroup benchmark. Coherence rises monotonically as <code>weight</code> falls,
+and the effect on document-mixture (<code>theta</code>) recovery is small, so the default is a
+light <code>weight=0.1</code> (was <code>1.0</code>), which recovers most of the lost coherence at little
+cost. Raise it toward <code>1.0</code> only when you want the embedding grouping to dominate.</p>
+<p><code>vocabulary=</code> aligns the <strong>embedding</strong> rows; it is not the fitted output
+vocabulary. After <code>fit</code>, <code>topic_word</code> columns are indexed by <code>model.vocabulary</code>,
+the vocabulary the underlying SeededLDA rebuilds from the corpus. That is generally
+a <strong>subset in a different order</strong>: only corpus words that survived tokenisation and
+pruning (on the fully-covered <code>load_ng20_minilm</code> demo it is the same 3521 words,
+just reordered, but a real corpus with externally-sourced embeddings will drop
+words). Index <code>topic_word</code> with <code>model.vocabulary</code>,
+never with the <code>vocabulary=</code> you passed, or use the helpers that already pair them:
+<code>model.top_words(n)</code> and <code>topica.inspect.label_topics(model.topic_word, model.vocabulary)</code>.</p>
+<p><strong>Document-embedding prior.</strong> Pass <code>doc_embeddings=</code> (one row per document, same
+space as the words) to <code>fit</code> to add the document-topic prior. <code>doc_anchor</code> sets its
+strength: <code>α_{d,k} = alpha + doc_anchor * max(cos(doc_d, centroid_k), 0)</code>. Inspect
+it before fitting with <code>document_topic_prior</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">prior</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">document_topic_prior</span><span class="p">(</span><span class="n">ng</span><span class="p">[</span><span class="s2">"doc_embeddings"</span><span class="p">])</span>   <span class="c1"># (num_docs, num_topics)</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">doc_embeddings</span><span class="o">=</span><span class="n">ng</span><span class="p">[</span><span class="s2">"doc_embeddings"</span><span class="p">],</span> <span class="n">iters</span><span class="o">=</span><span class="mi">1000</span><span class="p">)</span>
+</code></pre></div>
+<p>The fitted-model <em>attributes and methods</em> (<code>topic_word</code>, <code>doc_topic</code>,
+<code>top_words()</code>, <code>coherence()</code>, <code>document_topic_prior()</code>) are delegated to the
+underlying SeededLDA. The <a href="../../publishing/effects/">effects</a> and reporting stack
+are <strong>module functions</strong> that take the fitted model as their first argument, not
+methods on it. Call <code>topica.effects.estimate_effect(model, ...)</code>, <code>topica.inspect.topic_table(model)</code>,
+<code>topica.report(model)</code>, <code>topica.inspect.label_topics(model.topic_word, model.vocabulary)</code>.
+Two conventions to keep straight:</p>
+<ul>
+<li><code>coherence(n)</code> returns a <strong>per-topic</strong> vector (UMass here, so more-negative is
+  worse); average it for a single model-level score: <code>float(model.coherence(10).mean())</code>.
+  Read it against a plain-LDA baseline on the same corpus, e.g. on <code>load_ng20_minilm</code>
+  at K=5 EmbeddingLDA scores about <code>-70</code> versus roughly <code>-80</code> for <code>topica.LDA</code>; a
+  negative number is not bad on its own, so always compare. (<code>topic_table</code> reports
+  prevalence/prob/frex per topic, not coherence.)</li>
+<li><code>search_k</code> does not accept <code>EmbeddingLDA</code> (it fits LDA/STM per K and cannot infer
+  the embeddings). Sweep K by hand: fit each K and compare
+  <code>model.coherence(10).mean()</code>; see the "Fixed-K embedding models" section of
+  <a href="../../publishing/choosing-k/">choosing K</a>.</li>
+</ul>
+<p><strong>Convergence.</strong> The fit is a collapsed Gibbs sampler, so <code>converged</code> reports
+whether <em>early stopping</em> fired, not whether the chain mixed. It stays <code>False</code> under
+the default <code>convergence_tol=0.0</code> (the fit runs the full <code>iters</code>). Every
+<code>check_every</code> sweeps the collapsed marginal log-likelihood (the same MALLET-formula
+quantity LDA reports: negative, rising toward 0) is recorded, so <code>fit_history</code> /
+<code>log_likelihood_history</code> hold the <code>(iteration, log_likelihood)</code> trace to check for a
+plateau; pass a tolerance to stop early once it flattens:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">iters</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span> <span class="n">convergence_tol</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span> <span class="n">check_every</span><span class="o">=</span><span class="mi">25</span><span class="p">)</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="n">model</span><span class="o">.</span><span class="n">converged</span>            <span class="c1"># True if the trace flattened before iters</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="n">model</span><span class="o">.</span><span class="n">log_likelihood</span><span class="p">()</span>     <span class="c1"># final recorded log-likelihood</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="n">model</span><span class="o">.</span><span class="n">log_likelihood_history</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>   <span class="c1"># (last iteration run, log_likelihood)</span>
+</code></pre></div>
+<p><strong>Saving.</strong> <code>save(path)</code> writes the SeededLDA core to <code>path</code> <strong>and</strong> a companion
+<code>&lt;path&gt;.embedding.npz</code> sidecar (centroids, seeds, hyperparameters). Both files are
+needed to reload; ship both when replicating, or <code>load</code> raises <code>FileNotFoundError</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">model</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">"elda.topica"</span><span class="p">)</span>                 <span class="c1"># also writes elda.topica.embedding.npz</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="n">reloaded</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">EmbeddingLDA</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"elda.topica"</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="combinedtm">CombinedTM<a class="headerlink" href="#combinedtm" title="Permanent link">&para;</a></h2>
+<p>CombinedTM (Bianchi, Terragni &amp; Hovy 2021) is <a href="../models/#prodlda"><code>ProdLDA</code></a> with
+a richer encoder input. ProdLDA's encoder reads a document's bag of words;
+CombinedTM concatenates that bag of words with a contextual document embedding (a
+sentence-transformer vector, an API embedding, an ollama vector) and feeds the
+pair to the same encoder. The product-of-experts decoder still reconstructs the
+bag of words, and the prior, KL, reparameterization, batchnorm, and Adam are all
+unchanged from ProdLDA. Mixing the contextual signal into the encoder yields more
+coherent topics than the bag of words alone. You bring the per-document
+embeddings at <code>fit</code>, one row per document, in corpus order.</p>
+<div class="admonition note">
+<p class="admonition-title">Document embeddings, not word embeddings</p>
+<p>CombinedTM and ZeroShotTM (like BERTopic and FASTopic) take <strong>document
+(sentence) embeddings</strong>, one row per <em>document</em>. This is the opposite of
+<a href="#embeddinglda"><code>EmbeddingLDA</code></a>, <code>ETM</code>, and <code>Top2Vec</code>, which take <strong>word
+embeddings</strong> (one row per <em>vocabulary word</em>). The bundled <code>load_ng20_minilm</code>
+carries both (<code>doc_embeddings</code> and <code>word_embeddings</code>); pass <code>doc_embeddings</code>
+here. Passing word embeddings is caught only when the vocabulary and document
+counts differ, so mind the argument.</p>
+</div>
+<p><strong>When to reach for it.</strong> CombinedTM is the pick when you want a <strong>mixed-membership</strong>
+topic model (a full θ per document) that also leans hard on a document embedding:
+it pairs BERTopic's semantic signal with LDA's soft assignments. Prefer it over
+<a href="#embeddinglda"><code>EmbeddingLDA</code></a> when the embedding should <em>drive</em> inference rather
+than lightly seed it, and over <code>BERTopic</code> when you need per-document mixtures
+instead of one hard cluster per document. <code>doc_topic</code> rows are proper distributions
+(they sum to 1), unlike BERTopic's hard labels.</p>
+<p>Everything below runs offline on the bundled dataset (no encoder needed):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">topica</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="n">ng</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">datasets</span><span class="o">.</span><span class="n">load_ng20_minilm</span><span class="p">()</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="n">docs</span> <span class="o">=</span> <span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">split</span><span class="p">()</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">ng</span><span class="p">[</span><span class="s2">"texts"</span><span class="p">]]</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">CombinedTM</span><span class="p">(</span><span class="n">num_topics</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">ng</span><span class="p">[</span><span class="s2">"doc_embeddings"</span><span class="p">],</span> <span class="n">iters</span><span class="o">=</span><span class="mi">150</span><span class="p">)</span>   <span class="c1"># document embeddings, one row/doc</span>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a>
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="n">model</span><span class="o">.</span><span class="n">topic_word</span>                         <span class="c1"># (num_topics, vocab) softmax(beta_k)</span>
+<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a><span class="n">model</span><span class="o">.</span><span class="n">doc_topic</span>                          <span class="c1"># (num_docs, num_topics) theta, rows sum to 1</span>
+<a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a><span class="n">model</span><span class="o">.</span><span class="n">top_words</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="n">topic</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a><span class="n">model</span><span class="o">.</span><span class="n">bound</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">converged</span>             <span class="c1"># the ELBO at the final epoch</span>
+</code></pre></div>
+<p>CombinedTM's encoder first layer is <code>Linear(2V, hidden)</code>, so it is markedly slower
+than ZeroShotTM (whose encoder reads only the embedding); budget accordingly at the
+default <code>iters=200</code>.</p>
+<p><code>transform</code> maps new documents the same way, so it needs both the tokens and
+their embeddings:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="n">theta_new</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">transform</span><span class="p">(</span><span class="n">new_docs</span><span class="p">,</span> <span class="n">embed</span><span class="p">(</span><span class="n">new_docs</span><span class="p">))</span>   <span class="c1"># (n, num_topics)</span>
+</code></pre></div>
+<p>The reference fits the encoder with PyTorch autograd. We hand-code the encoder's
+forward and backward, including the dense embedding block of the first layer
+(every gradient checked against finite differences), and step with Adam, so this
+is the same model with no PyTorch. Because the encoder is deterministic given a
+seed, fits are bit-identical across reruns. CombinedTM also accepts the shared
+<code>prior=</code> and <code>contrastive=</code> flags described under
+<a href="../models/#objective-and-prior-options">ProdLDA</a>. The reference implementation is
+<a href="https://github.com/MilaNLProc/contextualized-topic-models">contextualized-topic-models</a>
+(Bianchi et al., MIT).</p>
+<h2 id="zeroshottm">ZeroShotTM<a class="headerlink" href="#zeroshottm" title="Permanent link">&para;</a></h2>
+<p>ZeroShotTM (Bianchi, Nozza &amp; Hovy 2021) takes the same idea one step further: the
+encoder reads <em>only</em> the contextual document embedding, with no bag of words at
+all. The decoder still reconstructs the bag of words, so topics remain proper
+word distributions, but topic proportions are inferred from the embedding alone.
+The constructor and surface match CombinedTM (and it likewise takes <strong>document</strong>
+embeddings, not word embeddings). Because the encoder reads only the embedding, it
+is faster than CombinedTM.</p>
+<p><strong>When to reach for it.</strong> ZeroShotTM's niche is <strong>cross-lingual / zero-shot</strong> work
+(below) and cases where you want the topics inferred purely from a strong document
+embedder. When lexical co-occurrence carries real signal, CombinedTM (which also
+reads the bag of words) is usually the safer choice.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">topica</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="n">ng</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">datasets</span><span class="o">.</span><span class="n">load_ng20_minilm</span><span class="p">()</span>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="n">docs</span> <span class="o">=</span> <span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">split</span><span class="p">()</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">ng</span><span class="p">[</span><span class="s2">"texts"</span><span class="p">]]</span>
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>
+<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">ZeroShotTM</span><span class="p">(</span><span class="n">num_topics</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">ng</span><span class="p">[</span><span class="s2">"doc_embeddings"</span><span class="p">],</span> <span class="n">iters</span><span class="o">=</span><span class="mi">150</span><span class="p">)</span>   <span class="c1"># document embeddings only</span>
+<a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a><span class="n">model</span><span class="o">.</span><span class="n">topic_word</span>
+<a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a><span class="n">model</span><span class="o">.</span><span class="n">doc_topic</span>                                    <span class="c1"># theta, rows sum to 1</span>
+</code></pre></div>
+<p>Dropping the bag of words from the encoder is what enables <strong>cross-lingual
+transfer</strong>. If you embed documents with a multilingual encoder, you can fit the
+model on one language and <code>transform</code> documents in another: the held-out
+documents map to the trained topics through their embeddings, and no shared
+vocabulary is needed.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="c1"># Fit on English, then map French documents to the same topics.</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">english_docs</span><span class="p">,</span> <span class="n">multilingual_embed</span><span class="p">(</span><span class="n">english_docs</span><span class="p">),</span> <span class="n">iters</span><span class="o">=</span><span class="mi">150</span><span class="p">)</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="n">theta_fr</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">transform</span><span class="p">(</span><span class="n">french_docs</span><span class="p">,</span> <span class="n">multilingual_embed</span><span class="p">(</span><span class="n">french_docs</span><span class="p">))</span>
+</code></pre></div>
+<p>As with CombinedTM, we hand-code the encoder's forward and backward over the
+embedding-only first layer (finite-difference checked) and fit with Adam, so the
+path has no PyTorch and is bit-identical across reruns. ZeroShotTM accepts the same
+shared <code>prior=</code> and <code>contrastive=</code> flags described under
+<a href="../models/#objective-and-prior-options">ProdLDA</a>. The reference implementation is
+<a href="https://github.com/MilaNLProc/contextualized-topic-models">contextualized-topic-models</a>
+(Bianchi et al., MIT).</p>
+<h2 id="detm">DETM<a class="headerlink" href="#detm" title="Permanent link">&para;</a></h2>
+<p>DETM (the Dynamic Embedded Topic Model) is ETM for time-stamped corpora: the
+topic embeddings drift across ordered time slices, so a topic's <em>words</em> evolve
+while its identity persists. You supply word embeddings and a per-document time
+index; the topic-word distribution at each slice is <code>softmax(alpha_k^(t) . rho)</code>,
+with <code>alpha</code> following a Gaussian random walk over time.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">DETM</span><span class="p">(</span><span class="n">num_topics</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">word_embeddings</span><span class="p">,</span> <span class="n">vocabulary</span><span class="p">,</span> <span class="n">times</span><span class="o">=</span><span class="n">year_index</span><span class="p">,</span> <span class="n">iters</span><span class="o">=</span><span class="mi">120</span><span class="p">)</span>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>
+<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="n">model</span><span class="o">.</span><span class="n">topic_word</span>                 <span class="c1"># (K, V): time-averaged topics</span>
+<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="n">model</span><span class="o">.</span><span class="n">beta_over_time</span>             <span class="c1"># (T, K, V): per-slice topic-word distributions</span>
+<a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a><span class="n">model</span><span class="o">.</span><span class="n">top_words_at</span><span class="p">(</span><span class="n">t</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>    <span class="c1"># the top words of each topic in slice t</span>
+<a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="n">model</span><span class="o">.</span><span class="n">eta</span>                        <span class="c1"># (T, K): the time-varying topic prevalence prior</span>
+</code></pre></div>
+<p>Inference is structured amortized variational inference (an LSTM over the per-time
+word frequencies for the prevalence prior, an encoder for the document
+proportions), hand-coded in the Rust core with finite-difference-checked
+gradients; no PyTorch. Fits are deterministic from a fixed seed. On large
+vocabularies the variational log-variances are clamped for numerical stability,
+and an optional <code>grad_clip=</code> mirrors the reference's gradient clipping; neither
+changes the default result on well-behaved corpora.</p>
+<p>DETM is <a href="https://github.com/adjidieng/DETM">validated against the reference</a>
+(Dieng, Ruiz &amp; Blei 2019, MIT) on the paper's UN-debates and ACL corpora: it
+recovers topics at the reference's own seed-to-seed agreement (aligned cosine
+0.74 / 0.59 against a 0.74 / 0.58 reference-vs-reference floor). One important
+caveat: the per-time <em>prevalence</em> trajectory (<code>eta</code>) is weakly identified in DETM
+— the reference implementation cannot reproduce its own <code>eta</code> across random seeds
+either — so read the topic-word evolution (<code>beta_over_time</code>), which is stable, and
+do not over-interpret a single <code>eta</code> trajectory.</p>
+<h2 id="post-fit-diagnostics">Post-fit diagnostics<a class="headerlink" href="#post-fit-diagnostics" title="Permanent link">&para;</a></h2>
+<p>The reduce→cluster pipeline decides almost everything, and its behavior is <em>quiet</em>:
+any configuration still returns a model. BERTopic and Top2Vec run a cheap post-fit
+check and emit a one-time <code>warnings.warn</code> when the result is worth a second look — a
+<strong>few-topic / one-dominant-bucket</strong> result (1–2 topics, or one topic holding most of
+the assigned documents), a very <strong>high noise fraction</strong> (most documents left
+unassigned), or gross <strong>over-splitting</strong> (far more topics than the corpus supports).
+The few-topic case is not always an error: density clustering on some embedding sets
+legitimately yields a few coarse topics, and topica reproduces what the reference
+umap-learn + HDBSCAN pipeline finds (see
+<a href="https://github.com/nealcaren/topica/blob/main/parity/bertopic_umap_default_compare.py"><code>parity/bertopic_umap_default_compare.py</code></a>).
+The message says so, and points to the levers for finer/more topics — lower
+<code>min_cluster_size</code>, or a fixed-K clusterer (<code>clusterer="kmeans", num_clusters=…</code>) or
+<code>nr_topics</code>. The thresholds are conservative; silence it with <code>diagnostics=False</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">BERTopic</span><span class="p">(</span><span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>                    <span class="c1"># warns if the fit is degenerate</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">BERTopic</span><span class="p">(</span><span class="n">diagnostics</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="c1"># silent</span>
+</code></pre></div>
+<h2 id="avoiding-the-1-noise-bucket">Avoiding the <code>-1</code> noise bucket<a class="headerlink" href="#avoiding-the-1-noise-bucket" title="Permanent link">&para;</a></h2>
+<p>HDBSCAN (the default) discovers the topic count but leaves sparse documents
+unassigned as <code>-1</code>. On real sentence-transformer embeddings that bucket can be
+large, and for many social-science questions every document should land
+somewhere. Two ways out:</p>
+<ul>
+<li><strong>Switch to an auto-K graph clusterer.</strong> Pass <code>clusterer="louvain"</code> or
+  <code>"leiden"</code> (no <code>num_clusters</code> needed). Both build a k-nearest-neighbor graph over
+  the reduced embeddings and optimize modularity, so — like HDBSCAN — they
+  <em>discover</em> the topic count, but unlike HDBSCAN they assign every document (no
+  <code>-1</code>). <code>"leiden"</code> adds a refinement phase (Traag, Waltman &amp; van Eck 2019) that
+  guarantees every topic is internally connected. On fine-grained corpora these
+  recover a sensible number of topics where HDBSCAN over- or under-splits, and they
+  can beat k-means handed the true count.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">BERTopic</span><span class="p">(</span><span class="n">clusterer</span><span class="o">=</span><span class="s2">"leiden"</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># count discovered, no noise</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">doc_emb</span><span class="p">)</span>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="k">assert</span> <span class="o">-</span><span class="mi">1</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">labels</span>
+</code></pre></div>
+<p>"Auto" does not mean unsteerable. <code>resolution</code> (default 1.0) trades off how many
+  topics they find — raise it for a fine-grained corpus, lower it for broad themes;
+  the secondary <code>knn_neighbors</code> (default 15) does the same more weakly (smaller =
+  more, tighter topics). Both are ignored by the other clusterers.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="n">fine</span>  <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">BERTopic</span><span class="p">(</span><span class="n">clusterer</span><span class="o">=</span><span class="s2">"leiden"</span><span class="p">,</span> <span class="n">resolution</span><span class="o">=</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># more topics</span>
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="n">broad</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">BERTopic</span><span class="p">(</span><span class="n">clusterer</span><span class="o">=</span><span class="s2">"leiden"</span><span class="p">,</span> <span class="n">resolution</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># fewer topics</span>
+</code></pre></div>
+<ul>
+<li><strong>Switch to a fixed-K clusterer.</strong> Pass <code>clusterer="kmeans"</code>, <code>"gmm"</code>, or
+  <code>"agglomerative"</code> with <code>num_clusters=K</code> to BERTopic or Top2Vec. All three assign
+  every document to one of <code>K</code> clusters, so there is no <code>-1</code> label (and the topic
+  count is fixed, not discovered). KMeans scales; <code>"gmm"</code> is a diagonal-covariance
+  Gaussian mixture that, unlike k-means, models each topic's spread — so
+  unequal-variance topics separate more cleanly, and it tends to match or beat
+  k-means on embedding clusters; agglomerative (average linkage) suits moderate
+  corpora.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">BERTopic</span><span class="p">(</span><span class="n">clusterer</span><span class="o">=</span><span class="s2">"kmeans"</span><span class="p">,</span> <span class="n">num_clusters</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">doc_emb</span><span class="p">)</span>
+<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a><span class="k">assert</span> <span class="o">-</span><span class="mi">1</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">labels</span>
+</code></pre></div>
+<p>With <code>clusterer="gmm"</code>, BERTopic's <code>doc_topic</code> is the GMM's <strong>soft</strong> membership
+  (the EM posterior responsibilities, rows summing to one), not the c-TF-IDF
+  approximate distribution — a genuine mixture <code>θ</code> for documents that span several
+  topics, where hard clustering assigns only one. The hard <code>labels</code> stay the row
+  argmax. (This applies to the base fit; combining <code>gmm</code> with <code>nr_topics</code> topic
+  reduction reverts <code>doc_topic</code> to the c-TF-IDF distribution.)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">BERTopic</span><span class="p">(</span><span class="n">clusterer</span><span class="o">=</span><span class="s2">"gmm"</span><span class="p">,</span> <span class="n">num_clusters</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">doc_emb</span><span class="p">)</span>
+<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="n">theta</span>  <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">doc_topic</span>          <span class="c1"># (D, 20) soft membership from GMM responsibilities</span>
+<a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="n">labels</span> <span class="o">=</span> <span class="n">theta</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>          <span class="c1"># == model.labels</span>
+</code></pre></div>
+<ul>
+<li><strong>Use a fixed-K, every-document model.</strong> <a href="#embeddinglda"><code>EmbeddingLDA</code></a>
+  (experimental), <code>FASTopic</code>, and <code>ETM</code> are embedding-driven but give every
+  document a full topic distribution <code>θ</code> with no noise bucket, so no document is
+  dropped into a <code>-1</code> outlier bucket in the first place.</li>
+</ul>
+<p><code>reduce_outliers()</code> (below) is the third option: keep HDBSCAN, then reassign the
+<code>-1</code> documents after the fact.</p>
+<h2 id="inspecting-and-adjusting-clustering-models">Inspecting and adjusting clustering models<a class="headerlink" href="#inspecting-and-adjusting-clustering-models" title="Permanent link">&para;</a></h2>
+<p>Top2Vec and BERTopic produce hard <code>labels</code> (<code>-1</code> is a noise/outlier document), so
+they support two post-hoc edits. <code>reduce_outliers()</code> reassigns every <code>-1</code>
+document to the topic whose words best explain it and rebuilds the topic-word
+matrix, returning how many it moved. <code>merge_topics([[3, 7], [1, 2]])</code> collapses
+groups of topics you decide to combine, rebuilding the representation and
+renumbering topics. Both also gain <code>transform</code>/<code>fit_transform</code> for held-out
+documents, and the c-TF-IDF knobs <code>bm25=</code> and <code>reduce_frequent=</code> on BERTopic.</p>
+<p>For a quick read of any fitted model (not just these), <code>topica.topic_info(model,
+texts)</code> returns per-topic size, prevalence, top words, and representative
+documents, with an outlier row when present; <code>topica.topics_over_time(model,
+timestamps)</code> and <code>topica.topics_per_class(model, groups)</code> summarize prevalence by
+time or group; and <code>topica.set_topic_labels(model, {...})</code> stores your own labels.</p>
+<h2 id="the-shared-surface">The shared surface<a class="headerlink" href="#the-shared-surface" title="Permanent link">&para;</a></h2>
+<p>Both models expose topica's standard fitted surface, so they slot in alongside
+every other model: <code>topic_word</code> (<code>num_topics × vocab</code>), <code>doc_topic</code>
+(<code>num_docs × num_topics</code>), <code>top_words</code>, <code>num_topics</code>, <code>topic_names</code>,
+<code>vocabulary</code>, and <code>labels</code>. The embedding-native additions are <code>topic_vectors</code>
+and <code>topic_neighbors</code> (Top2Vec) and <code>approximate_distribution</code> (BERTopic).</p>
+<p>They also <code>save</code>/<code>load</code> like every other model, so a fitted model reloads and
+<code>transform</code>s new documents without re-running the pipeline:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="n">model</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">"topics.tt"</span><span class="p">)</span>
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">BERTopic</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"topics.tt"</span><span class="p">)</span>   <span class="c1"># reload, then transform() forever</span>
+</code></pre></div>
+<h2 id="richer-topic-words-n-grams">Richer topic words: n-grams<a class="headerlink" href="#richer-topic-words-n-grams" title="Permanent link">&para;</a></h2>
+<p>The c-TF-IDF topic words are over the tokens you pass in, so bigrams are a
+preprocessing choice. <code>topica.data.add_ngrams</code> adds them (the mechanical analog of
+scikit-learn's <code>CountVectorizer(ngram_range=..., min_df=...)</code>), keeping every
+document so the rows stay aligned with the embeddings:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="n">docs</span> <span class="o">=</span> <span class="p">[</span><span class="n">topica</span><span class="o">.</span><span class="n">tokenize</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="n">stopwords</span><span class="o">=</span><span class="n">topica</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">ENGLISH_STOPWORDS</span><span class="p">)</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">texts</span><span class="p">]</span>
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="n">docs</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">add_ngrams</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">ngram_range</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="n">min_df</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>   <span class="c1"># unigrams + bigrams</span>
+<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">doc_emb</span><span class="p">)</span>        <span class="c1"># topic words can now read "machine_learning"</span>
+</code></pre></div>
+<p>For statistically-selected phrases instead of every bigram, use
+<a href="../preprocessing/"><code>learn_phrases</code></a>.</p>
+<h2 id="tuning-and-notes">Tuning and notes<a class="headerlink" href="#tuning-and-notes" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>min_cluster_size</code> is the main dial: larger gives fewer, broader topics; smaller
+  gives more, finer ones. <code>min_samples</code> (default <code>min_cluster_size</code>) sets how
+  aggressively sparse documents are called noise (label <code>-1</code>). These apply to the
+  default <code>clusterer="hdbscan"</code>; <code>clusterer="kmeans"</code>/<code>"gmm"</code>/<code>"agglomerative"</code>
+  use <code>num_clusters</code> instead, and <code>clusterer="louvain"</code>/<code>"leiden"</code> discover the
+  count on their own (see above).</li>
+<li><code>n_components</code> is the dimensionality the embeddings are reduced to before
+  clustering. <code>BERTopic</code> and <code>Top2Vec</code> both default to <code>reducer="umap"</code> with
+  <code>n_neighbors=15</code> (matching the upstream BERTopic package and the original
+  Top2Vec's default UMAP config, both of which reduce with UMAP). <code>reducer="pca"</code> switches to
+  a randomized PCA: fast, deterministic, and dependency-free, but it separates less
+  sharply than UMAP and on closely spaced themes can merge clusters a UMAP run would
+  split. Under PCA the reduced coordinates are L2-normalized onto the unit sphere
+  before clustering, so the Euclidean clusterer measures cosine distance — the
+  geometry sentence embeddings are trained for. Without this the few highest-variance
+  PCA directions dominate the metric and the clusterer under-splits real embeddings
+  into a couple of broad topics.</li>
+<li><code>reducer="umap"</code> switches to topica's in-house UMAP reducer (with <code>n_neighbors</code>),
+  which separates real document embeddings much better than a linear projection
+  and, on closely spaced themes, splits clusters PCA would merge. It is a faithful
+  reimplementation of <code>umap-learn</code> (fuzzy simplicial set, <code>a</code>/<code>b</code> membership curve,
+  spectral (Laplacian-eigenmap) initialization, and the reference SGD layout). On real
+  sentence embeddings it reaches <code>umap-learn</code>'s cluster quality
+  (<a href="https://github.com/nealcaren/topica/blob/main/parity/umap_reference_compare.py"><code>parity/umap_reference_compare.py</code></a>),
+  and the whole default BERTopic pipeline matches the reference umap-learn + HDBSCAN
+  result — including on corpora where both legitimately find only a few coarse topics
+  (<a href="https://github.com/nealcaren/topica/blob/main/parity/bertopic_umap_default_compare.py"><code>parity/bertopic_umap_default_compare.py</code></a>).
+  It ships in the wheel, so it is opt-in at runtime, not build time — pure Rust, with
+  no <code>umap-learn</code>/<code>numba</code> dependency. topica uses exact brute-force neighbors and a
+  seeded RNG rather than umap-learn's approximate NN-descent and unseeded state, so the
+  embedding is not coordinate-identical to a given umap-learn run, but recovers the
+  same cluster structure.</li>
+</ul>
+<p>Unlike a typical UMAP, topica's is <strong>fully reproducible</strong>: the initialization and
+  negative sampling are seeded, so a fixed <code>seed</code> pins the layout and the whole
+  <code>reducer="umap"</code> fit is deterministic. There is no non-determinism caveat and no
+  warning.
+- The UMAP layout is tunable. Beyond <code>n_neighbors</code>, <code>reducer="umap"</code> accepts
+  <code>min_dist</code> (minimum spacing of points in the embedding; lower packs clusters
+  tighter — the default <code>0.0</code> matches BERTopic), <code>spread</code>, <code>n_epochs</code> (<code>0</code> = auto:
+  500 for ≤10k rows), <code>negative_sample_rate</code>, <code>repulsion_strength</code>, and <code>metric</code>
+  (<code>"cosine"</code> default, or <code>"euclidean"</code>). All default to <code>umap-learn</code>'s values, so
+  touching nothing recovers the reference's cluster structure; they are ignored under
+  <code>reducer="pca"</code>.
+  The same knobs are on <code>topica.project(method="umap", ...)</code>.</p>
+<p><div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">BERTopic</span><span class="p">(</span><span class="n">reducer</span><span class="o">=</span><span class="s2">"umap"</span><span class="p">,</span> <span class="n">min_dist</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">n_neighbors</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</code></pre></div>
+- Results are reproducible for a fixed <code>seed</code>, under either reducer.</p>
+<div class="admonition note">
+<p class="admonition-title">Faithful to the references</p>
+<p>On a shared task with shared document embeddings, topica's <code>Top2Vec</code> and
+<code>BERTopic</code> recover comparable topic structure to the Python <code>BERTopic</code>
+package. topica's in-house UMAP reducer matches <code>umap-learn</code>'s cluster quality
+on real sentence embeddings (measured by adjusted Rand index against gold
+labels); because topica uses a different HDBSCAN implementation, exact cluster
+assignments still differ from the <code>umap-learn</code> + <code>hdbscan</code> reference, but the
+recovered topics agree. The payoff is the dependency footprint: topica runs the
+whole pipeline in Rust with none of <code>torch</code>, <code>umap-learn</code>, or <code>hdbscan</code>
+installed.</p>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "navigation.indexes", "content.code.copy", "content.code.annotate", "toc.follow", "search.suggest"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,5369 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Fast, all-purpose topic modeling for Python — a Rust core with the MALLET, STM, tomotopy, and gensim toolkits in one package.">
+      
+      
+      
+        <link rel="canonical" href="https://nealcaren.github.io/topica/api/manifest/">
+      
+      
+        <link rel="prev" href="../diagnostics/">
+      
+      
+        <link rel="next" href="../content/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../images/topica-favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Analysis manifest - Topica</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#analysis-manifest" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Topica" class="md-header__button md-logo" aria-label="Topica" data-md-component="logo">
+      
+  <img src="../../images/topica-mark.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Topica
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Analysis manifest
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/nealcaren/topica" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nealcaren/topica
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Topica" class="md-nav__button md-logo" aria-label="Topica" data-md-component="logo">
+      
+  <img src="../../images/topica-mark.svg" alt="logo">
+
+    </a>
+    Topica
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/nealcaren/topica" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nealcaren/topica
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../can-do/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Start here
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Start here
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/agent-cheatsheet/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent cheat sheet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../publishing/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    From corpus to credible result
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    From corpus to credible result
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/corpus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. Build a defensible corpus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/choosing-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Pick the right model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/choosing-k/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Choose and justify K
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Validate the topics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/effects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Measure effects properly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/reporting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Report and make reproducible
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Methods & models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Methods & models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The model catalog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/model-comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparing the models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/covariates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Covariates & STM
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/guided/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guided topics (seed words)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/short-text/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Short text
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedding topics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM-based topics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analyze & validate
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Analyze & validate
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/preprocessing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Preprocessing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagnostics & validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/uncertainty/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reporting uncertainty
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/keywords/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Distinguishing words
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/transform/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Held-out inference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/cross-validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cross-validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/dubois/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Du Bois in The Crisis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/congress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Congress (STM party & time)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/poliblog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Political blogs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/content_time/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Party platforms (STM content_time)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/nmf-neural/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NMF vs neural (labeled)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/guided/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guided topics (keyATM)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/dmr-sentiment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sentiment covariate (DMR)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/short-text/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Short text (GSDMM/BTM)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/threads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Threaded conversations (ThreadTM)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/llm-topics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM embeddings & labels
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../replications/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Replications
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Replications
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../replications/stm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STM (the stm vignette)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../replications/keyatm-dynamic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dynamic keyATM (Supreme Court)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../replications/tlda/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TensorLDA validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../replications/sts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STS reference profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../datasets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Datasets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedding models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analysis manifest
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analysis manifest
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#privacy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Privacy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-verify-reports" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What verify reports
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recording-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recording evidence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#embedding-based-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Embedding-based models
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#comparing-two-fits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Comparing two fits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bundling-the-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bundling the analysis
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-analysis-card" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The analysis card
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topica.provenance.record_fit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        record_fit
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topica.provenance.effective_determinism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        effective_determinism
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AnalysisManifest
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AnalysisManifest">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.__annotations__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __annotations__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.__dataclass_fields__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __dataclass_fields__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.__doc__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __doc__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.__match_args__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __match_args__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.__module__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __module__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.__weakref__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __weakref__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.schema_version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        schema_version
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.add_decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        add_decision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.add_diagnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        add_diagnostic
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.verify" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        verify
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.compare" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        compare
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.render" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        render
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.to_markdown" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        to_markdown
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.bundle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bundle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.load_bundle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        load_bundle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.extract_bundle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        extract_bundle
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VerifyResult
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="VerifyResult">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult.__annotations__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __annotations__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult.__dataclass_fields__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __dataclass_fields__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult.__doc__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __doc__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult.__match_args__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __match_args__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult.__module__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __module__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult.__weakref__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __weakref__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult.differences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        differences
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult.ok" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ok
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult.unverifiable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unverifiable
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ManifestDiff
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ManifestDiff">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff.__annotations__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __annotations__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff.__dataclass_fields__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __dataclass_fields__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff.__doc__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __doc__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff.__match_args__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __match_args__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff.__module__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __module__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff.__weakref__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __weakref__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff.differences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        differences
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff.incomparable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        incomparable
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff.same" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        same
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topica.manifest.fingerprint_corpus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fingerprint_corpus
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topica.manifest.fingerprint_array" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fingerprint_array
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topica.manifest.fingerprint_design" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fingerprint_design
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../content/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Content-covariate diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../viz/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STM toolkit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../keyatm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    keyATM toolkit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../keywords/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keywords & preprocessing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Contributing
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/conventions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API conventions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/keyword-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keyword & seed parameters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/estimator-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Estimator contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/model-map/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model implementation map
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation & graduation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/release-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../citing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Citing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#privacy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Privacy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-verify-reports" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What verify reports
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recording-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recording evidence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#embedding-based-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Embedding-based models
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#comparing-two-fits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Comparing two fits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bundling-the-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bundling the analysis
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-analysis-card" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The analysis card
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topica.provenance.record_fit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        record_fit
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topica.provenance.effective_determinism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        effective_determinism
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AnalysisManifest
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AnalysisManifest">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.__annotations__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __annotations__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.__dataclass_fields__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __dataclass_fields__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.__doc__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __doc__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.__match_args__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __match_args__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.__module__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __module__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.__weakref__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __weakref__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.schema_version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        schema_version
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.add_decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        add_decision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.add_diagnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        add_diagnostic
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.verify" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        verify
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.compare" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        compare
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.render" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        render
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.to_markdown" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        to_markdown
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.bundle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bundle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.load_bundle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        load_bundle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.AnalysisManifest.extract_bundle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        extract_bundle
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VerifyResult
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="VerifyResult">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult.__annotations__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __annotations__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult.__dataclass_fields__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __dataclass_fields__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult.__doc__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __doc__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult.__match_args__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __match_args__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult.__module__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __module__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult.__weakref__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __weakref__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult.differences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        differences
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult.ok" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ok
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.VerifyResult.unverifiable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unverifiable
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ManifestDiff
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ManifestDiff">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff.__annotations__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __annotations__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff.__dataclass_fields__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __dataclass_fields__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff.__doc__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __doc__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff.__match_args__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __match_args__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff.__module__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __module__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff.__weakref__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        __weakref__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff.differences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        differences
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff.incomparable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        incomparable
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topica.manifest.ManifestDiff.same" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        same
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topica.manifest.fingerprint_corpus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fingerprint_corpus
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topica.manifest.fingerprint_array" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fingerprint_array
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topica.manifest.fingerprint_design" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fingerprint_design
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="analysis-manifest">Analysis manifest<a class="headerlink" href="#analysis-manifest" title="Permanent link">&para;</a></h1>
+<p>A portable, privacy-aware record of one fit: the inputs and decisions needed to
+inspect or replay it, plus a verifier that reports what actually holds rather than
+a single pass/fail. The manifest is not a second model format. It composes with
+<code>Corpus.save</code> and <code>model.save</code>, and records fingerprints and settings, not raw
+content.</p>
+<p>We write the manifest with an explicit <code>record_fit</code> call. The explicit boundary
+is deliberate: a call cannot honestly see preprocessing performed before it, so it
+records only what it observes and marks the rest.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">topica</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">corpus</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">Corpus</span><span class="o">.</span><span class="n">from_documents</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">STM</span><span class="p">(</span><span class="n">num_topics</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">13</span><span class="p">)</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">corpus</span><span class="p">,</span> <span class="n">prevalence</span><span class="o">=</span><span class="n">X</span><span class="p">,</span> <span class="n">iters</span><span class="o">=</span><span class="mi">1000</span><span class="p">)</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">record</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">provenance</span><span class="o">.</span><span class="n">record_fit</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">corpus</span><span class="p">,</span> <span class="n">prevalence</span><span class="o">=</span><span class="n">X</span><span class="p">,</span> <span class="n">prevalence_names</span><span class="o">=</span><span class="n">names</span><span class="p">,</span> <span class="n">iters</span><span class="o">=</span><span class="mi">1000</span><span class="p">)</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="n">record</span><span class="o">.</span><span class="n">add_decision</span><span class="p">(</span><span class="s2">"K"</span><span class="p">,</span> <span class="s2">"Chose 20 after inspecting 15/20/25."</span><span class="p">)</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="n">record</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">"analysis.topica.json"</span><span class="p">)</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="c1"># On another machine or session:</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="n">record</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">AnalysisManifest</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"analysis.topica.json"</span><span class="p">)</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="nb">print</span><span class="p">(</span><span class="n">record</span><span class="o">.</span><span class="n">verify</span><span class="p">(</span><span class="n">corpus</span><span class="p">,</span> <span class="n">model</span><span class="p">)</span><span class="o">.</span><span class="n">summary</span><span class="p">())</span>
+</code></pre></div>
+<h2 id="privacy">Privacy<a class="headerlink" href="#privacy" title="Permanent link">&para;</a></h2>
+<p>The default <code>privacy="minimal"</code> records the model, the environment, and coarse
+corpus counts (document count, total tokens) only. It carries no length
+distribution, vocabulary size, preprocessing detail, or raw content.
+<code>privacy="aggregate"</code> opts those descriptive fields in. A content fingerprint,
+which lets <code>verify</code> prove corpus identity, is a separate opt-in
+(<code>content_fingerprint=True</code>) and is <strong>sensitive</strong>: a hash is not anonymisation,
+and a small or public corpus can be brute-forced. <code>privacy="full"</code> (raw values)
+is intentionally not part of this version.</p>
+<h2 id="what-verify-reports">What <code>verify</code> reports<a class="headerlink" href="#what-verify-reports" title="Permanent link">&para;</a></h2>
+<p><code>verify</code> re-derives fingerprints from the supplied corpus and model and reports a
+status per field, never collapsing them into one flag: <code>exact</code>, <code>input_changed</code>,
+<code>artifact_changed</code>, <code>environment_changed</code> (differs, but the model's determinism
+class says it may still replay), or <code>unverifiable</code> (nothing recorded to check
+against, a bounded component, or a fingerprint from a spec this build does not
+recognise).</p>
+<p>An <code>unverifiable</code> field is an <strong>absence of evidence, not a mismatch</strong>, and the two
+are kept apart. <code>result.differences</code> lists the fields that actually changed;
+<code>result.unverifiable</code> lists the ones nothing could be checked against. This matters
+on the default path: at <code>privacy="minimal"</code> no content fingerprint is recorded, so a
+perfect re-verification still leaves <code>corpus_fingerprint</code> unverifiable. <code>ok</code> stays
+<code>False</code> there — nothing is claimed as verified that was not — but the summary says
+plainly that no differences were found, rather than reporting a clean reproduction as
+a failure:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>verify: no differences found (1 field unverifiable)
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  environment         exact
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>  corpus_counts       exact
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>  corpus_fingerprint  unverifiable
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>  model_topic_word    exact
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>  model_doc_topic     exact
+</code></pre></div>
+<p><code>ManifestDiff</code> draws the same distinction: <code>incomparable</code> (different fingerprint
+specs, or a keyed digest) is an inability to tell, reported apart from the genuine
+<code>changed</code> / <code>only_in_a</code> / <code>only_in_b</code> differences.</p>
+<p>The determinism the manifest records is <strong>config-aware</strong> (issue #401), not the
+coarse per-class registry tag: a <code>cvb0</code> sampler or an <code>init="random"</code> fit is
+recorded as <code>seed-reproducible</code> even when the model class is nominally <code>bit-exact</code>,
+and <code>determinism_detail</code> carries the machine-readable <code>replay_requires</code> (the <code>seed</code>,
+plus <code>num_threads</code> for the collapsed-Gibbs approximate parallel sampler) and any
+caveats. Compute it directly for any model with <code>topica.provenance.effective_determinism</code>.</p>
+<h2 id="recording-evidence">Recording evidence<a class="headerlink" href="#recording-evidence" title="Permanent link">&para;</a></h2>
+<p><code>record_fit(..., diagnostics=["coherence", "exclusivity"])</code> computes those
+built-in topic-quality metrics and records each as <em>computed evidence</em> (its mean
+over topics), or <code>value=None</code> with a note when a metric is not defined for the
+model. You can also attach your own with <code>record.add_diagnostic(name, value)</code> and
+interpretive notes with <code>record.add_decision(key, note)</code>; both are stored as
+visibly researcher-authored, never as tool-verified conclusions.</p>
+<h2 id="embedding-based-models">Embedding-based models<a class="headerlink" href="#embedding-based-models" title="Permanent link">&para;</a></h2>
+<p>An embedding+cluster model such as <code>BERTopic</code> is determined by the document
+embeddings it was fit on, but the fitted model does not retain them, so <code>record_fit</code>
+cannot see them on its own. Pass them so the fit stays verifiable and reproducible:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">BERTopic</span><span class="p">(</span><span class="n">num_clusters</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">tokens</span><span class="p">,</span> <span class="n">embeddings</span><span class="p">)</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">record</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">provenance</span><span class="o">.</span><span class="n">record_fit</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">corpus</span><span class="p">,</span> <span class="n">embeddings</span><span class="o">=</span><span class="n">embeddings</span><span class="p">)</span>   <span class="c1"># fingerprints them</span>
+</code></pre></div>
+<p>The embeddings are recorded as an order-sensitive fingerprint under
+<code>inputs["embeddings"]</code> (a hash, not the vectors). If you omit them for an
+embedding-based model, their absence is recorded honestly — the manifest marks that
+the determining input was not captured, rather than reading as a complete record.</p>
+<h2 id="comparing-two-fits">Comparing two fits<a class="headerlink" href="#comparing-two-fits" title="Permanent link">&para;</a></h2>
+<p><code>a.compare(b)</code> diffs two manifests directly, with no corpus or model needed, and
+reports per field <code>same</code> / <code>changed</code> / <code>only_in_a</code> / <code>only_in_b</code> / <code>incomparable</code>.
+It answers "did these two runs use the same corpus, model, and inputs, or did
+something change, and what?" — for example, whether a collaborator changed the
+corpus or only the seed.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">a</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">AnalysisManifest</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"run-a.json"</span><span class="p">)</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">b</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">AnalysisManifest</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"run-b.json"</span><span class="p">)</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="nb">print</span><span class="p">(</span><span class="n">a</span><span class="o">.</span><span class="n">compare</span><span class="p">(</span><span class="n">b</span><span class="p">)</span><span class="o">.</span><span class="n">summary</span><span class="p">())</span>
+</code></pre></div>
+<p><code>a.compare(b)</code> is a <em>provenance</em> diff (same corpus/model/inputs?). To compare the
+<strong>topics themselves</strong> — which are stable, which drifted, which are new — without the
+models, record each fit with its top words retained and pass the two manifests to
+<a href="../../guides/model-comparison/#comparing-two-manifests-without-the-models"><code>topica.compare</code></a>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">ra</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">provenance</span><span class="o">.</span><span class="n">record_fit</span><span class="p">(</span><span class="n">model_a</span><span class="p">,</span> <span class="n">corpus_a</span><span class="p">,</span> <span class="n">topic_words_n</span><span class="o">=</span><span class="mi">25</span><span class="p">)</span>   <span class="c1"># opt-in; off by default</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">cmp</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">compare</span><span class="p">(</span><span class="n">ra</span><span class="p">,</span> <span class="n">rb</span><span class="p">)</span>                                  <span class="c1"># Jaccard top-word alignment</span>
+</code></pre></div>
+<p>Retain generously (<code>topic_words_n≈25</code>, not 10): top-word <em>set</em> overlap is coarser
+than the live cosine, and seed-varying fits churn their top-word lists, so too small
+a window can mislabel a stable topic as vanished/appeared (<code>compare</code> flags such
+near-misses).</p>
+<p>Top words are retained only when you ask (<code>topic_words_n&gt;0</code>): they are
+human-readable tokens drawn from the corpus vocabulary, so — like
+<code>content_fingerprint</code> — they are an explicit opt-in and are off at every privacy
+level, keeping the default manifest fingerprints-not-content.</p>
+<h2 id="bundling-the-analysis">Bundling the analysis<a class="headerlink" href="#bundling-the-analysis" title="Permanent link">&para;</a></h2>
+<p><code>record.bundle(path, model=model, corpus=corpus)</code> writes a self-contained,
+<strong>content-addressed</strong> <code>.zip</code>: the manifest plus the saved artifacts, each file
+named by its own hash, as one shareable, self-verifying unit.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">record</span><span class="o">.</span><span class="n">bundle</span><span class="p">(</span><span class="s2">"analysis.zip"</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">)</span>                 <span class="c1"># manifest + model</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">record</span><span class="o">.</span><span class="n">bundle</span><span class="p">(</span><span class="s2">"analysis.zip"</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span> <span class="n">corpus</span><span class="o">=</span><span class="n">corpus</span><span class="p">,</span> <span class="n">include_corpus</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p><code>bundle</code> refuses to package a model or corpus whose fingerprints do not match the
+manifest (guarding against bundling the wrong fit). <code>AnalysisManifest.load_bundle(path)</code>
+reloads the manifest and <strong>checks every artifact's bytes</strong> against its
+content-addressed name and the manifest reference, raising on a corrupt bundle or
+artifacts that no longer match. This is an integrity / content-addressing check,
+not authenticity — detecting a <em>fully rewritten</em> bundle (artifact, digest, and
+reference all changed together) needs a signature, which is tracked separately.
+<code>AnalysisManifest.extract_bundle(path, dest)</code> writes the artifacts out so you can
+reload them (<code>topica.LDA.load(...)</code>). Bundling the corpus is opt-in and
+<strong>sensitive</strong> — it embeds the raw tokens.</p>
+<h2 id="the-analysis-card">The analysis card<a class="headerlink" href="#the-analysis-card" title="Permanent link">&para;</a></h2>
+<p><code>record.render(path)</code> writes a self-contained HTML <strong>analysis card</strong>, and
+<code>record.to_markdown()</code> returns a Markdown version for a notebook or Quarto. The
+card shows only what the manifest recorded, so it cannot over-claim: researcher
+decisions are labelled as authored (not tool-verified), diagnostics as computed
+evidence, and fingerprints as verifiable identity rather than content. Pass a
+<code>VerifyResult</code> to include the graded verification table.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">record</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="s2">"analysis-card.html"</span><span class="p">,</span> <span class="n">verification</span><span class="o">=</span><span class="n">record</span><span class="o">.</span><span class="n">verify</span><span class="p">(</span><span class="n">corpus</span><span class="p">,</span> <span class="n">model</span><span class="p">))</span>
+</code></pre></div>
+<h2 id="reference">Reference<a class="headerlink" href="#reference" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="topica.provenance.record_fit" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">topica.provenance.record_fit</span>
+
+
+<a href="#topica.provenance.record_fit" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">record_fit</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">corpus</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">prevalence</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">prevalence_names</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">embeddings</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">privacy</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'minimal'</span><span class="p">,</span> <span class="n">content_fingerprint</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">fingerprint_key</span><span class="p">:</span> <span class="nb">bytes</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">thread_count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">diagnostics</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">diagnostics_n</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">,</span> <span class="n">topic_words_n</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="o">**</span><span class="n">fit_settings</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AnalysisManifest</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Record a fitted <code>model</code> on <code>corpus</code> as an :class:<code>AnalysisManifest</code>.</p>
+<p>The explicit call is deliberate: it cannot honestly see preprocessing done
+before it, so it records only what it can observe and marks the rest.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>corpus</code>
+            </td>
+            <td>
+                  <code>the ``Corpus`` (or token lists) the model was fit on. Optional: when</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>omitted it defaults to the model's own retained corpus (<code>model.corpus</code>,
+which e.g. :class:<code>~topica.ThreadTM</code> exposes). A model that does not retain
+a reusable corpus raises a clear error asking you to pass it.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>privacy</code>
+            </td>
+            <td>
+                  <code>``&#34;minimal&#34;`` (default) or ``&#34;aggregate&#34;``. ``&#34;full&#34;`` is not in V1.</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+            <td>
+                  <code>&#39;minimal&#39;</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>content_fingerprint</code>
+            </td>
+            <td>
+                  <code>opt-in, **sensitive**. Adds an order-sensitive hash of</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>the corpus tokens so <code>verify</code> can prove corpus identity. A hash is not
+anonymisation.</p>
+              </div>
+            </td>
+            <td>
+                  <code>False</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>fingerprint_key</code>
+            </td>
+            <td>
+                  <code>optional key for keyed/salted fingerprints (private</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>verification only; keyed digests are marked non-portable).</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>diagnostics</code>
+            </td>
+            <td>
+                  <code>optional list of built-in diagnostics to compute and record as</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>evidence: any of :data:<code>BUILTIN_DIAGNOSTICS</code> (<code>"coherence"</code>,
+<code>"exclusivity"</code>). Each is recorded as computed evidence (its mean over
+topics), or <code>value=None</code> with a note if it is not defined for this model.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>embeddings</code>
+            </td>
+            <td>
+                  <code>the ``(num_docs, dim)`` document embeddings a document-embedding</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>model (e.g. BERTopic, Top2Vec) was fit on. These <em>determine</em> the topics but
+are not retained on the fitted model, so <code>record_fit</code> cannot see them
+unless you pass them here; when you do, an order-sensitive fingerprint is
+recorded (as <code>inputs["embeddings"]</code>) so the fit is verifiable and two
+manifests are comparable. The array is validated (2-D, one row per document);
+a mis-shaped array raises rather than fingerprinting the wrong thing. For a
+document-embedding model, omitting them is recorded honestly (a marker noting
+the determining input was not captured), rather than leaving the manifest
+silently implying completeness. Which models count is read from the model's
+<code>fit</code> signature (a <code>doc_embeddings</code>/<code>embeddings</code> parameter), so
+word-embedding models (ETM, DETM) are not mislabeled. A model that also
+consumes vocabulary embeddings (e.g. S³) records only the document ones here.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>diagnostics_n</code>
+            </td>
+            <td>
+                  <code>the top-N words each diagnostic uses (default 10).</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+            <td>
+                  <code>10</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>topic_words_n</code>
+            </td>
+            <td>
+                  <code>opt-in, **content**. When ``&gt; 0``, retains each topic&#39;s top-N</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>words and its mean prevalence (<code>doc_topic.mean(0)</code>) in the model block, so
+two manifests can later be compared topic-for-topic by
+:func:<code>topica.compare</code> <em>without refitting</em>. Default <code>0</code> retains nothing —
+top words are human-readable tokens drawn from the corpus vocabulary
+(model output, but content nonetheless), so like <code>content_fingerprint</code>
+this is an explicit opt-in and is off at every privacy level. A manifest
+recorded with <code>topic_words_n=0</code> cannot be topic-compared (a clear error
+is raised). Retain enough words for the comparison to resolve: <code>compare</code>
+aligns manifests by top-word <em>set</em> overlap, which is coarser than the live
+cosine, so <code>~25</code> is a safer floor than <code>10</code> for seed-varying (e.g.
+Gibbs) fits whose top-word lists churn between runs.</p>
+              </div>
+            </td>
+            <td>
+                  <code>0</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>fit_settings</code>
+            </td>
+            <td>
+                  <code>the fit arguments you passed (``iters=``, …), recorded as</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>provenance. Only JSON-serialisable values are kept; others are dropped
+with a note.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="topica.provenance.effective_determinism" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">topica.provenance.effective_determinism</span>
+
+
+<a href="#topica.provenance.effective_determinism" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">effective_determinism</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">fit_settings</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>The determinism class this <em>instance</em> actually has, given its configuration
+(issue #401), refining the per-class :attr:<code>ModelInfo.determinism</code> tag.</p>
+<p>Determinism is often per-configuration, not per-class: the same model can be
+<code>bit-exact</code> under one setting and <code>seed-reproducible</code> under another. This
+reads the model's :attr:<code>~topica</code> <code>settings</code> (constructor config, issue #400)
+and the <code>fit_settings</code> you record, and returns::</p>
+<div class="highlight"><pre><span></span><code>{"effective": "seed-reproducible",     # the config-aware class
+ "registry_class": "bit-exact",        # the coarse per-class tag
+ "replay_requires": {"seed": 13},      # machine-readable replay conditions
+ "notes": ["..."]}                     # human-readable caveats
+</code></pre></div>
+<p><code>replay_requires</code> carries the conditions an exact replay needs — always the
+<code>seed</code> for a seed-reproducible fit, plus <code>num_threads</code> for the collapsed-Gibbs
+approximate parallel sampler. <code>bit-exact</code> fits carry no replay requirements.</p>
+<p>Scope (minimal, honest): claims the configuration determines are made exactly.
+Where the deciding factor is a <em>runtime</em> outcome the config cannot know — did a
+spectral initialization succeed or silently fall back to a seeded random one? did
+anchor selection hit its degenerate-basis fallback? — the report reads the route
+the fit actually took, recorded on the fitted model (<code>model.initialization</code> for
+STM/CTM/STS/DTM, <code>model.anchor_fallback_used</code> for AnchorLDA, issue #410), and
+makes the exact call. For an <em>unfitted</em> model, or one saved before that route was
+recorded, it falls back to the common-case class plus a caveat in <code>notes</code> rather
+than over- or under-claiming.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>model</code>
+            </td>
+            <td>
+                  <code>a topica model (fitted or not; reads its construction config).</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>fit_settings</code>
+            </td>
+            <td>
+                  <code>the keyword arguments passed to ``fit`` (e.g. ``num_threads``,</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>inference</code>), which can override the constructor. Optional.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h2 id="topica.manifest.AnalysisManifest" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">topica.manifest.AnalysisManifest</span>
+
+
+<a href="#topica.manifest.AnalysisManifest" class="headerlink" title="Permanent link">&para;</a></h2>
+
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>A versioned, privacy-aware record of one fit. See the module docstring.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.AnalysisManifest.__annotations__" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">__annotations__</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+  </span>
+
+<a href="#topica.manifest.AnalysisManifest.__annotations__" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="vm">__annotations__</span> <span class="o">=</span> <span class="p">{</span><span class="s1">'topica_version'</span><span class="p">:</span> <span class="s1">'str'</span><span class="p">,</span> <span class="s1">'environment'</span><span class="p">:</span> <span class="s1">'dict[str, Any]'</span><span class="p">,</span> <span class="s1">'model'</span><span class="p">:</span> <span class="s1">'dict[str, Any]'</span><span class="p">,</span> <span class="s1">'corpus'</span><span class="p">:</span> <span class="s1">'dict[str, Any]'</span><span class="p">,</span> <span class="s1">'inputs'</span><span class="p">:</span> <span class="s1">'dict[str, Any]'</span><span class="p">,</span> <span class="s1">'diagnostics'</span><span class="p">:</span> <span class="s1">'list[dict[str, Any]]'</span><span class="p">,</span> <span class="s1">'decisions'</span><span class="p">:</span> <span class="s1">'list[dict[str, Any]]'</span><span class="p">,</span> <span class="s1">'schema_version'</span><span class="p">:</span> <span class="s1">'int'</span><span class="p">,</span> <span class="s1">'created'</span><span class="p">:</span> <span class="s1">'str | None'</span><span class="p">}</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>dict() -&gt; new empty dictionary
+dict(mapping) -&gt; new dictionary initialized from a mapping object's
+    (key, value) pairs
+dict(iterable) -&gt; new dictionary initialized as if via:
+    d = {}
+    for k, v in iterable:
+        d[k] = v
+dict(**kwargs) -&gt; new dictionary initialized with the name=value pairs
+    in the keyword argument list.  For example:  dict(one=1, two=2)</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.AnalysisManifest.__dataclass_fields__" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">__dataclass_fields__</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+  </span>
+
+<a href="#topica.manifest.AnalysisManifest.__dataclass_fields__" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">__dataclass_fields__</span> <span class="o">=</span> <span class="p">{</span><span class="s1">'topica_version'</span><span class="p">:</span> <span class="n">Field</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s1">'topica_version'</span><span class="p">,</span><span class="nb">type</span><span class="o">=</span><span class="s1">'str'</span><span class="p">,</span><span class="n">default</span><span class="o">=&lt;</span><span class="n">dataclasses</span><span class="o">.</span><span class="n">_MISSING_TYPE</span> <span class="nb">object</span> <span class="n">at</span> <span class="mh">0x7fa9ffd1ab90</span><span class="o">&gt;</span><span class="p">,</span><span class="n">default_factory</span><span class="o">=&lt;</span><span class="n">dataclasses</span><span class="o">.</span><span class="n">_MISSING_TYPE</span> <span class="nb">object</span> <span class="n">at</span> <span class="mh">0x7fa9ffd1ab90</span><span class="o">&gt;</span><span class="p">,</span><span class="n">init</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="nb">repr</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="nb">hash</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span><span class="n">compare</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="n">metadata</span><span class="o">=</span><span class="n">mappingproxy</span><span class="p">({}),</span><span class="n">kw_only</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span><span class="n">_field_type</span><span class="o">=</span><span class="n">_FIELD</span><span class="p">),</span> <span class="s1">'environment'</span><span class="p">:</span> <span class="n">Field</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s1">'environment'</span><span class="p">,</span><span class="nb">type</span><span class="o">=</span><span class="s1">'dict[str, Any]'</span><span class="p">,</span><span class="n">default</span><span class="o">=&lt;</span><span class="n">dataclasses</span><span class="o">.</span><span class="n">_MISSING_TYPE</span> <span class="nb">object</span> <span class="n">at</span> <span class="mh">0x7fa9ffd1ab90</span><span class="o">&gt;</span><span class="p">,</span><span class="n">default_factory</span><span class="o">=&lt;</span><span class="n">dataclasses</span><span class="o">.</span><span class="n">_MISSING_TYPE</span> <span class="nb">object</span> <span class="n">at</span> <span class="mh">0x7fa9ffd1ab90</span><span class="o">&gt;</span><span class="p">,</span><span class="n">init</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="nb">repr</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="nb">hash</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span><span class="n">compare</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="n">metadata</span><span class="o">=</span><span class="n">mappingproxy</span><span class="p">({}),</span><span class="n">kw_only</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span><span class="n">_field_type</span><span class="o">=</span><span class="n">_FIELD</span><span class="p">),</span> <span class="s1">'model'</span><span class="p">:</span> <span class="n">Field</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s1">'model'</span><span class="p">,</span><span class="nb">type</span><span class="o">=</span><span class="s1">'dict[str, Any]'</span><span class="p">,</span><span class="n">default</span><span class="o">=&lt;</span><span class="n">dataclasses</span><span class="o">.</span><span class="n">_MISSING_TYPE</span> <span class="nb">object</span> <span class="n">at</span> <span class="mh">0x7fa9ffd1ab90</span><span class="o">&gt;</span><span class="p">,</span><span class="n">default_factory</span><span class="o">=&lt;</span><span class="n">dataclasses</span><span class="o">.</span><span class="n">_MISSING_TYPE</span> <span class="nb">object</span> <span class="n">at</span> <span class="mh">0x7fa9ffd1ab90</span><span class="o">&gt;</span><span class="p">,</span><span class="n">init</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="nb">repr</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="nb">hash</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span><span class="n">compare</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="n">metadata</span><span class="o">=</span><span class="n">mappingproxy</span><span class="p">({}),</span><span class="n">kw_only</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span><span class="n">_field_type</span><span class="o">=</span><span class="n">_FIELD</span><span class="p">),</span> <span class="s1">'corpus'</span><span class="p">:</span> <span class="n">Field</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s1">'corpus'</span><span class="p">,</span><span class="nb">type</span><span class="o">=</span><span class="s1">'dict[str, Any]'</span><span class="p">,</span><span class="n">default</span><span class="o">=&lt;</span><span class="n">dataclasses</span><span class="o">.</span><span class="n">_MISSING_TYPE</span> <span class="nb">object</span> <span class="n">at</span> <span class="mh">0x7fa9ffd1ab90</span><span class="o">&gt;</span><span class="p">,</span><span class="n">default_factory</span><span class="o">=&lt;</span><span class="n">dataclasses</span><span class="o">.</span><span class="n">_MISSING_TYPE</span> <span class="nb">object</span> <span class="n">at</span> <span class="mh">0x7fa9ffd1ab90</span><span class="o">&gt;</span><span class="p">,</span><span class="n">init</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="nb">repr</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="nb">hash</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span><span class="n">compare</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="n">metadata</span><span class="o">=</span><span class="n">mappingproxy</span><span class="p">({}),</span><span class="n">kw_only</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span><span class="n">_field_type</span><span class="o">=</span><span class="n">_FIELD</span><span class="p">),</span> <span class="s1">'inputs'</span><span class="p">:</span> <span class="n">Field</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s1">'inputs'</span><span class="p">,</span><span class="nb">type</span><span class="o">=</span><span class="s1">'dict[str, Any]'</span><span class="p">,</span><span class="n">default</span><span class="o">=&lt;</span><span class="n">dataclasses</span><span class="o">.</span><span class="n">_MISSING_TYPE</span> <span class="nb">object</span> <span class="n">at</span> <span class="mh">0x7fa9ffd1ab90</span><span class="o">&gt;</span><span class="p">,</span><span class="n">default_factory</span><span class="o">=&lt;</span><span class="k">class</span><span class="w"> </span><span class="err">'</span><span class="nc">dict</span><span class="s1">'&gt;,init=True,repr=True,hash=None,compare=True,metadata=mappingproxy(</span><span class="si">{}</span><span class="s1">),kw_only=False,_field_type=_FIELD), '</span><span class="n">diagnostics</span><span class="s1">': Field(name='</span><span class="n">diagnostics</span><span class="s1">',type='</span><span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span><span class="s1">',default=&lt;dataclasses._MISSING_TYPE object at 0x7fa9ffd1ab90&gt;,default_factory=&lt;class '</span><span class="nb">list</span><span class="s1">'&gt;,init=True,repr=True,hash=None,compare=True,metadata=mappingproxy(</span><span class="si">{}</span><span class="s1">),kw_only=False,_field_type=_FIELD), '</span><span class="n">decisions</span><span class="s1">': Field(name='</span><span class="n">decisions</span><span class="s1">',type='</span><span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span><span class="s1">',default=&lt;dataclasses._MISSING_TYPE object at 0x7fa9ffd1ab90&gt;,default_factory=&lt;class '</span><span class="nb">list</span><span class="s1">'&gt;,init=True,repr=True,hash=None,compare=True,metadata=mappingproxy(</span><span class="si">{}</span><span class="s1">),kw_only=False,_field_type=_FIELD), '</span><span class="n">schema_version</span><span class="s1">': Field(name='</span><span class="n">schema_version</span><span class="s1">',type='</span><span class="nb">int</span><span class="s1">',default=1,default_factory=&lt;dataclasses._MISSING_TYPE object at 0x7fa9ffd1ab90&gt;,init=True,repr=True,hash=None,compare=True,metadata=mappingproxy(</span><span class="si">{}</span><span class="s1">),kw_only=False,_field_type=_FIELD), '</span><span class="n">created</span><span class="s1">': Field(name='</span><span class="n">created</span><span class="s1">',type='</span><span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="s1">',default=None,default_factory=&lt;dataclasses._MISSING_TYPE object at 0x7fa9ffd1ab90&gt;,init=True,repr=True,hash=None,compare=True,metadata=mappingproxy(</span><span class="si">{}</span><span class="s1">),kw_only=False,_field_type=_FIELD)}</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>dict() -&gt; new empty dictionary
+dict(mapping) -&gt; new dictionary initialized from a mapping object's
+    (key, value) pairs
+dict(iterable) -&gt; new dictionary initialized as if via:
+    d = {}
+    for k, v in iterable:
+        d[k] = v
+dict(**kwargs) -&gt; new dictionary initialized with the name=value pairs
+    in the keyword argument list.  For example:  dict(one=1, two=2)</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.AnalysisManifest.__doc__" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">__doc__</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+  </span>
+
+<a href="#topica.manifest.AnalysisManifest.__doc__" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="vm">__doc__</span> <span class="o">=</span> <span class="s1">'A versioned, privacy-aware record of one fit. See the module docstring.'</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>str(object='') -&gt; str
+str(bytes_or_buffer[, encoding[, errors]]) -&gt; str</p>
+<p>Create a new string object from the given object. If encoding or
+errors is specified, then the object must expose a data buffer
+that will be decoded using the given encoding and error handler.
+Otherwise, returns the result of object.<strong>str</strong>() (if defined)
+or repr(object).
+encoding defaults to sys.getdefaultencoding().
+errors defaults to 'strict'.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.AnalysisManifest.__match_args__" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">__match_args__</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+  </span>
+
+<a href="#topica.manifest.AnalysisManifest.__match_args__" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">__match_args__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">'topica_version'</span><span class="p">,</span> <span class="s1">'environment'</span><span class="p">,</span> <span class="s1">'model'</span><span class="p">,</span> <span class="s1">'corpus'</span><span class="p">,</span> <span class="s1">'inputs'</span><span class="p">,</span> <span class="s1">'diagnostics'</span><span class="p">,</span> <span class="s1">'decisions'</span><span class="p">,</span> <span class="s1">'schema_version'</span><span class="p">,</span> <span class="s1">'created'</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Built-in immutable sequence.</p>
+<p>If no argument is given, the constructor returns an empty tuple.
+If iterable is specified the tuple is initialized from iterable's items.</p>
+<p>If the argument is a tuple, the return value is the same object.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.AnalysisManifest.__module__" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">__module__</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+  </span>
+
+<a href="#topica.manifest.AnalysisManifest.__module__" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="vm">__module__</span> <span class="o">=</span> <span class="s1">'topica.manifest'</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>str(object='') -&gt; str
+str(bytes_or_buffer[, encoding[, errors]]) -&gt; str</p>
+<p>Create a new string object from the given object. If encoding or
+errors is specified, then the object must expose a data buffer
+that will be decoded using the given encoding and error handler.
+Otherwise, returns the result of object.<strong>str</strong>() (if defined)
+or repr(object).
+encoding defaults to sys.getdefaultencoding().
+errors defaults to 'strict'.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.AnalysisManifest.__weakref__" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">__weakref__</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#topica.manifest.AnalysisManifest.__weakref__" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="vm">__weakref__</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>list of weak references to the object</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.AnalysisManifest.schema_version" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">schema_version</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+  </span>
+
+<a href="#topica.manifest.AnalysisManifest.schema_version" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">schema_version</span> <span class="o">=</span> <span class="mi">1</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>int([x]) -&gt; integer
+int(x, base=10) -&gt; integer</p>
+<p>Convert a number or string to an integer, or return 0 if no arguments
+are given.  If x is a number, return x.<strong>int</strong>().  For floating point
+numbers, this truncates towards zero.</p>
+<p>If x is not a number or if base is given, then x must be a string,
+bytes, or bytearray instance representing an integer literal in the
+given base.  The literal can be preceded by '+' or '-' and be surrounded
+by whitespace.  The base defaults to 10.  Valid bases are 0 and 2-36.
+Base 0 means to interpret the base from the string as an integer literal.</p>
+<blockquote>
+<blockquote>
+<blockquote>
+<p>int('0b100', base=0)
+4</p>
+</blockquote>
+</blockquote>
+</blockquote>
+
+    </div>
+
+</div>
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="topica.manifest.AnalysisManifest.add_decision" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">add_decision</span>
+
+
+<a href="#topica.manifest.AnalysisManifest.add_decision" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">add_decision</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">note</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">author</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">time</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AnalysisManifest</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Record a researcher-authored decision (K choice, labels, …).</p>
+<p>Always stored as visibly researcher-authored, never as a substantive
+conclusion the tool is vouching for.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="topica.manifest.AnalysisManifest.add_diagnostic" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">add_diagnostic</span>
+
+
+<a href="#topica.manifest.AnalysisManifest.add_diagnostic" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">add_diagnostic</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AnalysisManifest</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Record a diagnostic as computed <em>evidence</em> (not a conclusion).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="topica.manifest.AnalysisManifest.verify" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">verify</span>
+
+
+<a href="#topica.manifest.AnalysisManifest.verify" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">verify</span><span class="p">(</span><span class="n">corpus</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">VerifyResult</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Re-derive fingerprints from the supplied corpus/model and report,
+per field, whether the fit's identity and replay conditions still hold.</p>
+<p>Never collapses the fields into one boolean. Uses the recorded
+determinism class to decide whether an environment difference is
+potentially replayable rather than a mismatch.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="topica.manifest.AnalysisManifest.compare" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">compare</span>
+
+
+<a href="#topica.manifest.AnalysisManifest.compare" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">compare</span><span class="p">(</span><span class="n">other</span><span class="p">:</span> <span class="n">AnalysisManifest</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ManifestDiff</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Compare this manifest with <code>other</code> field by field.</p>
+<p>Uses only what each manifest recorded (fingerprints, counts, settings),
+so it needs neither corpus nor model. Answers "did these two runs use the
+same corpus / model / inputs, or did something change, and what?".</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="topica.manifest.AnalysisManifest.render" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">render</span>
+
+
+<a href="#topica.manifest.AnalysisManifest.render" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">render</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">title</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">verification</span><span class="p">:</span> <span class="n">VerifyResult</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Render the manifest as a self-contained HTML <em>analysis card</em>.</p>
+<p>Returns the HTML string, and writes it to <code>path</code> if given. The card
+shows only what the manifest actually recorded, so it cannot over-claim:
+researcher decisions are labelled as authored (not tool-verified),
+diagnostics as computed evidence, and fingerprints as verifiable identity
+rather than content. Pass a :class:<code>VerifyResult</code> (from :meth:<code>verify</code>) to
+include the graded verification table.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="topica.manifest.AnalysisManifest.to_markdown" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">to_markdown</span>
+
+
+<a href="#topica.manifest.AnalysisManifest.to_markdown" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">to_markdown</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">verification</span><span class="p">:</span> <span class="n">VerifyResult</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Render the manifest as a Markdown analysis card (Quarto/notebook).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="topica.manifest.AnalysisManifest.bundle" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">bundle</span>
+
+
+<a href="#topica.manifest.AnalysisManifest.bundle" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">bundle</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">corpus</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">include_model</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="n">include_corpus</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Write a self-contained, content-addressed bundle (a <code>.zip</code>).</p>
+<p>The bundle packages this manifest with the saved artifacts as one
+shareable, self-verifying unit::</p>
+<div class="highlight"><pre><span></span><code>manifest.json            this manifest, plus artifact references
+artifacts/&lt;digest&gt;.tt    model.save() / corpus.save(), named by hash
+</code></pre></div>
+<p>Each artifact's file name is its BLAKE2b digest, and the manifest's
+<code>model</code> / <code>corpus</code> blocks gain an <code>artifact</code> reference, so
+:meth:<code>load_bundle</code> can detect a corrupt bundle or one whose artifacts no
+longer match the manifest. This is <strong>integrity / content-addressing</strong>, not
+authenticity: it does not detect a fully rewritten bundle (artifact +
+digest + reference all changed together) — that needs a signature (#404).</p>
+<p>Before writing, the supplied <code>model</code> / <code>corpus</code> are checked against
+this manifest's recorded fingerprints; a mismatch (the wrong fit) raises,
+so a bundle's artifacts always match the analysis it documents.</p>
+<p><code>include_corpus</code> is opt-in and <strong>sensitive</strong>: a bundled corpus embeds
+the raw tokens (a hash is not anonymisation). Pass the fitted <code>model</code> /
+<code>corpus</code> objects to bundle them (the manifest itself holds only
+fingerprints, not the objects). The <em>file</em> digest here proves "this exact
+saved file"; it is distinct from the corpus <em>content</em> fingerprint, which
+proves corpus identity across save-format versions.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="topica.manifest.AnalysisManifest.load_bundle" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">load_bundle</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-classmethod"><code>classmethod</code></small>
+  </span>
+
+<a href="#topica.manifest.AnalysisManifest.load_bundle" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">load_bundle</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AnalysisManifest</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Load a bundle written by :meth:<code>bundle</code>, checking artifact integrity.</p>
+<p>Recomputes each bundled artifact's digest and checks it against both the
+content-addressed file name and the manifest reference; a corrupt bundle
+(or one whose artifacts no longer match the manifest) raises <code>ValueError</code>.
+This is an integrity check, not authenticity -- see :meth:<code>bundle</code>. Returns
+the manifest; use :meth:<code>extract_bundle</code> to recover the artifacts.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="topica.manifest.AnalysisManifest.extract_bundle" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">extract_bundle</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-staticmethod"><code>staticmethod</code></small>
+  </span>
+
+<a href="#topica.manifest.AnalysisManifest.extract_bundle" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">extract_bundle</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">dest_dir</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Extract a bundle's artifacts to <code>dest_dir</code> (checking integrity).</p>
+<p>Returns <code>{"model": &lt;path or None&gt;, "corpus": &lt;path or None&gt;}</code>; reload
+each with the matching class, e.g. <code>topica.LDA.load(paths["model"])</code>.
+Validates the bundle version and artifact digests, like :meth:<code>load_bundle</code>.</p>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h2 id="topica.manifest.VerifyResult" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">topica.manifest.VerifyResult</span>
+
+
+<a href="#topica.manifest.VerifyResult" class="headerlink" title="Permanent link">&para;</a></h2>
+
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>The outcome of :meth:<code>AnalysisManifest.verify</code>, per field.</p>
+<p><code>fields</code> maps each checked field to one of: <code>exact</code> (recomputed value
+matches), <code>input_changed</code>, <code>artifact_changed</code>, <code>environment_changed</code>
+(differs but the model's determinism class says it may still replay),
+<code>unverifiable</code> (nothing to check against, or a bounded/unknown component).
+<code>ok</code> is a convenience for "every field exact"; the summary always shows the
+full breakdown -- the statuses are never collapsed into one flag.</p>
+<p><code>unverifiable</code> is an <em>absence of evidence</em>, not a mismatch, and the two are
+reported separately: :attr:<code>differences</code> lists fields that actually changed,
+:attr:<code>unverifiable</code> lists fields nothing could be checked against. This
+matters at the default <code>privacy="minimal"</code>, where no content fingerprint is
+recorded: a perfect re-verification leaves <code>corpus_fingerprint</code> unverifiable,
+so <code>ok</code> is <code>False</code> (nothing is claimed as verified that was not) while the
+summary still says plainly that no differences were found.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.VerifyResult.__annotations__" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">__annotations__</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+  </span>
+
+<a href="#topica.manifest.VerifyResult.__annotations__" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="vm">__annotations__</span> <span class="o">=</span> <span class="p">{</span><span class="s1">'fields'</span><span class="p">:</span> <span class="s1">'dict[str, str]'</span><span class="p">}</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>dict() -&gt; new empty dictionary
+dict(mapping) -&gt; new dictionary initialized from a mapping object's
+    (key, value) pairs
+dict(iterable) -&gt; new dictionary initialized as if via:
+    d = {}
+    for k, v in iterable:
+        d[k] = v
+dict(**kwargs) -&gt; new dictionary initialized with the name=value pairs
+    in the keyword argument list.  For example:  dict(one=1, two=2)</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.VerifyResult.__dataclass_fields__" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">__dataclass_fields__</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+  </span>
+
+<a href="#topica.manifest.VerifyResult.__dataclass_fields__" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">__dataclass_fields__</span> <span class="o">=</span> <span class="p">{</span><span class="s1">'fields'</span><span class="p">:</span> <span class="n">Field</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s1">'fields'</span><span class="p">,</span><span class="nb">type</span><span class="o">=</span><span class="s1">'dict[str, str]'</span><span class="p">,</span><span class="n">default</span><span class="o">=&lt;</span><span class="n">dataclasses</span><span class="o">.</span><span class="n">_MISSING_TYPE</span> <span class="nb">object</span> <span class="n">at</span> <span class="mh">0x7fa9ffd1ab90</span><span class="o">&gt;</span><span class="p">,</span><span class="n">default_factory</span><span class="o">=&lt;</span><span class="n">dataclasses</span><span class="o">.</span><span class="n">_MISSING_TYPE</span> <span class="nb">object</span> <span class="n">at</span> <span class="mh">0x7fa9ffd1ab90</span><span class="o">&gt;</span><span class="p">,</span><span class="n">init</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="nb">repr</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="nb">hash</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span><span class="n">compare</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="n">metadata</span><span class="o">=</span><span class="n">mappingproxy</span><span class="p">({}),</span><span class="n">kw_only</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span><span class="n">_field_type</span><span class="o">=</span><span class="n">_FIELD</span><span class="p">)}</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>dict() -&gt; new empty dictionary
+dict(mapping) -&gt; new dictionary initialized from a mapping object's
+    (key, value) pairs
+dict(iterable) -&gt; new dictionary initialized as if via:
+    d = {}
+    for k, v in iterable:
+        d[k] = v
+dict(**kwargs) -&gt; new dictionary initialized with the name=value pairs
+    in the keyword argument list.  For example:  dict(one=1, two=2)</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.VerifyResult.__doc__" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">__doc__</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+  </span>
+
+<a href="#topica.manifest.VerifyResult.__doc__" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="vm">__doc__</span> <span class="o">=</span> <span class="s1">'The outcome of :meth:`AnalysisManifest.verify`, per field.</span><span class="se">\n\n</span><span class="s1">    ``fields`` maps each checked field to one of: ``exact`` (recomputed value</span><span class="se">\n</span><span class="s1">    matches), ``input_changed``, ``artifact_changed``, ``environment_changed``</span><span class="se">\n</span><span class="s1">    (differs but the model</span><span class="se">\'</span><span class="s1">s determinism class says it may still replay),</span><span class="se">\n</span><span class="s1">    ``unverifiable`` (nothing to check against, or a bounded/unknown component).</span><span class="se">\n</span><span class="s1">    ``ok`` is a convenience for "every field exact"; the summary always shows the</span><span class="se">\n</span><span class="s1">    full breakdown -- the statuses are never collapsed into one flag.</span><span class="se">\n\n</span><span class="s1">    ``unverifiable`` is an *absence of evidence*, not a mismatch, and the two are</span><span class="se">\n</span><span class="s1">    reported separately: :attr:`differences` lists fields that actually changed,</span><span class="se">\n</span><span class="s1">    :attr:`unverifiable` lists fields nothing could be checked against. This</span><span class="se">\n</span><span class="s1">    matters at the default ``privacy="minimal"``, where no content fingerprint is</span><span class="se">\n</span><span class="s1">    recorded: a perfect re-verification leaves ``corpus_fingerprint`` unverifiable,</span><span class="se">\n</span><span class="s1">    so ``ok`` is ``False`` (nothing is claimed as verified that was not) while the</span><span class="se">\n</span><span class="s1">    summary still says plainly that no differences were found.</span><span class="se">\n</span><span class="s1">    '</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>str(object='') -&gt; str
+str(bytes_or_buffer[, encoding[, errors]]) -&gt; str</p>
+<p>Create a new string object from the given object. If encoding or
+errors is specified, then the object must expose a data buffer
+that will be decoded using the given encoding and error handler.
+Otherwise, returns the result of object.<strong>str</strong>() (if defined)
+or repr(object).
+encoding defaults to sys.getdefaultencoding().
+errors defaults to 'strict'.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.VerifyResult.__match_args__" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">__match_args__</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+  </span>
+
+<a href="#topica.manifest.VerifyResult.__match_args__" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">__match_args__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">'fields'</span><span class="p">,)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Built-in immutable sequence.</p>
+<p>If no argument is given, the constructor returns an empty tuple.
+If iterable is specified the tuple is initialized from iterable's items.</p>
+<p>If the argument is a tuple, the return value is the same object.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.VerifyResult.__module__" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">__module__</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+  </span>
+
+<a href="#topica.manifest.VerifyResult.__module__" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="vm">__module__</span> <span class="o">=</span> <span class="s1">'topica.manifest'</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>str(object='') -&gt; str
+str(bytes_or_buffer[, encoding[, errors]]) -&gt; str</p>
+<p>Create a new string object from the given object. If encoding or
+errors is specified, then the object must expose a data buffer
+that will be decoded using the given encoding and error handler.
+Otherwise, returns the result of object.<strong>str</strong>() (if defined)
+or repr(object).
+encoding defaults to sys.getdefaultencoding().
+errors defaults to 'strict'.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.VerifyResult.__weakref__" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">__weakref__</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#topica.manifest.VerifyResult.__weakref__" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="vm">__weakref__</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>list of weak references to the object</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.VerifyResult.differences" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">differences</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#topica.manifest.VerifyResult.differences" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">differences</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Fields that actually differ (a mismatch), excluding the merely
+unverifiable. Empty means nothing checkable came back changed.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.VerifyResult.ok" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">ok</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#topica.manifest.VerifyResult.ok" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">ok</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Every field verified exactly. <code>False</code> when anything changed <em>or</em> could
+not be checked -- an unverifiable field never reads as a pass.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.VerifyResult.unverifiable" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">unverifiable</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#topica.manifest.VerifyResult.unverifiable" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">unverifiable</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Fields nothing could be checked against (e.g. no content fingerprint
+was recorded at <code>privacy="minimal"</code>, or an unrecognised spec).</p>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h2 id="topica.manifest.ManifestDiff" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">topica.manifest.ManifestDiff</span>
+
+
+<a href="#topica.manifest.ManifestDiff" class="headerlink" title="Permanent link">&para;</a></h2>
+
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>The outcome of :meth:<code>AnalysisManifest.compare</code>, per field.</p>
+<p>Compares two manifests directly (no corpus or model needed), so it answers
+"did these two runs differ, and where?". <code>fields</code> maps each field to
+<code>same</code>, <code>changed</code>, <code>only_in_a</code> / <code>only_in_b</code> (a recorded value present
+in one run but not the other), or <code>incomparable</code> (fingerprints from different
+specs, a keyed digest, or a fingerprint recorded on only one side). <code>same</code> is
+a convenience for "every field same"; the summary always shows the breakdown.</p>
+<p>As in :class:<code>VerifyResult</code>, <code>incomparable</code> is an <em>inability to tell</em> rather
+than a mismatch, and is reported apart from real differences. <code>changed</code> and
+the <code>only_in_*</code> statuses are genuine differences: one run recorded a plain
+value (a count, a setting) the other did not. A one-sided <em>corpus/model</em>
+fingerprint is not a difference, though: it is an absence of evidence (a
+<code>privacy="minimal"</code> run records no corpus content fingerprint), so it is
+reported <code>incomparable</code>, not <code>only_in_*</code>. Inputs are the exception: they are
+recorded unconditionally, so a one-sided <code>input_*</code> fingerprint (one run
+conditioned on a covariate the other did not) is a genuine <code>only_in_*</code>
+difference.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.ManifestDiff.__annotations__" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">__annotations__</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+  </span>
+
+<a href="#topica.manifest.ManifestDiff.__annotations__" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="vm">__annotations__</span> <span class="o">=</span> <span class="p">{</span><span class="s1">'fields'</span><span class="p">:</span> <span class="s1">'dict[str, str]'</span><span class="p">}</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>dict() -&gt; new empty dictionary
+dict(mapping) -&gt; new dictionary initialized from a mapping object's
+    (key, value) pairs
+dict(iterable) -&gt; new dictionary initialized as if via:
+    d = {}
+    for k, v in iterable:
+        d[k] = v
+dict(**kwargs) -&gt; new dictionary initialized with the name=value pairs
+    in the keyword argument list.  For example:  dict(one=1, two=2)</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.ManifestDiff.__dataclass_fields__" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">__dataclass_fields__</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+  </span>
+
+<a href="#topica.manifest.ManifestDiff.__dataclass_fields__" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">__dataclass_fields__</span> <span class="o">=</span> <span class="p">{</span><span class="s1">'fields'</span><span class="p">:</span> <span class="n">Field</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s1">'fields'</span><span class="p">,</span><span class="nb">type</span><span class="o">=</span><span class="s1">'dict[str, str]'</span><span class="p">,</span><span class="n">default</span><span class="o">=&lt;</span><span class="n">dataclasses</span><span class="o">.</span><span class="n">_MISSING_TYPE</span> <span class="nb">object</span> <span class="n">at</span> <span class="mh">0x7fa9ffd1ab90</span><span class="o">&gt;</span><span class="p">,</span><span class="n">default_factory</span><span class="o">=&lt;</span><span class="n">dataclasses</span><span class="o">.</span><span class="n">_MISSING_TYPE</span> <span class="nb">object</span> <span class="n">at</span> <span class="mh">0x7fa9ffd1ab90</span><span class="o">&gt;</span><span class="p">,</span><span class="n">init</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="nb">repr</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="nb">hash</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span><span class="n">compare</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="n">metadata</span><span class="o">=</span><span class="n">mappingproxy</span><span class="p">({}),</span><span class="n">kw_only</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span><span class="n">_field_type</span><span class="o">=</span><span class="n">_FIELD</span><span class="p">)}</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>dict() -&gt; new empty dictionary
+dict(mapping) -&gt; new dictionary initialized from a mapping object's
+    (key, value) pairs
+dict(iterable) -&gt; new dictionary initialized as if via:
+    d = {}
+    for k, v in iterable:
+        d[k] = v
+dict(**kwargs) -&gt; new dictionary initialized with the name=value pairs
+    in the keyword argument list.  For example:  dict(one=1, two=2)</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.ManifestDiff.__doc__" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">__doc__</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+  </span>
+
+<a href="#topica.manifest.ManifestDiff.__doc__" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="vm">__doc__</span> <span class="o">=</span> <span class="s1">'The outcome of :meth:`AnalysisManifest.compare`, per field.</span><span class="se">\n\n</span><span class="s1">    Compares two manifests directly (no corpus or model needed), so it answers</span><span class="se">\n</span><span class="s1">    "did these two runs differ, and where?". ``fields`` maps each field to</span><span class="se">\n</span><span class="s1">    ``same``, ``changed``, ``only_in_a`` / ``only_in_b`` (a recorded value present</span><span class="se">\n</span><span class="s1">    in one run but not the other), or ``incomparable`` (fingerprints from different</span><span class="se">\n</span><span class="s1">    specs, a keyed digest, or a fingerprint recorded on only one side). ``same`` is</span><span class="se">\n</span><span class="s1">    a convenience for "every field same"; the summary always shows the breakdown.</span><span class="se">\n\n</span><span class="s1">    As in :class:`VerifyResult`, ``incomparable`` is an *inability to tell* rather</span><span class="se">\n</span><span class="s1">    than a mismatch, and is reported apart from real differences. ``changed`` and</span><span class="se">\n</span><span class="s1">    the ``only_in_*`` statuses are genuine differences: one run recorded a plain</span><span class="se">\n</span><span class="s1">    value (a count, a setting) the other did not. A one-sided *corpus/model*</span><span class="se">\n</span><span class="s1">    fingerprint is not a difference, though: it is an absence of evidence (a</span><span class="se">\n</span><span class="s1">    ``privacy="minimal"`` run records no corpus content fingerprint), so it is</span><span class="se">\n</span><span class="s1">    reported ``incomparable``, not ``only_in_*``. Inputs are the exception: they are</span><span class="se">\n</span><span class="s1">    recorded unconditionally, so a one-sided ``input_*`` fingerprint (one run</span><span class="se">\n</span><span class="s1">    conditioned on a covariate the other did not) is a genuine ``only_in_*``</span><span class="se">\n</span><span class="s1">    difference.</span><span class="se">\n</span><span class="s1">    '</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>str(object='') -&gt; str
+str(bytes_or_buffer[, encoding[, errors]]) -&gt; str</p>
+<p>Create a new string object from the given object. If encoding or
+errors is specified, then the object must expose a data buffer
+that will be decoded using the given encoding and error handler.
+Otherwise, returns the result of object.<strong>str</strong>() (if defined)
+or repr(object).
+encoding defaults to sys.getdefaultencoding().
+errors defaults to 'strict'.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.ManifestDiff.__match_args__" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">__match_args__</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+  </span>
+
+<a href="#topica.manifest.ManifestDiff.__match_args__" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">__match_args__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">'fields'</span><span class="p">,)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Built-in immutable sequence.</p>
+<p>If no argument is given, the constructor returns an empty tuple.
+If iterable is specified the tuple is initialized from iterable's items.</p>
+<p>If the argument is a tuple, the return value is the same object.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.ManifestDiff.__module__" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">__module__</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+  </span>
+
+<a href="#topica.manifest.ManifestDiff.__module__" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="vm">__module__</span> <span class="o">=</span> <span class="s1">'topica.manifest'</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>str(object='') -&gt; str
+str(bytes_or_buffer[, encoding[, errors]]) -&gt; str</p>
+<p>Create a new string object from the given object. If encoding or
+errors is specified, then the object must expose a data buffer
+that will be decoded using the given encoding and error handler.
+Otherwise, returns the result of object.<strong>str</strong>() (if defined)
+or repr(object).
+encoding defaults to sys.getdefaultencoding().
+errors defaults to 'strict'.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.ManifestDiff.__weakref__" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">__weakref__</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#topica.manifest.ManifestDiff.__weakref__" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="vm">__weakref__</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>list of weak references to the object</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.ManifestDiff.differences" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">differences</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#topica.manifest.ManifestDiff.differences" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">differences</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Fields that genuinely differ, excluding the merely incomparable.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.ManifestDiff.incomparable" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">incomparable</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#topica.manifest.ManifestDiff.incomparable" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">incomparable</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Fields that could not be compared (fingerprints from different specs, or
+a keyed digest).</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="topica.manifest.ManifestDiff.same" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">same</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#topica.manifest.ManifestDiff.same" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">same</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Every field identical. <code>False</code> when anything differs <em>or</em> could not be
+compared -- an incomparable field never reads as a match.</p>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="topica.manifest.fingerprint_corpus" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">topica.manifest.fingerprint_corpus</span>
+
+
+<a href="#topica.manifest.fingerprint_corpus" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">fingerprint_corpus</span><span class="p">(</span><span class="n">corpus</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">bytes</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Sensitive, order-sensitive fingerprint of a corpus's token content.</p>
+<p>Hashes token strings in document order, so it survives a vocabulary
+re-indexing but changes if any document's tokens or the document order
+change. A hash is not anonymisation; treat this as sensitive.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="topica.manifest.fingerprint_array" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">topica.manifest.fingerprint_array</span>
+
+
+<a href="#topica.manifest.fingerprint_array" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">fingerprint_array</span><span class="p">(</span><span class="n">arr</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">bytes</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Order-sensitive fingerprint of a numeric array (embeddings, vectors).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="topica.manifest.fingerprint_design" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">topica.manifest.fingerprint_design</span>
+
+
+<a href="#topica.manifest.fingerprint_design" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">fingerprint_design</span><span class="p">(</span><span class="n">matrix</span><span class="p">,</span> <span class="n">names</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">bytes</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Fingerprint of a numeric design matrix, binding column names to values.</p>
+
+
+    </div>
+
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "navigation.indexes", "content.code.copy", "content.code.annotate", "toc.follow", "search.suggest"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

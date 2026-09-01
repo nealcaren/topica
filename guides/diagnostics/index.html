@@ -1,0 +1,3508 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Fast, all-purpose topic modeling for Python — a Rust core with the MALLET, STM, tomotopy, and gensim toolkits in one package.">
+      
+      
+      
+        <link rel="canonical" href="https://nealcaren.github.io/topica/guides/diagnostics/">
+      
+      
+        <link rel="prev" href="../preprocessing/">
+      
+      
+        <link rel="next" href="../uncertainty/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../images/topica-favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Diagnostics & validation - Topica</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#diagnostics-validation" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Topica" class="md-header__button md-logo" aria-label="Topica" data-md-component="logo">
+      
+  <img src="../../images/topica-mark.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Topica
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Diagnostics & validation
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/nealcaren/topica" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nealcaren/topica
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Topica" class="md-nav__button md-logo" aria-label="Topica" data-md-component="logo">
+      
+  <img src="../../images/topica-mark.svg" alt="logo">
+
+    </a>
+    Topica
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/nealcaren/topica" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nealcaren/topica
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../can-do/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Start here
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Start here
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agent-cheatsheet/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent cheat sheet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../publishing/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    From corpus to credible result
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    From corpus to credible result
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/corpus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. Build a defensible corpus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/choosing-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Pick the right model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/choosing-k/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Choose and justify K
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Validate the topics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/effects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Measure effects properly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/reporting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Report and make reproducible
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Methods & models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Methods & models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The model catalog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparing the models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../covariates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Covariates & STM
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guided/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guided topics (seed words)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../short-text/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Short text
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedding topics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM-based topics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analyze & validate
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Analyze & validate
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../preprocessing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Preprocessing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagnostics & validation
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagnostics & validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#quality-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quality metrics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#labeling-and-interpretation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Labeling and interpretation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#human-validation-intrusion-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Human validation: intrusion tests
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#llm-based-evaluation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LLM-based evaluation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="LLM-based evaluation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ranking-whole-models-llmjudge-zheng-et-al-2025" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ranking whole models: llm.judge (Zheng et al. 2025)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-multi-dimensional-suite-tan-dsouza-2025" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A multi-dimensional suite (Tan &amp; D'Souza 2025)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stability-and-model-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stability and model selection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Stability and model selection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#topic-alignment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic alignment
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topic-structure-and-document-outliers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic structure and document outliers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ensemble-combining-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ensemble: combining runs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Ensemble: combining runs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cross-model-consensus-ensembling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-model consensus ensembling
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#convergence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Convergence
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Convergence">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#defaults-and-why" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Defaults, and why
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#has-the-chain-plateaued-or-mixed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Has the chain plateaued, or mixed?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#do-independent-chains-agree-r-hat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do independent chains agree? (R-hat)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#visualization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Visualization
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../uncertainty/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reporting uncertainty
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../keywords/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Distinguishing words
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../transform/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Held-out inference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cross-validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cross-validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/dubois/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Du Bois in The Crisis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/congress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Congress (STM party & time)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/poliblog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Political blogs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/content_time/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Party platforms (STM content_time)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/nmf-neural/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NMF vs neural (labeled)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/guided/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guided topics (keyATM)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/dmr-sentiment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sentiment covariate (DMR)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/short-text/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Short text (GSDMM/BTM)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/threads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Threaded conversations (ThreadTM)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/llm-topics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM embeddings & labels
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../replications/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Replications
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Replications
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../replications/stm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STM (the stm vignette)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../replications/keyatm-dynamic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dynamic keyATM (Supreme Court)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../replications/tlda/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TensorLDA validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../replications/sts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STS reference profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/datasets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Datasets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedding models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/manifest/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analysis manifest
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/content/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Content-covariate diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viz/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/stm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STM toolkit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/keyatm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    keyATM toolkit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/keywords/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keywords & preprocessing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Contributing
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/conventions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API conventions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/keyword-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keyword & seed parameters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/estimator-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Estimator contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/model-map/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model implementation map
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation & graduation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/release-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../citing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Citing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#quality-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quality metrics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#labeling-and-interpretation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Labeling and interpretation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#human-validation-intrusion-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Human validation: intrusion tests
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#llm-based-evaluation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LLM-based evaluation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="LLM-based evaluation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ranking-whole-models-llmjudge-zheng-et-al-2025" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ranking whole models: llm.judge (Zheng et al. 2025)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-multi-dimensional-suite-tan-dsouza-2025" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A multi-dimensional suite (Tan &amp; D'Souza 2025)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stability-and-model-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stability and model selection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Stability and model selection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#topic-alignment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic alignment
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topic-structure-and-document-outliers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic structure and document outliers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ensemble-combining-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ensemble: combining runs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Ensemble: combining runs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cross-model-consensus-ensembling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-model consensus ensembling
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#convergence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Convergence
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Convergence">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#defaults-and-why" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Defaults, and why
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#has-the-chain-plateaued-or-mixed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Has the chain plateaued, or mixed?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#do-independent-chains-agree-r-hat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do independent chains agree? (R-hat)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#visualization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Visualization
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="diagnostics-validation">Diagnostics &amp; validation<a class="headerlink" href="#diagnostics-validation" title="Permanent link">&para;</a></h1>
+<p>All of these are <strong>model-agnostic</strong>: they take any fitted model's <code>topic_word</code> /
+<code>doc_topic</code>, so they work the same across LDA, STM, HDP, and the rest. They live
+in the <code>topica.evaluate</code> namespace (<code>topica.evaluate.coherence</code>,
+<code>topica.evaluate.exclusivity</code>, …); every name is also reachable bare at the top
+level (<code>topica.&lt;name&gt;</code>) as a compatibility alias. For how to <em>use</em> them to make an
+analysis publishable, see <a href="../../publishing/validation/">Validate the topics</a>.</p>
+<h2 id="quality-metrics">Quality metrics<a class="headerlink" href="#quality-metrics" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">topica</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">model</span><span class="o">.</span><span class="n">coherence</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>                                   <span class="c1"># per-topic UMass (built in)</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">coherence</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">texts</span><span class="p">,</span> <span class="n">coherence_type</span><span class="o">=</span><span class="s2">"c_v"</span><span class="p">)</span>      <span class="c1"># windowed, human-aligned</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">exclusivity</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>                           <span class="c1"># per topic</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">topic_diversity</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">topn</span><span class="o">=</span><span class="mi">25</span><span class="p">)</span>                    <span class="c1"># fraction of unique top words</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">topic_semantic_diversity</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">topn</span><span class="o">=</span><span class="mi">25</span><span class="p">)</span>           <span class="c1"># fraction of unique top-word *pairs*</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">inverted_rbo</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">topn</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>                       <span class="c1"># rank-weighted diversity (RBO)</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">embedding_coherence</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">word_embeddings</span><span class="p">,</span> <span class="n">topn</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>  <span class="c1"># top-word proximity in embedding space</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="n">qf</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">select</span><span class="o">.</span><span class="n">quality_frontier</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>                 <span class="c1"># coherence, exclusivity, prevalence</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="c1"># qf["coherence"], qf["exclusivity"] -&gt; the canonical STM quality scatter</span>
+</code></pre></div>
+<p><code>topic_diversity</code> counts unique single words; <code>topic_semantic_diversity</code> counts
+unique word <em>pairs</em> (Wu, Nguyen &amp; Luu 2024). We reach for the pair version when
+single-word overlap understates redundancy: two topics can share few exact words
+yet co-locate the same word pairs, and a pair pins down word sense without any
+embeddings. <code>inverted_rbo</code> is the third diversity lens: instead of asking <em>which</em>
+words overlap, it asks <em>at what rank</em> — two topics sharing their #1-#2 words are
+penalized far more than two sharing their #9-#10 (OCTIS <code>InvertedRBO</code>; Bianchi,
+Terragni &amp; Hovy 2021). Reach for it when the <em>ordering</em> of top words matters, not
+just their presence. All three range over <code>[0, 1]</code> and higher means more diverse.</p>
+<p>One gotcha when you compare them side by side: <code>inverted_rbo</code> defaults to
+<code>topn=10</code> (its OCTIS default) while <code>topic_diversity</code> / <code>topic_semantic_diversity</code>
+default to <code>topn=25</code>. On a small vocabulary the wider window forces overlap and
+reads as a misleadingly low diversity, so set <code>topn</code> explicitly when comparing.</p>
+<p>A second gotcha bites shrinkage models (STM, CTM, ThreadTM) specifically. Ranking
+each topic's top words by raw probability floats the corpus's shared high-frequency
+words into every topic's list, so <code>topic_diversity</code> and <code>exclusivity</code> penalize the
+model for a measurement artifact rather than a topic-quality defect. Pass
+<code>rank="frex"</code> to rank by FREX (frequency-exclusivity, STM's own word ranking)
+instead, which measures diversity over each topic's <em>distinctive</em> vocabulary:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">topic_diversity</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">topn</span><span class="o">=</span><span class="mi">25</span><span class="p">,</span> <span class="n">rank</span><span class="o">=</span><span class="s2">"frex"</span><span class="p">)</span>   <span class="c1"># over distinctive words</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">exclusivity</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">rank</span><span class="o">=</span><span class="s2">"frex"</span><span class="p">)</span>          <span class="c1"># sum each topic's top FREX words</span>
+</code></pre></div>
+<p>Both readings use the identical FREX scores, so <code>rank="prob"</code> (the default,
+STM-faithful) and <code>rank="frex"</code> are on the same scale and directly comparable.</p>
+<p><code>embedding_coherence</code> scores a topic by how close its top words sit in a
+word-embedding space — the intrinsic middle ground between corpus-based
+<code>coherence</code> and LLM-based <code>topica.llm.coherence</code>. Bring your own embedding (it is
+only comparable across models scored on the <em>same</em> one, with no absolute
+threshold); <code>topica.embeddings.llm_embed</code> builds one:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">emb</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">embeddings</span><span class="o">.</span><span class="n">llm_embed</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">vocabulary</span><span class="p">)</span>                 <span class="c1"># (V, E) word table</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">embedding_coherence</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">emb</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">vocabulary</span><span class="p">)</span> <span class="c1"># per-topic, higher = better</span>
+</code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Coherence is fast, even at large K</p>
+<p><code>topica.evaluate.coherence</code> runs its co-occurrence counting in the Rust core, scoring only
+the word pairs that actually occur within a topic's top-N rather than a full
+vocabulary×vocabulary matrix. <code>c_v</code> on a 500-topic model that took minutes in
+a pure-Python loop now takes a fraction of a second. Two habits still help on
+very large corpora: compute coherence <strong>once</strong> on the final model (never
+inside a fit loop), and pass a <strong>document sample</strong> as <code>texts</code> — coherence is
+an estimate, and a few thousand documents give the same ranking. <code>u_mass</code>
+(document-level, no sliding window) remains the cheapest option for quick
+<code>K</code>-selection sweeps.</p>
+</div>
+<h2 id="labeling-and-interpretation">Labeling and interpretation<a class="headerlink" href="#labeling-and-interpretation" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">topica</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">label_topics</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">topic_word</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">vocabulary</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>   <span class="c1"># prob / frex / lift / score</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">topica</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">label_topics</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">topic_word</span><span class="p">,</span> <span class="n">corpus</span><span class="o">=</span><span class="n">corpus</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>     <span class="c1"># stm-faithful: lift + FREX James-Stein shrinkage from corpus word counts</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">topica</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">frex</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">topic_word</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">vocabulary</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>           <span class="c1"># frequent + exclusive</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">topica</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">relevance</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">topic_word</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">vocabulary</span><span class="p">,</span> <span class="n">lam</span><span class="o">=</span><span class="mf">0.6</span><span class="p">)</span>   <span class="c1"># LDAvis relevance</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">topica</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">find_thoughts</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">doc_topic</span><span class="p">,</span> <span class="n">texts</span><span class="p">,</span> <span class="n">topic</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>      <span class="c1"># representative docs</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="n">topica</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">find_thoughts_html</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">texts</span><span class="p">,</span> <span class="n">n_docs</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>               <span class="c1"># highlighted close-reading</span>
+</code></pre></div>
+<p>For readable labels, <code>llm_topic_labels</code> asks an LLM to name each topic from its
+top words and representative documents. topica is the plumbing: it assembles the
+prompt and you bring the model. Pass any callable (your own client, a local
+<code>ollama</code> endpoint) as <code>call</code>, or name a model through the optional
+<a href="https://llm.datasette.io/"><code>llm</code></a> adapter, which reaches every provider and
+local models via plugins.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Bring your own callable (no extra dependency):</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">labels</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">llm_topic_labels</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">texts</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">my_model_fn</span><span class="p">,</span> <span class="n">set_labels</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># Or name a model via the `llm` adapter (pip install "topica[llm]"):</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">backend</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">llm_backend</span><span class="p">(</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>   <span class="c1"># pin for stability</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="n">labels</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">llm_topic_labels</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">texts</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">backend</span><span class="p">,</span> <span class="n">set_labels</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="n">topica</span><span class="o">.</span><span class="n">topic_label_prompts</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">texts</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>   <span class="c1"># inspect exactly what the model sees</span>
+</code></pre></div>
+<p><code>set_labels=True</code> flows the labels into <code>topic_info</code> and <code>plot_report</code>. LLM labels
+are a convenience, not a reproducible measurement: pin the model and temperature,
+and keep <code>label_topics</code> (FREX / probability / lift) as the defensible descriptors.</p>
+<h2 id="human-validation-intrusion-tests">Human validation: intrusion tests<a class="headerlink" href="#human-validation-intrusion-tests" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">word_intrusion</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">n_words</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>           <span class="c1"># top words + an intruder</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">document_intrusion</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">texts</span><span class="o">=</span><span class="n">texts</span><span class="p">,</span> <span class="n">n_docs</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>   <span class="c1"># top docs + an intruder</span>
+</code></pre></div>
+<h2 id="llm-based-evaluation">LLM-based evaluation<a class="headerlink" href="#llm-based-evaluation" title="Permanent link">&para;</a></h2>
+<p>Automated coherence (NPMI, c_v) correlates only weakly with human judgment. Stammbach
+et al. (2023) show that an LLM, prompted with the <em>same</em> instructions the crowd-workers
+received, tracks human ratings more closely — especially the rating task. topica
+exposes these diagnostics under the <strong><code>topica.llm</code></strong> namespace — an <code>llm-bounded</code>
+family kept distinct from the bit-exact diagnostics above. All reuse the
+provider-agnostic <code>topica[llm]</code> backend.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># A capable open-source model, via OpenRouter or a local endpoint:</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">backend</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">llm</span><span class="o">.</span><span class="n">backend</span><span class="p">(</span><span class="s2">"openrouter/meta-llama/llama-3.3-70b-instruct"</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">topica</span><span class="o">.</span><span class="n">llm</span><span class="o">.</span><span class="n">coherence</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">backend</span><span class="p">,</span> <span class="n">n_words</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>        <span class="c1"># per-topic 1-3 rating (the headline)</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">topica</span><span class="o">.</span><span class="n">llm</span><span class="o">.</span><span class="n">intrusion</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">backend</span><span class="p">,</span> <span class="n">n_words</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>         <span class="c1"># LLM picks the intruder -&gt; accuracy</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="n">topica</span><span class="o">.</span><span class="n">llm</span><span class="o">.</span><span class="n">select_k</span><span class="p">(</span><span class="n">models</span><span class="p">,</span> <span class="n">docs</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">backend</span><span class="p">,</span> <span class="n">n_docs</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>   <span class="c1"># number-of-topics by doc-label purity</span>
+</code></pre></div>
+<p><code>llm.coherence</code> is the one to lead with: in the paper it beats NPMI/c_v at tracking
+human topic <em>rankings</em> (and on the Hoyle 2021 gold, <code>parity/llm_coherence_compare.py</code>
+reproduces that here). <code>llm.intrusion</code> matches human accuracy on the <em>task</em> but is a
+weaker ranking signal, so report it alongside, not instead. Both follow the same
+protocol Zheng et al. (2025, §5.2 / App. F.3) use: a 3-point relatedness scale
+(<code>scale=(1, 3)</code>) for <code>coherence</code>, and a top-5-words-plus-one-intruder task
+(<code>n_words=5</code>, the default) for <code>intrusion</code>, at <code>temperature=0</code>.</p>
+<p>Because these are <code>llm-bounded</code>, validate them on <em>your</em> data before trusting them:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">llm</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">llm</span><span class="o">.</span><span class="n">coherence</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">backend</span><span class="p">)</span>         <span class="c1"># per-topic LLM ratings</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">agree</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">llm</span><span class="o">.</span><span class="n">human_agreement</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">human_ratings</span><span class="p">)</span>     <span class="c1"># human_ratings: one per topic</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">agree</span><span class="p">[</span><span class="s2">"correlation"</span><span class="p">],</span> <span class="n">agree</span><span class="p">[</span><span class="s2">"pvalue"</span><span class="p">],</span> <span class="n">agree</span><span class="p">[</span><span class="s2">"n"</span><span class="p">]</span>          <span class="c1"># Spearman rho by default</span>
+</code></pre></div>
+<p><code>llm.human_agreement</code> is the paper's Fig. 2 check (Stammbach et al. 2023): the Spearman
+rank correlation between an LLM metric and a matching vector of human ratings. It makes
+no LLM call (purely numeric), drops NaN pairs, and takes <code>method="spearman"</code> (default),
+<code>"pearson"</code>, or <code>"kendall"</code>. A high rank correlation on a labeled subset is the evidence
+that lets you report the LLM metric on the rest.</p>
+<p><code>llm.select_k</code> chooses the number of topics: for each candidate model it labels each
+topic's top documents with the LLM and scores by <strong>label purity</strong> (the fraction of a
+topic's documents sharing the majority label), returning the model with the highest
+mean purity. This is the paper's <em>working</em> number-of-topics signal — doc-label purity
+tracks ground-truth cluster quality, where rating the top <em>words</em> across <code>k</code> does not
+— and complements <code>search_k</code>'s coherence, exclusivity, held-out, and dispersion criteria.</p>
+<h3 id="ranking-whole-models-llmjudge-zheng-et-al-2025">Ranking whole models: <code>llm.judge</code> (Zheng et al. 2025)<a class="headerlink" href="#ranking-whole-models-llmjudge-zheng-et-al-2025" title="Permanent link">&para;</a></h3>
+<p><code>llm.coherence</code> scores words <em>within</em> a topic; <code>llm.judge</code> scores how well a model's
+topics fit a <em>document</em>, and ranks whole models against each other:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">llm</span><span class="o">.</span><span class="n">judge</span><span class="p">(</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="p">{</span><span class="s2">"lda"</span><span class="p">:</span> <span class="n">lda</span><span class="p">,</span> <span class="s2">"stm"</span><span class="p">:</span> <span class="n">stm</span><span class="p">,</span> <span class="s2">"bertopic"</span><span class="p">:</span> <span class="n">bt</span><span class="p">},</span>   <span class="c1"># fitted on the SAME docs, same order</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    <span class="n">docs</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">backend</span><span class="p">,</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="n">n_comparisons</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">representation</span><span class="o">=</span><span class="s2">"summary"</span><span class="p">,</span>  <span class="c1"># or "words"</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="p">)</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="n">result</span><span class="o">.</span><span class="n">elo</span>            <span class="c1"># {"lda": 1487, "stm": 1533, ...} — Bradley-Terry, rescaled to Elo</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="n">result</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>      <span class="c1"># leaderboard with bootstrap CIs</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="n">result</span><span class="o">.</span><span class="n">comparisons</span>    <span class="c1"># raw (doc, A, B, choice, reasoning) records, re-aggregatable</span>
+</code></pre></div>
+<p>For each model pair it samples documents, shows the judge each model's top topics for
+that document (as one-sentence summaries, so models with <em>different</em> vocabularies —
+words vs. embeddings vs. features — compare fairly), asks which set better captures the
+document, and aggregates the wins with a Bradley-Terry model rescaled to Elo (mean
+1500) with bootstrap CIs. This is the paper's flagship metric: it is the one signal
+that compares different model <em>families</em> on topic-<em>document</em> fit rather than intra-topic
+word relatedness, so it is the natural way to rank a set of fitted models on one corpus.
+<code>seed</code> fixes the document sampling and A/B order (the LLM itself stays <code>llm-bounded</code>).</p>
+<p>Three things to keep in mind:</p>
+<ul>
+<li><strong>Cost.</strong> A run makes <code>n_comparisons × M(M-1)/2</code> LLM calls for <code>M</code> models (plus, in
+  <code>summary</code> mode, one cached call per surfaced topic). The default <code>n_comparisons=100</code>
+  follows the paper and is hundreds of calls for a few models — at a rough ~2-3s per
+  call that is ~10-15 min for a 3-model paper-sized run. Preview the exact count with
+  <code>judge(..., dry_run=True)</code> (returns the plan, makes no calls), and start smaller
+  while exploring.</li>
+<li><strong>Read the CIs.</strong> With few comparisons the bootstrap intervals overlap and the
+  ranking does not actually separate the models; treat overlapping CIs as <em>no
+  decision</em> (<code>summary()</code> flags every adjacent pair whose CIs overlap) and raise
+  <code>n_comparisons</code> before reporting an Elo table. The paper uses 100 <em>per pair</em>.</li>
+<li><strong>Representation.</strong> Use <code>representation="summary"</code> to compare <em>different families</em>
+  fairly; <code>representation="words"</code> is cheaper (no summary calls) and fine for a
+  same-family sweep such as LDA at several <code>k</code>. Summaries are themselves LLM calls, so
+  <code>summary</code> mode trades a vocabulary-style bias for a (usually smaller) summarizer
+  bias — use a capable model.</li>
+<li><strong>Same corpus, same order.</strong> Every model must be fit on the same <code>docs</code> in the same
+  order — judge aligns <code>doc_topic</code> row <code>d</code> to <code>docs[d]</code>. It warns when the models'
+  vocabularies disagree (which catches different corpora, or the same corpus in a
+  different order), but that is only a proxy and cannot catch a misalignment under a
+  shared fixed vocabulary, so ensure the alignment yourself. A/B presentation order is
+  randomized (fixed by <code>seed</code>) specifically to cancel the judge's position bias, so a
+  lopsided A-vs-B count in <code>.comparisons</code> is expected and does not bias the Elo. Each
+  record also keeps the exact topic-set text shown to the judge, so a run is fully
+  re-auditable.</li>
+</ul>
+<h3 id="a-multi-dimensional-suite-tan-dsouza-2025">A multi-dimensional suite (Tan &amp; D'Souza 2025)<a class="headerlink" href="#a-multi-dimensional-suite-tan-dsouza-2025" title="Permanent link">&para;</a></h3>
+<p>Coherence rating answers one question — <em>are these words related?</em> — but a topic can
+be coherent and still be redundant, indistinct from its neighbours, or a poor fit for
+the documents it claims. Tan &amp; D'Souza (2025) widen the lens to four dimensions, all
+exposed under the same namespace and <code>backend=</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">topica</span><span class="o">.</span><span class="n">llm</span><span class="o">.</span><span class="n">outlier</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">backend</span><span class="p">,</span> <span class="n">n_samples</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>  <span class="c1"># which words break a topic (unsupervised vote)</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">topica</span><span class="o">.</span><span class="n">llm</span><span class="o">.</span><span class="n">repetitiveness</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">backend</span><span class="p">)</span>                     <span class="c1"># is coherence just redundancy? rate + duplicate pairs</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">topica</span><span class="o">.</span><span class="n">llm</span><span class="o">.</span><span class="n">diversity</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">backend</span><span class="p">)</span>                          <span class="c1"># pairwise cross-topic distinctiveness (1-3)</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="n">topica</span><span class="o">.</span><span class="n">llm</span><span class="o">.</span><span class="n">alignment</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">docs</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">backend</span><span class="p">)</span>                    <span class="c1"># per topic: irrelevant words / missing themes vs its top docs</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="n">topica</span><span class="o">.</span><span class="n">llm</span><span class="o">.</span><span class="n">adversarial</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">backend</span><span class="p">)</span>                        <span class="c1"># gold-free capability self-check</span>
+</code></pre></div>
+<p><code>llm.outlier</code> is the unsupervised sibling of <code>llm.intrusion</code>: no planted answer, just a
+5-runs vote on <em>which</em> top words don't belong (kept when flagged in <code>threshold</code> of
+<code>n_samples</code> runs), so it surfaces the specific words making a topic incoherent.
+<code>llm.refine</code> is its actionable counterpart (Zheng et al. 2025): it shows the LLM the top
+<code>n + m</code> words, drops up to <code>m</code> that are out of place, and returns the cleaned top-<code>n</code>
+list per topic (plus which words it <code>dropped</code>):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">cleaned</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">llm</span><span class="o">.</span><span class="n">refine</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">backend</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">m</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">cleaned</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"words"</span><span class="p">]</span>     <span class="c1"># topic 0's top 10 with up to 2 intruders removed</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">cleaned</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"dropped"</span><span class="p">]</span>   <span class="c1"># the words it removed (review these!)</span>
+</code></pre></div>
+<p>Treat it as a <strong>suggestion to review, not an automatic cleaner</strong>: on a peaky or small
+topic the LLM can flag a <em>defining</em> word as out of place and weaken the topic, so read
+<code>dropped</code> beside the raw top words per topic rather than applying it blind. <code>protect</code>
+(default 1) refuses to drop the top-most-probable word(s), which prevents the worst case
+(deleting a topic's anchor). Cost is <code>num_topics × n_samples</code> LLM calls. The output is a
+list of dicts (not the list-of-lists <code>top_words</code> returns), for reporting or for building
+labels by hand.</p>
+<p><code>llm.repetitiveness</code> checks the failure coherence rating misses — a topic of near-synonyms
+scores high on relatedness but is uninformative; it returns a 1-3 rate (3 = distinctive)
+plus the duplicate word pairs. <code>llm.diversity</code> rates every topic <em>pair</em> for thematic
+overlap, the LLM analog of <code>topic_diversity</code>. <code>llm.alignment</code> is the only one that reads
+the corpus: per topic it asks, over the topic's top documents, how many topic words are
+irrelevant (overrepresentation) and how many document themes are missing
+(underrepresentation).</p>
+<p><code>llm.adversarial</code> is the one to run first. It plants a known-unrelated word
+(<code>"shakespeare"</code>) into each topic and measures how often <code>llm.outlier</code> catches it — a
+<strong>gold-free</strong> check that validates both the metric and your model's capability on <em>your</em>
+corpus, no human labels required. A detection rate near 1.0 means the model is strong
+enough for the rest of the suite; a low rate is the signal to size up before trusting any
+of these numbers.</p>
+<div class="admonition note">
+<p class="admonition-title">Model capability matters — don't use a tiny model</p>
+<p>These tasks need a <strong>capable</strong> model, and open weights are enough: in our checks a
+70B-class open model (Llama-3.3-70B) handles all three, and <code>llm.coherence</code>
+reproduces the paper's human correlation with Qwen3-235B. The tasks differ in
+difficulty — <em>rating</em> (<code>llm.coherence</code>) is forgiving and an 8B model ranks topics
+sensibly, but <em>intrusion</em> (<code>llm.intrusion</code>) and <em>labeling</em> (<code>llm.select_k</code>) are
+harder: an 8B model failed to spot obvious word intruders in our tests. Prefer a
+~70B+ open model (or a strong hosted one); treat small-model results, especially
+on intrusion/labeling, with suspicion.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">These are <code>llm-bounded</code>, not bit-exact</p>
+<p>Unlike the rest of topica's diagnostics, these call an external model and are
+<strong>not</strong> reproducible bit-for-bit. Use <code>temperature=0</code> (or <code>n_samples&gt;1</code>, which
+calls the model repeatedly and aggregates by mean/majority-vote) for stability,
+and read the result as a measurement with model-dependent noise. The paper's
+prompts are kept verbatim in the overridable <code>topica.llm.PROMPTS</code> dict. Cost
+is O(K) LLM calls; pass a cheap model.</p>
+</div>
+<h2 id="stability-and-model-selection">Stability and model selection<a class="headerlink" href="#stability-and-model-selection" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">topica</span><span class="o">.</span><span class="n">select</span><span class="o">.</span><span class="n">search_k</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">ks</span><span class="o">=</span><span class="p">[</span><span class="mi">10</span><span class="p">,</span> <span class="mi">20</span><span class="p">,</span> <span class="mi">30</span><span class="p">],</span> <span class="n">held_out</span><span class="o">=</span><span class="n">test</span><span class="p">)</span>     <span class="c1"># coherence, exclusivity, held-out, dispersion per K</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">bootstrap_stability</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">n_boot</span><span class="o">=</span><span class="mi">50</span><span class="p">)</span>         <span class="c1"># per-topic stability under resampling</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">align_topics</span><span class="p">(</span><span class="n">model_a</span><span class="p">,</span> <span class="n">model_b</span><span class="p">)</span>                     <span class="c1"># one-to-one match across fits</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">topic_stability</span><span class="p">([</span><span class="n">model_a</span><span class="p">,</span> <span class="n">model_b</span><span class="p">],</span> <span class="n">topn</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>       <span class="c1"># cross-fit term overlap</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">check_residuals</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">docs</span><span class="p">)</span>                       <span class="c1"># Taddy dispersion: is K too small?</span>
+</code></pre></div>
+<p><code>search_k</code> returns a <code>SearchKResult</code> whose rows carry <code>coherence</code>, <code>exclusivity</code>,
+residual <code>dispersion</code>, and (with <code>held_out=</code>) a held-out metric per K, plus
+optional <code>criteria=("deveaud", "cao_juan")</code> columns. Fit several seeds per K with
+<code>num_seeds&gt;1</code> to get a <code>&lt;metric&gt;_se</code> standard error on each (parallelize the fits
+with <code>n_jobs=-1</code>). Then let <code>result.best_k(metric=..., rule=...)</code> name a K:
+<code>rule="best"</code> (the optimum), <code>"1se"</code> (the simplest K within one standard error, so
+you don't over-read noise), or <code>"elbow"</code> (the diminishing-returns knee of a
+held-out curve). Bare <code>best_k()</code> defaults to the held-out metric when a
+<code>held_out=</code> set is present and to the coherence/exclusivity <em>frontier</em> otherwise —
+and because held-out log-likelihood is roughly monotone in K, the held-out default
+tends to land on the largest K you scanned (it warns when it does). Treat that as
+one input, not the answer: <code>best_k</code> names the K a criterion prefers, it does not
+make the research decision for you. The <a href="../../publishing/choosing-k/">Choose and justify K</a>
+guide works a full example on <code>poliblog</code>.</p>
+<h3 id="topic-alignment">Topic alignment<a class="headerlink" href="#topic-alignment" title="Permanent link">&para;</a></h3>
+<p>To compare topics across different runs, seeds, or even architectures, <code>topica.evaluate.align_topics(model_a, model_b)</code> performs Kuhn-Munkres (Hungarian) matching to align topics one-to-one. It returns a custom <code>AlignmentResult</code> object containing matched tuples of <code>(topic_a, topic_b, distance)</code>.</p>
+<p>It supports several distance metrics:
+- <code>metric="cosine"</code> (default): Cosine distance.
+- <code>metric="js"</code>: Jensen-Shannon distance.
+- <code>metric="rbo"</code>: Rank-Biased Overlap over the top <code>depth</code> words, focusing weight on high-probability words.
+- <code>metric="emd"</code> (or <code>"ot"</code>): Earth Mover's Distance / Optimal Transport, which can use a word embeddings dictionary or matrix.</p>
+<p>If the models have different vocabularies, <code>align_topics</code> automatically intersects them, projects the distributions, and re-normalizes them.</p>
+<p>You can inspect relationship classifications (matches, splits, merges, and unaligned topics):
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">align_topics</span><span class="p">(</span><span class="n">model_a</span><span class="p">,</span> <span class="n">model_b</span><span class="p">,</span> <span class="n">metric</span><span class="o">=</span><span class="s2">"cosine"</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.3</span><span class="p">)</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">result</span><span class="o">.</span><span class="n">matches</span>     <span class="c1"># Hungarian 1-to-1 pairs whose similarity clears `threshold`</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="n">result</span><span class="o">.</span><span class="n">splits</span>      <span class="c1"># topic in A splitting to multiple in B (overlay on the matches)</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="n">result</span><span class="o">.</span><span class="n">merges</span>      <span class="c1"># topic in B merging from multiple in A (overlay on the matches)</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="n">result</span><span class="o">.</span><span class="n">unaligned_a</span> <span class="c1"># topics in A with no match above threshold</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="n">result</span><span class="o">.</span><span class="n">unaligned_b</span> <span class="c1"># topics in B with no match above threshold</span>
+</code></pre></div></p>
+<p><code>threshold</code> sets the one-to-one match cut. Splits and merges are an <em>overlay</em>: an extra
+partner is flagged only when it is close to a topic's own best match <em>relative to this
+fit's cross-topic similarity floor</em>, so a matched topic that also has a close extra
+partner shows up in both <code>matches</code> and <code>splits</code>/<code>merges</code>. Because the overlay calibrates
+to each fit, correlated-topic families (STM/CTM) — whose off-diagonal cosines are high —
+are no longer mislabelled as near-total splits/merges, and <code>align_topics(tw, tw)</code> returns
+K matches with zero splits/merges for any model (issue #642).</p>
+<h2 id="topic-structure-and-document-outliers">Topic structure and document outliers<a class="headerlink" href="#topic-structure-and-document-outliers" title="Permanent link">&para;</a></h2>
+<p>Three post-hoc, no-refit diagnostics that read a fitted model's <code>topic_word</code> and
+<code>doc_topic</code> (so they work on any model — LDA, STM, DMR, CTM, keyATM):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># Is K=20 really a few super-themes, and are any topics near-duplicates?</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">dnd</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">topic_dendrogram</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">metric</span><span class="o">=</span><span class="s2">"js"</span><span class="p">)</span>     <span class="c1"># needs scipy</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="n">dnd</span><span class="o">.</span><span class="n">cut</span><span class="p">(</span><span class="mi">6</span><span class="p">)</span>                                             <span class="c1"># group label per topic at 6 super-topics</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="n">dnd</span><span class="o">.</span><span class="n">groups</span><span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>                                    <span class="c1"># {group: (member topics, merged top words)}</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="n">dnd</span><span class="o">.</span><span class="n">merge_candidates</span><span class="p">()</span>                                 <span class="c1"># near-duplicate pairs (relative threshold)</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="n">dnd</span><span class="o">.</span><span class="n">linkage</span>                                            <span class="c1"># SciPy linkage matrix for plotting</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="c1"># Are these topics real, or did I forget to clean my corpus?</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="n">rows</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">flag_topics</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">docs</span><span class="p">)</span>                 <span class="c1"># per-topic quality + a junk flag</span>
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="n">junk</span> <span class="o">=</span> <span class="p">[</span><span class="n">r</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">rows</span> <span class="k">if</span> <span class="n">r</span><span class="p">[</span><span class="s2">"junk"</span><span class="p">]]</span>                  <span class="c1"># reasons: stopword-soup / dead-tiny / incoherent+flat</span>
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a>
+<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a><span class="c1"># Which documents does the model fail to explain?</span>
+<a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a><span class="n">res</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">document_residuals</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">docs</span><span class="p">)</span>           <span class="c1"># per-doc novelty, most anomalous first</span>
+<a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a><span class="n">res</span><span class="p">[:</span><span class="mi">10</span><span class="p">]</span>                                               <span class="c1"># off-topic, repetitive, or anomalous docs</span>
+</code></pre></div>
+<p><code>topic_dendrogram</code> is the flat-model counterpart to <code>HLDA</code> (which fits a topic
+tree directly) and to <code>ensemble</code> (which merges across runs): it merges <em>one</em>
+fitted model's topics by distribution distance. Use a relative <code>merge_candidates</code>
+threshold — the absolute distance scale shifts with how much common-word mass the
+corpus shares.</p>
+<p><code>flag_topics</code> scores coherence, exclusivity, topic-word flatness, prevalence, and
+top-word stopword fraction, then flags junk <em>relative to the run</em>. The cleanest
+signal it catches is a forgotten stopword pass, where boilerplate topics light up
+as <code>stopword-soup</code>.</p>
+<p><code>document_residuals</code> reconstructs each document as <code>theta_d @ beta</code> and ranks how
+poorly that matches the actual words. It complements <code>check_residuals</code> (one
+corpus-level "is K too small?" number) by pointing at the <em>specific</em> documents
+the model misses. The headline <code>novelty</code> score folds in out-of-vocabulary mass so
+off-topic intruders surface; <code>cross_entropy</code> is the length-robust in-vocabulary
+component (use it, not <code>kl</code>, which is length-confounded).</p>
+<h2 id="ensemble-combining-runs">Ensemble: combining runs<a class="headerlink" href="#ensemble-combining-runs" title="Permanent link">&para;</a></h2>
+<p>A single fit is one draw from a noisy procedure. Change the seed and the topics
+move, sometimes a lot, and neural models are worse than classical ones (Hoyle et
+al. 2022). Rather than fit once and hope, or fit many and pick one with
+<code>select_model</code>, we can combine independent runs into a consensus that is more
+reliable than any single run. In Hoyle et al.'s experiments the ensemble beats the
+median run in 97% of settings and never loses to the worst.</p>
+<p><code>ensemble</code> takes the runs (a list of fitted models, raw topic-word arrays, or a
+<code>select_model</code> result) and returns a consensus that behaves like a fitted model:
+it carries <code>topic_word</code>, <code>doc_topic</code>, and <code>vocabulary</code>, so it flows straight into
+<code>coherence</code>, the diagnostics, and the rest. Each consensus topic reports a
+<code>stability</code> score and a <code>reliable</code> flag, so a topic the runs do not actually agree
+on is marked rather than trusted.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">runs</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">select</span><span class="o">.</span><span class="n">select_model</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">K</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">runs</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>   <span class="c1"># ten initializations</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="n">cons</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">ensemble</span><span class="p">(</span><span class="n">runs</span><span class="p">)</span>                       <span class="c1"># combine them</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="n">cons</span><span class="o">.</span><span class="n">topic_word</span><span class="o">.</span><span class="n">shape</span>       <span class="c1"># (20, V)</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="n">cons</span><span class="o">.</span><span class="n">stability</span>              <span class="c1"># per-topic agreement across runs, in [0, 1]</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="n">cons</span><span class="o">.</span><span class="n">reliable</span>               <span class="c1"># per-topic: consistent AND well-supported?</span>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="n">cons</span><span class="o">.</span><span class="n">agreement</span>              <span class="c1"># scalar: mean stability, "how reproducible is this K?"</span>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="n">topica</span><span class="o">.</span><span class="n">evaluate</span><span class="o">.</span><span class="n">coherence</span><span class="p">(</span><span class="n">cons</span><span class="p">,</span> <span class="n">docs</span><span class="p">)</span>
+</code></pre></div>
+<p><code>agreement</code> and <code>stability</code> are point estimates. Pass <code>n_boot&gt;0</code> to bootstrap
+them — the runs are resampled with replacement, the consensus recomputed, and the
+result gains <code>agreement_ci</code> / <code>agreement_se</code> and (for <code>cluster</code>/<code>align</code>) a
+per-topic <code>stability_ci</code>. That tells you whether a difference in <code>agreement</code>
+across K, or across model families, is real or just noise from which runs you
+happened to combine:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">cons</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">ensemble</span><span class="p">(</span><span class="n">runs</span><span class="p">,</span> <span class="n">n_boot</span><span class="o">=</span><span class="mi">300</span><span class="p">,</span> <span class="n">boot_seed</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="n">cons</span><span class="o">.</span><span class="n">agreement</span><span class="p">,</span> <span class="n">cons</span><span class="o">.</span><span class="n">agreement_ci</span>   <span class="c1"># e.g. 0.79, (0.74, 0.83)</span>
+</code></pre></div>
+<p>Three methods are available:</p>
+<ul>
+<li><code>method="cluster"</code> (default) reproduces Hoyle et al. (§6): pool the topics from
+  every run, measure a top-weighted rank distance between them that blends the
+  topic-word and document-topic views (<code>lambda_</code>), cluster the pool into K groups,
+  and average within each cluster. Clustering tolerates a topic that splits or
+  merges across runs, and flags a cluster that few runs supported.</li>
+<li><code>method="align"</code> is a lighter, fully deterministic alternative: match every
+  run's topics one-to-one to a reference run (Hungarian on the topic-word
+  distributions) and average the aligned topics.</li>
+<li><code>method="stable"</code> derives from gensim's <code>EnsembleLda</code> (Brigl 2019). It does not
+  fix K: it finds dense, reproducible "cores" with Checkback DBSCAN and keeps only
+  the clusters with enough cores as stable topics, discarding the rest as noise.
+  Use it to let the data decide how many topics are reproducible. On well-separated
+  inputs it matches gensim to floating-point precision; it improves on gensim in two
+  edge cases where gensim degenerates (small-vocabulary rank masking and
+  scan-order-dependent core validation).</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">topica</span><span class="o">.</span><span class="n">ensemble</span><span class="p">(</span><span class="n">runs</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">"align"</span><span class="p">)</span>                  <span class="c1"># reference matching</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="n">topica</span><span class="o">.</span><span class="n">ensemble</span><span class="p">(</span><span class="n">runs</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">"stable"</span><span class="p">,</span> <span class="n">eps</span><span class="o">=</span><span class="mf">0.1</span><span class="p">)</span>        <span class="c1"># discover stable topics</span>
+</code></pre></div>
+<h3 id="cross-model-consensus-ensembling">Cross-model consensus ensembling<a class="headerlink" href="#cross-model-consensus-ensembling" title="Permanent link">&para;</a></h3>
+<p>While <code>topica.ensemble</code> is designed to combine independent runs (from different seeds) of the same model class, you can use <code>topica.cross_ensemble</code> to combine and align topics across entirely different architectures (e.g. combining LDA, STM, and BERTopic).</p>
+<p>This is particularly valuable for proving that your target topics are robust, persisting regardless of whether they are recovered by a Gibbs sampler, variational EM, or neural clustering.</p>
+<p>If the models have different vocabularies (due to different preprocessing options), <code>cross_ensemble</code> automatically intersects them, projects the models' <code>topic_word</code> matrices onto the common vocabulary intersection, and re-normalizes them. If the models have different numbers of topics, it automatically defaults to the median K of the input models.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># Combine different architectures fit on the same corpus</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="n">cons</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">cross_ensemble</span><span class="p">([</span><span class="n">lda_model</span><span class="p">,</span> <span class="n">stm_model</span><span class="p">,</span> <span class="n">bertopic_model</span><span class="p">])</span>
+</code></pre></div>
+<h2 id="convergence">Convergence<a class="headerlink" href="#convergence" title="Permanent link">&para;</a></h2>
+<p>Every iterative model exposes a uniform convergence interface. <code>model.fit_history</code>
+is a list of <code>(iteration, objective)</code> pairs — the ELBO/bound for variational
+models (STM, CTM, ProdLDA, ETM, FASTopic) and the per-token log-likelihood for
+collapsed-Gibbs models (LDA, keyATM, SeededLDA, …). <code>model.converged</code> is <code>True</code>
+if a tolerance criterion was met during <code>fit</code>, <code>False</code> if the model ran to the
+iteration cap, and <code>None</code> for models with no iterative objective (BERTopic,
+Top2Vec).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">LDA</span><span class="p">(</span><span class="n">num_topics</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">iters</span><span class="o">=</span><span class="mi">500</span><span class="p">)</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="n">model</span><span class="o">.</span><span class="n">converged</span>        <span class="c1"># True / False / None</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="n">model</span><span class="o">.</span><span class="n">fit_history</span>      <span class="c1"># [(10, -7.43), (20, -7.31), ...]</span>
+</code></pre></div>
+<p>On collapsed-Gibbs models you can enable early stopping by passing
+<code>convergence_tol</code> and <code>check_every</code> to <code>fit</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">iters</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span> <span class="n">convergence_tol</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span> <span class="n">check_every</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="c1"># stops as soon as the relative change in log-likelihood over one check</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="c1"># interval drops below 1e-4, rather than running all 1000 sweeps.</span>
+</code></pre></div>
+<p>keyATM takes <code>convergence_tol</code> the same way, but its check cadence is the
+<code>report_interval</code> it already uses for the <code>model_fit</code> trace (not a separate
+<code>check_every</code>).</p>
+<h3 id="defaults-and-why">Defaults, and why<a class="headerlink" href="#defaults-and-why" title="Permanent link">&para;</a></h3>
+<p>The defaults follow each family's reference implementation rather than a tuned
+guess:</p>
+<ul>
+<li><strong>Variational EM (STM, CTM, STS)</strong> stop automatically when the relative change
+  in the variational bound falls below <code>em_tol</code>, default <code>1e-5</code> — the same
+  criterion and value as R <code>stm</code>'s <code>emtol</code> (<a href="https://doi.org/10.18637/jss.v091.i02">Roberts, Stewart &amp; Tingley
+  2019</a>).</li>
+<li><strong>Collapsed-Gibbs samplers (LDA, keyATM, DMR, SeededLDA, …)</strong> default to
+  <code>convergence_tol=0.0</code> (no early stop): a fixed number of sweeps is the field
+  convention, following MALLET and Griffiths &amp; Steyvers (2004), and keeps the
+  retained θ-draw thinning (<code>thin = iters / num_theta_draws</code>) well defined.
+  Setting <code>convergence_tol &gt; 0</code> opts into log-likelihood-plateau early stopping
+  without changing the default fit.</li>
+</ul>
+<p>The cluster models (BERTopic, Top2Vec) and structurally non-iterative models
+(DTM, HLDA) return an empty <code>fit_history</code> and <code>converged</code> of <code>False</code> or <code>None</code>;
+they satisfy the contract without early-stop support. HDP and GSDMM record a
+<code>fit_history</code> but never early-stop (<code>converged</code> stays <code>False</code>): they <em>discover</em>
+their topic and cluster counts, so a log-likelihood plateau is not a convergence
+signal.</p>
+<h3 id="has-the-chain-plateaued-or-mixed">Has the chain plateaued, or mixed?<a class="headerlink" href="#has-the-chain-plateaued-or-mixed" title="Permanent link">&para;</a></h3>
+<p>For the collapsed-Gibbs samplers, <code>convergence_tol</code> watches the log-likelihood
+trace, and a flat trace means the sampler found a mode — not that the chain has
+<em>mixed</em>. A plateaued log-likelihood and a poorly-mixed chain look identical from
+the objective alone. <code>topica.mcmc</code> reports the MCMC-native diagnostics a Bayesian
+workflow expects, computed from traces the model already keeps: the
+log-likelihood history and the thinned <code>theta_draws</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="n">model</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">LDA</span><span class="p">(</span><span class="n">num_topics</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">iters</span><span class="o">=</span><span class="mi">2000</span><span class="p">,</span> <span class="n">num_theta_draws</span><span class="o">=</span><span class="mi">200</span><span class="p">)</span>   <span class="c1"># more retained draws -&gt; finer ESS</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="n">d</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">mcmc_diagnostics</span><span class="p">(</span><span class="n">model</span><span class="p">)</span>
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">summary</span><span class="p">())</span>
+<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="c1"># MCMC diagnostics for LDA (inference=gibbs)</span>
+<a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="c1">#   retained draws          : 200</span>
+<a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="c1">#   log-likelihood tau      : 3.10</span>
+<a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a><span class="c1">#   log-likelihood ESS      : 6.5</span>
+<a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a><span class="c1">#   theta ESS (min/median)  : 41.2 / 118.7 (of 200 draws)</span>
+<a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a>
+<a id="__codelineno-20-12" name="__codelineno-20-12" href="#__codelineno-20-12"></a><span class="n">d</span><span class="o">.</span><span class="n">theta_ess</span>          <span class="c1"># (num_docs, num_topics) effective sample size per element</span>
+<a id="__codelineno-20-13" name="__codelineno-20-13" href="#__codelineno-20-13"></a><span class="n">d</span><span class="o">.</span><span class="n">loglik_autocorr</span>    <span class="c1"># autocorrelation of the log-likelihood trace</span>
+</code></pre></div>
+<p>A low <code>theta ESS</code> relative to <code>retained draws</code> means the chain is autocorrelated
+— the draws carry less information than their count suggests, so run more sweeps
+or thin further. The <code>theta_draws</code> are already thinned, so raise
+<code>num_theta_draws</code> on <code>fit</code> for a finer estimate.</p>
+<p>The underlying estimators are also exposed directly for any trace you hold —
+<code>topica.autocorrelation</code>, <code>topica.integrated_autocorr_time</code> (Geyer's
+initial-positive-sequence <code>tau</code>), and <code>topica.effective_sample_size</code> (<code>N / tau</code>,
+for one chain or columnwise over a <code>(draws, params)</code> matrix).</p>
+<p>The variational models (STM, CTM, …) converge a bound and have no MCMC chain —
+<code>mcmc_diagnostics</code> warns if you point it at one.</p>
+<h3 id="do-independent-chains-agree-r-hat">Do independent chains agree? (R-hat)<a class="headerlink" href="#do-independent-chains-agree-r-hat" title="Permanent link">&para;</a></h3>
+<p>A single chain can plateau, look well-mixed, and still have settled into a mode
+the sampler happened to reach from its seed. The Gelman-Rubin R-hat answers the
+question one chain cannot: fit the same model at several seeds and check whether
+the chains converged to a <em>common</em> distribution. R-hat compares the variance
+between chains to the variance within each — near 1 they agree, above ~1.01 they
+have not mixed.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="n">chains</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="k">for</span> <span class="n">seed</span> <span class="ow">in</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">):</span>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>    <span class="n">m</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">LDA</span><span class="p">(</span><span class="n">num_topics</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="n">seed</span><span class="p">)</span>
+<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>    <span class="n">m</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">iters</span><span class="o">=</span><span class="mi">2000</span><span class="p">,</span> <span class="n">num_theta_draws</span><span class="o">=</span><span class="mi">200</span><span class="p">)</span>
+<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>    <span class="n">chains</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">m</span><span class="p">)</span>
+<a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>
+<a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="n">d</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">multichain_diagnostics</span><span class="p">(</span><span class="n">chains</span><span class="p">)</span>
+<a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">summary</span><span class="p">())</span>
+<a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a><span class="c1"># Multi-chain diagnostics for LDA (4 chains, inference=gibbs)</span>
+<a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a><span class="c1">#   log-likelihood R-hat    : 1.008 (ESS 640, n=1000)</span>
+<a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a><span class="c1">#   topic-prevalence R-hat  : max 1.021 / median 1.004 over 20 aligned topics</span>
+<a id="__codelineno-21-12" name="__codelineno-21-12" href="#__codelineno-21-12"></a><span class="c1">#   topic alignment (Jaccard): min 0.71 (low -&gt; that topic's R-hat is not comparable)</span>
+<a id="__codelineno-21-13" name="__codelineno-21-13" href="#__codelineno-21-13"></a><span class="c1">#   -&gt; chains mixed</span>
+<a id="__codelineno-21-14" name="__codelineno-21-14" href="#__codelineno-21-14"></a>
+<a id="__codelineno-21-15" name="__codelineno-21-15" href="#__codelineno-21-15"></a><span class="n">d</span><span class="o">.</span><span class="n">loglik_rhat</span>        <span class="c1"># R-hat of the log-likelihood trace (permutation-invariant)</span>
+<a id="__codelineno-21-16" name="__codelineno-21-16" href="#__codelineno-21-16"></a><span class="n">d</span><span class="o">.</span><span class="n">topic_rhat</span>         <span class="c1"># (num_topics,) per-topic R-hat of aligned topic prevalence</span>
+<a id="__codelineno-21-17" name="__codelineno-21-17" href="#__codelineno-21-17"></a><span class="n">d</span><span class="o">.</span><span class="n">topic_alignment</span>    <span class="c1"># (num_topics,) how well each topic matched across chains</span>
+<a id="__codelineno-21-18" name="__codelineno-21-18" href="#__codelineno-21-18"></a><span class="n">d</span><span class="o">.</span><span class="n">converged</span>          <span class="c1"># every reported R-hat &lt;= 1.01</span>
+</code></pre></div>
+<p>Two views are reported. The <strong>log-likelihood R-hat</strong> is the headline: the
+log-likelihood is permutation-invariant, so it compares chains directly with no
+alignment. The <strong>per-topic R-hat</strong> is finer but needs care — topic 3 in one chain
+need not be topic 3 in another, so <code>multichain_diagnostics</code> first aligns the
+topics across chains (a Hungarian match on the topic-word matrix, the same
+machinery <a href="../../api/diagnostics/#topica.evaluate.align_topics"><code>align_topics</code></a> uses) and then compares each
+aligned topic's per-draw prevalence. Read <code>topic_rhat</code> next to <code>topic_alignment</code>:
+a topic with a low alignment Jaccard did not line up across chains, so its R-hat
+is comparing different topics and means nothing.</p>
+<p>The R-hat estimator itself — rank-normalized split-R-hat (Vehtari et al. 2021) —
+is exposed directly as <code>topica.rhat(chains)</code> for any set of chains you hold, in
+the same spirit as the single-chain primitives above.</p>
+<h2 id="visualization">Visualization<a class="headerlink" href="#visualization" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="n">viz</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">prepare_pyldavis</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">docs</span><span class="p">)</span>                <span class="c1"># pyLDAvis PreparedData if installed</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="n">qf</span><span class="p">,</span> <span class="n">fig</span> <span class="o">=</span> <span class="n">topica</span><span class="o">.</span><span class="n">select</span><span class="o">.</span><span class="n">quality_frontier</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">plot</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>       <span class="c1"># matplotlib scatter if installed</span>
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "navigation.indexes", "content.code.copy", "content.code.annotate", "toc.follow", "search.suggest"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

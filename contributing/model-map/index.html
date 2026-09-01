@@ -1,0 +1,3408 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Fast, all-purpose topic modeling for Python — a Rust core with the MALLET, STM, tomotopy, and gensim toolkits in one package.">
+      
+      
+      
+        <link rel="canonical" href="https://nealcaren.github.io/topica/contributing/model-map/">
+      
+      
+        <link rel="prev" href="../estimator-contract/">
+      
+      
+        <link rel="next" href="../validation/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../images/topica-favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Model implementation map - Topica</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#model-implementation-map" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Topica" class="md-header__button md-logo" aria-label="Topica" data-md-component="logo">
+      
+  <img src="../../images/topica-mark.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Topica
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Model implementation map
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/nealcaren/topica" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nealcaren/topica
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Topica" class="md-nav__button md-logo" aria-label="Topica" data-md-component="logo">
+      
+  <img src="../../images/topica-mark.svg" alt="logo">
+
+    </a>
+    Topica
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/nealcaren/topica" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nealcaren/topica
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../can-do/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Start here
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Start here
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/agent-cheatsheet/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent cheat sheet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../publishing/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    From corpus to credible result
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    From corpus to credible result
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/corpus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. Build a defensible corpus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/choosing-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Pick the right model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/choosing-k/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Choose and justify K
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Validate the topics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/effects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Measure effects properly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../publishing/reporting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Report and make reproducible
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Methods & models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Methods & models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The model catalog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/model-comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparing the models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/covariates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Covariates & STM
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/guided/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guided topics (seed words)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/short-text/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Short text
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedding topics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM-based topics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analyze & validate
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Analyze & validate
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/preprocessing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Preprocessing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagnostics & validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/uncertainty/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reporting uncertainty
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/keywords/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Distinguishing words
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/transform/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Held-out inference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/cross-validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cross-validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/dubois/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Du Bois in The Crisis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/congress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Congress (STM party & time)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/poliblog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Political blogs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/content_time/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Party platforms (STM content_time)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/nmf-neural/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NMF vs neural (labeled)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/guided/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guided topics (keyATM)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/dmr-sentiment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sentiment covariate (DMR)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/short-text/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Short text (GSDMM/BTM)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/threads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Threaded conversations (ThreadTM)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/llm-topics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM embeddings & labels
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../replications/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Replications
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Replications
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../replications/stm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STM (the stm vignette)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../replications/keyatm-dynamic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dynamic keyATM (Supreme Court)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../replications/tlda/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TensorLDA validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../replications/sts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STS reference profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/datasets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Datasets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedding models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/manifest/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analysis manifest
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/content/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Content-covariate diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viz/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/stm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STM toolkit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/keyatm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    keyATM toolkit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/keywords/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keywords & preprocessing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Contributing
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../conventions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API conventions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../keyword-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keyword & seed parameters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../estimator-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Estimator contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model implementation map
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model implementation map
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#general-purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        General-purpose
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#covariates-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Covariates &amp; structure
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guided-supervised" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Guided &amp; supervised
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#short-text" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Short text
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dynamic-hierarchical" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dynamic &amp; hierarchical
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#embedding-based" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Embedding-based
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ideal-point" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ideal point
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#llm-based" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LLM-based
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation & graduation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../release-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../citing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Citing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#general-purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        General-purpose
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#covariates-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Covariates &amp; structure
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guided-supervised" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Guided &amp; supervised
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#short-text" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Short text
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dynamic-hierarchical" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dynamic &amp; hierarchical
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#embedding-based" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Embedding-based
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ideal-point" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ideal point
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#llm-based" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LLM-based
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="model-implementation-map">Model implementation map<a class="headerlink" href="#model-implementation-map" title="Permanent link">&para;</a></h1>
+<p>This page maps every shipped model to the files a change touches: its core
+algorithm, its PyO3 binding, the shared machinery it builds on, the Cargo feature
+it needs, and where its reference-parity tests live. Use it to find the surfaces
+for a model without searching the tree.</p>
+<p>It is <strong>generated from the registry</strong>, not hand-maintained here. The source of
+truth is the <code>IMPL</code> map in
+<a href="https://github.com/nealcaren/topica/blob/main/python/topica/registry.py"><code>python/topica/registry.py</code></a>;
+<code>scripts/gen_model_tables.py</code> renders it into the block below, and
+<code>tests/test_registry.py</code> fails CI if the block is stale, if <code>IMPL</code> and the model
+registry cover different models, or if any path or Cargo feature it names does
+not exist. So this map cannot silently drift from the code.</p>
+<p>To change a row, edit <code>registry.py</code> and run <code>python scripts/gen_model_tables.py</code>
+(the <code>preflight</code> hook and CI reject a stale block); do not edit the generated
+block directly.</p>
+<p>Column meanings:</p>
+<ul>
+<li><strong>Source</strong> — the core algorithm file. A Rust <code>src/*.rs</code> (or <code>topica-core/</code>)
+  file, or a <code>python/topica/*.py</code> module for the pure-Python models.</li>
+<li><strong>Binding</strong> — the PyO3 binding: <code>src/python/mod.rs</code>, an extracted
+  <code>src/python/&lt;model&gt;.rs</code> module, or <code>—</code> for a pure-Python model.</li>
+<li><strong>Core / family</strong> — the shared machinery the model builds on (the collapsed
+  Gibbs core in <code>model.rs</code>/<code>sampler.rs</code>, the CTM/STM variational core in
+  <code>topica-core</code>, the ProdLDA VAE, and so on).</li>
+<li><strong>Feature</strong> — the Cargo feature required beyond the default build. <code>default</code>
+  builds with a plain <code>cargo build</code>; <code>embeddings</code> is the clustering-model gate
+  (<code>cargo test --features embeddings,umap,tsne</code> covers it).</li>
+<li><strong>Validation</strong> — the reference-parity / gold artifacts for the model. Every
+  registered model is additionally covered by the conformance suite
+  (<code>tests/test_conformance.py</code>).</li>
+</ul>
+<!-- BEGIN MODEL MAP (generated from topica.registry IMPL; edit registry.py, not this block) -->
+
+<h3 id="general-purpose">General-purpose<a class="headerlink" href="#general-purpose" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Source</th>
+<th>Binding</th>
+<th>Core / family</th>
+<th>Feature</th>
+<th>Validation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>LDA</code></td>
+<td><code>src/model.rs</code></td>
+<td><code>src/python/mod.rs</code></td>
+<td>SparseLDA collapsed Gibbs (model.rs, sampler.rs)</td>
+<td>default</td>
+<td><code>parity/lda_gold.py</code>, <code>parity/mallet_parity.py</code></td>
+</tr>
+<tr>
+<td><code>OnlineLDA</code></td>
+<td><code>src/online_lda.rs</code></td>
+<td><code>src/python/online_lda.rs</code></td>
+<td>online-VB SVI schedule (variational/svi.rs), Dirichlet mean-field E-step (optimize.rs digamma)</td>
+<td>default</td>
+<td><code>parity/online_lda_gensim_compare.py</code></td>
+</tr>
+<tr>
+<td><code>CTM</code></td>
+<td><code>topica-core/src/ctm.rs</code></td>
+<td><code>src/python/mod.rs</code></td>
+<td>CTM/STM variational core (topica-core)</td>
+<td>default</td>
+<td><code>parity/ctm_gold.py</code>, <code>parity/ctm_r_compare.py</code></td>
+</tr>
+<tr>
+<td><code>ProdLDA</code></td>
+<td><code>src/prodlda.rs</code></td>
+<td><code>src/python/neural.rs</code></td>
+<td>hand-coded batched VAE (prodlda.rs)</td>
+<td>default</td>
+<td><code>parity/prodlda_gold.py</code>, <code>parity/prodlda_compare.py</code></td>
+</tr>
+<tr>
+<td><code>HDP</code></td>
+<td><code>src/hdp.rs</code></td>
+<td><code>src/python/mod.rs</code></td>
+<td>collapsed Gibbs (model.rs, sampler.rs)</td>
+<td>default</td>
+<td><code>parity/hdp_gold.py</code></td>
+</tr>
+<tr>
+<td><code>NMF</code></td>
+<td><code>src/nmf.rs</code></td>
+<td><code>src/python/nmf_lsa.rs</code></td>
+<td>multiplicative-update matrix factorization</td>
+<td>default</td>
+<td><code>parity/nmf_vs_sklearn.py</code></td>
+</tr>
+<tr>
+<td><code>LSA</code></td>
+<td><code>src/lsa.rs</code></td>
+<td><code>src/python/nmf_lsa.rs</code></td>
+<td>truncated SVD (linalg)</td>
+<td>default</td>
+<td><code>parity/lsa_vs_sklearn.py</code></td>
+</tr>
+<tr>
+<td><code>AnchorLDA</code></td>
+<td><code>python/topica/anchor.py</code></td>
+<td>— <em>(Python)</em></td>
+<td>spectral anchor-word recovery (Python over Rust primitives)</td>
+<td>default</td>
+<td><code>tests/test_anchor.py</code></td>
+</tr>
+<tr>
+<td><code>TensorLDA</code></td>
+<td><code>src/tlda.rs</code></td>
+<td><code>src/python/tlda.rs</code></td>
+<td>method-of-moments cumulants (linalg, spectral)</td>
+<td>default</td>
+<td><code>parity/tlda_gold.py</code>, <code>parity/tlda_compare.py</code></td>
+</tr>
+<tr>
+<td><code>PolylingualLDA</code></td>
+<td><code>src/pltm.rs</code></td>
+<td><code>src/python/pltm.rs</code></td>
+<td>collapsed Gibbs (model.rs, sampler.rs)</td>
+<td>default</td>
+<td><code>parity/pltm_compare.py</code></td>
+</tr>
+<tr>
+<td><code>CorEx</code></td>
+<td><code>src/cor_ex.rs</code></td>
+<td><code>src/python/cor_ex.rs</code></td>
+<td>total-correlation info-theoretic optimizer</td>
+<td>default</td>
+<td><code>parity/corex_gold.py</code></td>
+</tr>
+<tr>
+<td><code>MGLDA</code></td>
+<td><code>src/mg_lda.rs</code></td>
+<td><code>src/python/mg_lda.rs</code></td>
+<td>two-grain collapsed Gibbs over sliding sentence windows</td>
+<td>default</td>
+<td><code>parity/mglda_gold.py</code></td>
+</tr>
+<tr>
+<td><code>TopicalNGrams</code></td>
+<td><code>src/topical_ngrams.rs</code></td>
+<td><code>src/python/topical_ngrams.rs</code></td>
+<td>collapsed Gibbs over token sequences (joint topic + bigram-status)</td>
+<td>default</td>
+<td><code>parity/tng_mallet_compare.py</code>, <code>tests/test_topical_ngrams.py</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="covariates-structure">Covariates &amp; structure<a class="headerlink" href="#covariates-structure" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Source</th>
+<th>Binding</th>
+<th>Core / family</th>
+<th>Feature</th>
+<th>Validation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>STM</code></td>
+<td><code>src/sts.rs</code></td>
+<td><code>src/python/mod.rs</code></td>
+<td>CTM/STM variational core (topica-core)</td>
+<td>default</td>
+<td><code>parity/stm_gold.py</code>, <code>parity/stm_r_compare.py</code></td>
+</tr>
+<tr>
+<td><code>STS</code></td>
+<td><code>src/sts.rs</code></td>
+<td><code>src/python/mod.rs</code></td>
+<td>CTM/STM variational core (topica-core)</td>
+<td>default</td>
+<td><code>parity/sts_gold.py</code>, <code>parity/sts_r_compare.py</code></td>
+</tr>
+<tr>
+<td><code>SAGE</code></td>
+<td><code>src/sage.rs</code></td>
+<td><code>src/python/mod.rs</code></td>
+<td>collapsed Gibbs + SAGE deviations</td>
+<td>default</td>
+<td><code>parity/sage_gold.py</code></td>
+</tr>
+<tr>
+<td><code>DMR</code></td>
+<td><code>src/dmr.rs</code></td>
+<td><code>src/python/mod.rs</code></td>
+<td>collapsed Gibbs + DMR prior (optimize.rs)</td>
+<td>default</td>
+<td><code>parity/dmr_gold.py</code></td>
+</tr>
+<tr>
+<td><code>GDMR</code></td>
+<td><code>src/dmr.rs</code></td>
+<td><code>src/python/mod.rs</code></td>
+<td>collapsed Gibbs + DMR prior (optimize.rs)</td>
+<td>default</td>
+<td><code>parity/gdmr_gold.py</code>, <code>parity/test_gdmr_tomotopy.py</code></td>
+</tr>
+<tr>
+<td><code>Scholar</code></td>
+<td><code>src/scholar.rs</code></td>
+<td><code>src/python/scholar.rs</code></td>
+<td>ProdLDA VAE + covariate prior (prodlda.rs)</td>
+<td>default</td>
+<td><code>tests/test_scholar.py</code></td>
+</tr>
+<tr>
+<td><code>NarrativeTM</code></td>
+<td><code>python/topica/narrative.py</code></td>
+<td>— <em>(Python)</em></td>
+<td>intra-document trajectory over Gibbs core (Python)</td>
+<td>default</td>
+<td><code>tests/test_content_trajectory.py</code></td>
+</tr>
+<tr>
+<td><code>RTM</code></td>
+<td><code>src/rtm.rs</code></td>
+<td><code>src/python/rtm.rs</code></td>
+<td>variational EM + link head (optimize.rs digamma)</td>
+<td>default</td>
+<td><code>parity/rtm_compare.py</code>, <code>parity/rtm_reference.py</code>, <code>tests/test_rtm.py</code></td>
+</tr>
+<tr>
+<td><code>FactorialLDA</code></td>
+<td><code>src/factorial_lda.rs</code></td>
+<td><code>src/python/factorial_lda.rs</code></td>
+<td>collapsed Gibbs over tuples + MCEM gradient ascent on log-linear priors</td>
+<td>default</td>
+<td><code>parity/factorial_lda_compare.py</code>, <code>tests/test_factorial_lda.py</code></td>
+</tr>
+<tr>
+<td><code>CSATM</code></td>
+<td><code>src/csatm.rs</code></td>
+<td><code>src/python/csatm.rs</code></td>
+<td>popularity-weighted collapsed Gibbs + post-hoc reply-path transitivity smoothing</td>
+<td>default</td>
+<td><code>tests/test_csatm.py</code></td>
+</tr>
+<tr>
+<td><code>ThreadTM</code></td>
+<td><code>src/thread_tm.rs</code></td>
+<td><code>src/python/thread_tm.rs</code></td>
+<td>variational EM: logistic-normal per-doc bound (crate::ctm) + Gaussian tree-field belief propagation (crate::tree_field)</td>
+<td>default</td>
+<td><code>tests/test_thread_tm.py</code></td>
+</tr>
+<tr>
+<td><code>AuthorTopic</code></td>
+<td><code>src/author_topic.rs</code></td>
+<td><code>src/python/author_topic.rs</code></td>
+<td>collapsed Gibbs (author×topic + word×topic counts)</td>
+<td>default</td>
+<td><code>parity/author_topic_gold.py</code></td>
+</tr>
+<tr>
+<td><code>AuthorRecipientTopic</code></td>
+<td><code>python/topica/art.py</code></td>
+<td>— <em>(Python)</em></td>
+<td>ART as (sender,recipient)-pair isomorphism over the AuthorTopic Gibbs core (Python)</td>
+<td>default</td>
+<td><code>tests/test_art.py</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="guided-supervised">Guided &amp; supervised<a class="headerlink" href="#guided-supervised" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Source</th>
+<th>Binding</th>
+<th>Core / family</th>
+<th>Feature</th>
+<th>Validation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>KeyATM</code></td>
+<td><code>src/keyatm.rs</code></td>
+<td><code>src/python/mod.rs</code></td>
+<td>collapsed Gibbs + keyword index</td>
+<td>default</td>
+<td><code>parity/keyatm_gold.py</code>, <code>parity/keyatm_r_compare.py</code></td>
+</tr>
+<tr>
+<td><code>SeededLDA</code></td>
+<td><code>src/seeded.rs</code></td>
+<td><code>src/python/mod.rs</code></td>
+<td>collapsed Gibbs (model.rs, sampler.rs)</td>
+<td>default</td>
+<td><code>parity/seededlda_gold.py</code></td>
+</tr>
+<tr>
+<td><code>GuidedNMF</code></td>
+<td><code>src/guided_nmf.rs</code></td>
+<td><code>src/python/guided_nmf.rs</code></td>
+<td>supervised multiplicative-update matrix factorization</td>
+<td>default</td>
+<td><code>parity/guidednmf_gold.py</code></td>
+</tr>
+<tr>
+<td><code>LabeledLDA</code></td>
+<td><code>src/labeled.rs</code></td>
+<td><code>src/python/mod.rs</code></td>
+<td>collapsed Gibbs (model.rs, sampler.rs)</td>
+<td>default</td>
+<td><code>parity/labeledlda_gold.py</code></td>
+</tr>
+<tr>
+<td><code>SupervisedLDA</code></td>
+<td><code>src/slda.rs</code></td>
+<td><code>src/python/mod.rs</code></td>
+<td>variational EM + Gaussian response head</td>
+<td>default</td>
+<td><code>parity/supervisedlda_gold.py</code></td>
+</tr>
+<tr>
+<td><code>DiscLDA</code></td>
+<td><code>src/disclda.rs</code></td>
+<td><code>src/python/disclda.rs</code></td>
+<td>collapsed Gibbs + class transform</td>
+<td>default</td>
+<td><code>parity/disclda_20ng.py</code>, <code>tests/test_disclda.py</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="short-text">Short text<a class="headerlink" href="#short-text" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Source</th>
+<th>Binding</th>
+<th>Core / family</th>
+<th>Feature</th>
+<th>Validation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GSDMM</code></td>
+<td><code>src/gsdmm.rs</code></td>
+<td><code>src/python/mod.rs</code></td>
+<td>collapsed Gibbs mixture (one topic/doc)</td>
+<td>default</td>
+<td><code>parity/gsdmm_gold.py</code></td>
+</tr>
+<tr>
+<td><code>PT</code></td>
+<td><code>src/pt.rs</code></td>
+<td><code>src/python/mod.rs</code></td>
+<td>collapsed Gibbs over pseudo-documents</td>
+<td>default</td>
+<td><code>parity/pt_gold.py</code></td>
+</tr>
+<tr>
+<td><code>BTM</code></td>
+<td><code>src/btm.rs</code></td>
+<td><code>src/python/btm.rs</code></td>
+<td>collapsed Gibbs over biterms</td>
+<td>default</td>
+<td><code>parity/btm_compare.py</code>, <code>tests/test_btm.py</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="dynamic-hierarchical">Dynamic &amp; hierarchical<a class="headerlink" href="#dynamic-hierarchical" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Source</th>
+<th>Binding</th>
+<th>Core / family</th>
+<th>Feature</th>
+<th>Validation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DTM</code></td>
+<td><code>src/dtm.rs</code></td>
+<td><code>src/python/mod.rs</code></td>
+<td>variational Kalman over time slices</td>
+<td>default</td>
+<td><code>parity/dtm_gold.py</code></td>
+</tr>
+<tr>
+<td><code>DETM</code></td>
+<td><code>src/detm.rs</code></td>
+<td><code>src/python/neural.rs</code></td>
+<td>embedding VAE + LSTM q(eta) (etm_vae.rs)</td>
+<td>default</td>
+<td><code>parity/detm_gold.py</code></td>
+</tr>
+<tr>
+<td><code>TopicsOverTime</code></td>
+<td><code>src/topics_over_time.rs</code></td>
+<td><code>src/python/topics_over_time.rs</code></td>
+<td>collapsed Gibbs (LDA + per-topic Beta time factor, method-of-moments psi)</td>
+<td>default</td>
+<td><code>parity/tot_gold.py</code></td>
+</tr>
+<tr>
+<td><code>HLDA</code></td>
+<td><code>src/hlda.rs</code></td>
+<td><code>src/python/hierarchical.rs</code></td>
+<td>nested-CRP collapsed Gibbs</td>
+<td>default</td>
+<td><code>parity/hlda_gold.py</code></td>
+</tr>
+<tr>
+<td><code>PA</code></td>
+<td><code>src/pa.rs</code></td>
+<td><code>src/python/hierarchical.rs</code></td>
+<td>collapsed Gibbs over a topic DAG</td>
+<td>default</td>
+<td><code>parity/pa_gold.py</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="embedding-based">Embedding-based<a class="headerlink" href="#embedding-based" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Source</th>
+<th>Binding</th>
+<th>Core / family</th>
+<th>Feature</th>
+<th>Validation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>KeyNMF</code></td>
+<td><code>src/keynmf.rs</code></td>
+<td><code>src/python/keynmf.rs</code></td>
+<td>embedding-keyword extraction + multiplicative-update NMF (nmf.rs)</td>
+<td>default</td>
+<td><code>parity/keynmf_compare.py</code>, <code>tests/test_keynmf.py</code></td>
+</tr>
+<tr>
+<td><code>BERTopic</code></td>
+<td><code>src/bertopic.rs</code></td>
+<td><code>src/python/embedding_cluster.rs</code></td>
+<td>embedding clustering (cluster.rs, reduce.rs, represent.rs)</td>
+<td><code>embeddings</code></td>
+<td><code>parity/bertopic_gold.py</code></td>
+</tr>
+<tr>
+<td><code>Top2Vec</code></td>
+<td><code>src/top2vec.rs</code></td>
+<td><code>src/python/embedding_cluster.rs</code></td>
+<td>embedding clustering (cluster.rs, reduce.rs)</td>
+<td><code>embeddings</code></td>
+<td><code>parity/top2vec_gold.py</code>, <code>parity/top2vec_compare.py</code></td>
+</tr>
+<tr>
+<td><code>SemanticSignalSeparation</code></td>
+<td><code>src/semantic_signal_separation.rs</code></td>
+<td><code>src/python/semantic_signal_separation.rs</code></td>
+<td>FastICA over document embeddings + vocabulary projection (reduce.rs)</td>
+<td><code>embeddings</code></td>
+<td><code>parity/s3_compare.py</code>, <code>tests/test_semantic_signal_separation.py</code></td>
+</tr>
+<tr>
+<td><code>ETM</code></td>
+<td><code>src/etm.rs</code></td>
+<td><code>src/python/neural.rs</code></td>
+<td>variational EM over word embeddings (ctm.rs)</td>
+<td>default</td>
+<td><code>parity/etm_gold.py</code></td>
+</tr>
+<tr>
+<td><code>GaussianLDA</code></td>
+<td><code>src/gaussian_lda.rs</code></td>
+<td><code>src/python/gaussian_lda.rs</code></td>
+<td>collapsed Gibbs (NIW-Gaussian topics, Student-t predictive, rank-1 Cholesky up/downdates)</td>
+<td>default</td>
+<td><code>parity/gaussian_lda_gold.py</code></td>
+</tr>
+<tr>
+<td><code>IdealPointTM</code></td>
+<td><code>src/idealpoint.rs</code></td>
+<td><code>src/python/idealpoint.rs</code></td>
+<td>variational EM + ideal-point head</td>
+<td>default</td>
+<td><code>tests/test_idealpoint.py</code>, <code>tests/test_idealpoint_counts.py</code></td>
+</tr>
+<tr>
+<td><code>IdealPointSentenceTM</code></td>
+<td><code>src/sentence_ideal.rs</code></td>
+<td><code>src/python/sentence_ideal.rs</code></td>
+<td>Gaussian-cluster EM over embeddings</td>
+<td>default</td>
+<td><code>tests/test_sentence_ideal.py</code></td>
+</tr>
+<tr>
+<td><code>FASTopic</code></td>
+<td><code>src/fastopic.rs</code></td>
+<td><code>src/python/mod.rs</code></td>
+<td>reverse-mode Sinkhorn optimal transport</td>
+<td>default</td>
+<td><code>parity/fastopic_gold.py</code>, <code>parity/fastopic_compare.py</code></td>
+</tr>
+<tr>
+<td><code>EmbeddingLDA</code></td>
+<td><code>python/topica/embedding.py</code></td>
+<td>— <em>(Python)</em></td>
+<td>k-means embedding seeding over a SeededLDA Gibbs core (Python); planted-recovery gold only, no external reference</td>
+<td>default</td>
+<td><code>parity/embeddinglda_gold.py</code>, <code>tests/test_embedding_lda.py</code></td>
+</tr>
+<tr>
+<td><code>CombinedTM</code></td>
+<td><code>src/prodlda.rs</code></td>
+<td><code>src/python/neural.rs</code></td>
+<td>contextualized ProdLDA VAE (prodlda.rs)</td>
+<td>default</td>
+<td><code>parity/combinedtm_gold.py</code>, <code>parity/combinedtm_compare.py</code></td>
+</tr>
+<tr>
+<td><code>ZeroShotTM</code></td>
+<td><code>src/prodlda.rs</code></td>
+<td><code>src/python/neural.rs</code></td>
+<td>contextualized ProdLDA VAE (prodlda.rs)</td>
+<td>default</td>
+<td><code>parity/zeroshot_gold.py</code>, <code>parity/zeroshot_compare.py</code></td>
+</tr>
+<tr>
+<td><code>InfoCTM</code></td>
+<td><code>src/infoctm.rs</code></td>
+<td><code>src/python/neural.rs</code></td>
+<td>two ProdLDA VAEs + TAMI alignment (prodlda.rs)</td>
+<td>default</td>
+<td><code>parity/infoctm_gold.py</code>, <code>parity/infoctm_compare.py</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="ideal-point">Ideal point<a class="headerlink" href="#ideal-point" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Source</th>
+<th>Binding</th>
+<th>Core / family</th>
+<th>Feature</th>
+<th>Validation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Wordfish</code></td>
+<td><code>src/wordfish.rs</code></td>
+<td><code>src/python/wordfish.rs</code></td>
+<td>Poisson-scaling EM</td>
+<td>default</td>
+<td><code>parity/wordfish_r_compare.py</code>, <code>tests/test_wordfish.py</code></td>
+</tr>
+<tr>
+<td><code>Wordshoal</code></td>
+<td><code>src/wordshoal.rs</code></td>
+<td><code>src/python/wordshoal.rs</code></td>
+<td>per-domain Wordfish + cross-domain linear factor EM</td>
+<td>default</td>
+<td><code>parity/wordshoal_r_compare.py</code>, <code>tests/test_wordshoal.py</code></td>
+</tr>
+<tr>
+<td><code>TBIP</code></td>
+<td><code>src/tbip.rs</code></td>
+<td><code>src/python/tbip.rs</code></td>
+<td>Poisson-factorization mean-field SVI</td>
+<td>default</td>
+<td><code>parity/tbip_parity.py</code>, <code>tests/test_tbip.py</code></td>
+</tr>
+<tr>
+<td><code>PartyEmbeddings</code></td>
+<td><code>src/party_embeddings.rs</code></td>
+<td><code>src/python/party_embeddings.rs</code></td>
+<td>PV-DM paragraph vectors (negative sampling)</td>
+<td>default</td>
+<td><code>parity/party_embeddings_compare.py</code>, <code>tests/test_party_embeddings.py</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="llm-based">LLM-based<a class="headerlink" href="#llm-based" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Source</th>
+<th>Binding</th>
+<th>Core / family</th>
+<th>Feature</th>
+<th>Validation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>TopicGPT</code></td>
+<td><code>python/topica/llm.py</code></td>
+<td>— <em>(Python)</em></td>
+<td>LLM prompting pipeline (Python)</td>
+<td>default</td>
+<td><code>tests/test_topicgpt.py</code></td>
+</tr>
+</tbody>
+</table>
+<!-- END MODEL MAP -->
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "navigation.indexes", "content.code.copy", "content.code.annotate", "toc.follow", "search.suggest"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,32 @@
+/* Topica docs — UNC brand palette.
+   Carolina Blue #4B9CD3 + Navy #13294B (https://identity.unc.edu/brand/color/).
+   Navy carries structure (header/nav) so white text stays legible; Carolina
+   Blue is the accent. Body links use Bolin Creek #2C5080 in light mode for
+   readable contrast on white, and Carolina Blue in dark mode where it pops. */
+
+/* ---- Light mode (default scheme) ---- */
+:root,
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color:        #13294B;  /* Navy — header & nav */
+  --md-primary-fg-color--light: #2C5080;  /* Bolin Creek */
+  --md-primary-fg-color--dark:  #0d1c34;  /* deeper navy */
+  --md-primary-bg-color:        #ffffff;
+  --md-primary-bg-color--light: rgba(255, 255, 255, 0.7);
+
+  --md-accent-fg-color:             #4B9CD3;            /* Carolina Blue */
+  --md-accent-fg-color--transparent: rgba(75, 156, 211, 0.1);
+
+  --md-typeset-a-color: #2C5080;  /* links: Bolin Creek (~7:1 on white) */
+}
+
+/* ---- Dark mode (slate scheme) ---- */
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color:        #13294B;  /* navy header on near-black */
+  --md-primary-fg-color--light: #2C5080;
+  --md-primary-fg-color--dark:  #0a1428;
+
+  --md-accent-fg-color:             #4B9CD3;
+  --md-accent-fg-color--transparent: rgba(75, 156, 211, 0.15);
+
+  --md-typeset-a-color: #4B9CD3;  /* Carolina Blue links pop on dark */
+}
