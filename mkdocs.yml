@@ -141,7 +141,6 @@ nav:
       - Keywords & preprocessing: api/keywords.md
   - Contributing:
       - API conventions: contributing/conventions.md
-      - Keyword & seed parameters: contributing/keyword-parameters.md
       - Estimator contract: contributing/estimator-contract.md
       - Model implementation map: contributing/model-map.md
       - Validation & graduation: contributing/validation.md
