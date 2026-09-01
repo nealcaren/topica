@@ -6,6 +6,30 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Added
+
+- **`reply_completion` gains `keyatm` and `rtm` off-the-shelf baselines** (#860). The
+  two tools a reviewer reaches for after LDA and STM now fit on the SAME reduced corpus
+  (identical vocabulary, `num_topics`, `min_count`, `seed`) and score through the
+  identical held-out-leaf protocol, so `delta["keyatm"]` / `delta["rtm"]` carry the same
+  thread-root-clustered bootstrap CI as `delta["lda"]` / `delta["stm"]`. `keyatm` is
+  keyword-free by default (keyATM's own `weightedLDA`, not a second copy of the `lda`
+  baseline) and takes `keyatm_keywords=` for the seeded model; with a covariate of at
+  least two groups it is fit as the **covariate** keyATM on the same one-hot design STM
+  gets, which puts it on STM's supervision axis, and without one it falls back to the
+  base model, so unlike `stm` it always runs. `keyatm_weights=` exposes keyATM's token
+  weighting: its default information-theory weights swamp the prior and leave a near
+  one-hot `theta` on a short leaf, so part of `delta["keyatm"]` is that sharpness rather
+  than the reply tree — `"none"` gives the estimator-matched fit, and both are worth
+  reporting. `rtm` is the Relational Topic Model, the nearest structural neighbor to
+  ThreadTM; `rtm_links=` selects the graph it sees — `"thread"` (default) is reply-blind
+  intra-thread co-membership, `"reply"` the same edges with their direction dropped,
+  `"none"` an inert link model, or an explicit pair list. `rtm_max_links` caps the
+  co-membership graph (which grows with the square of thread length) and thins it
+  uniformly with a warning, and `settings` records the resolved choices
+  (`rtm_links`, `rtm_n_links`, `rtm_reply_share`, `keyatm_weights`, `keyatm_covariate`)
+  so a paper can state which graph and which weighting produced the number.
+
 ## [0.56.0] - 2026-08-31
 
 ### Changed
