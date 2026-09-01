@@ -1061,6 +1061,18 @@ def test_reply_completion_keyatm_accepts_keywords():
     assert res.settings["keyatm_keywords"] == ["a", "b"]
 
 
+def test_reply_completion_keyatm_all_keywords_pruned_raises_early():
+    """If min_count prunes every keyword of a topic out of the reduced vocabulary, the keyatm
+    baseline raises a validation-time error naming the topic, not a fit-time error deep inside
+    KeyATM (issue #860 review)."""
+    docs, parents = _branching_corpus(seed=1, persistence=0.9)
+    with pytest.raises(ValueError, match="no keywords left in the reduced vocabulary"):
+        topica.evaluate.reply_completion(
+            docs, parents, num_topics=4, baselines=("keyatm",),
+            keyatm_keywords={"a": ["ZZZ_notaword", "QQQ_nope"]},
+            em_iters=20, seed=13, n_boot=50)
+
+
 def test_reply_completion_keyatm_weights_control_theta_sharpness():
     """keyATM's information-theory weighting multiplies its counts by each token's surprisal,
     which swamps the prior and leaves a near one-hot theta on a thin leaf. That sharpness is

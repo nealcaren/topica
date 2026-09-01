@@ -1010,10 +1010,15 @@ def _permute_parents_within_depth(parents, depth, root, rng):
 def _dense_group_ids(covariates):
     """Per-document covariate values as dense integer group ids ``0..G-1``.
 
-    Integer ids pass through unchanged; string / categorical labels (which
-    ``ThreadTM.fit`` accepts directly) are encoded in sorted order, so the
-    one-hot prevalence design the off-the-shelf baselines are fit on can be
-    built from the same ``covariates`` argument the tree model got.
+    Integer ids pass through UNCHANGED (they are not re-densified), so
+    non-contiguous integer labels like ``[10, 20]`` are read as groups 10 and
+    20 and produce a one-hot design with empty columns for the absent groups —
+    the same behavior the ``stm`` baseline has always had. String / categorical
+    labels (which ``ThreadTM.fit`` accepts directly) are the ones encoded in
+    sorted order to a contiguous ``0..G-1``. Either way the one-hot prevalence
+    design the off-the-shelf baselines are fit on is built from the same
+    ``covariates`` argument the tree model got; pass contiguous ids (or string
+    labels) if you want a gap-free design.
     """
     try:
         return np.asarray(covariates, dtype=int)
@@ -1483,6 +1488,24 @@ def reply_completion(
             # weighting and its estimated asymmetric alpha). With a usable covariate it is the
             # COVARIATE keyATM on the same design STM gets — a DMR document-topic prior — which
             # is what places it on STM's supervision axis rather than beside plain LDA.
+            if keyatm_keywords:
+                # keyATM drops keywords absent from the vocabulary, but raises at fit time if a
+                # topic loses ALL of them. That can happen here even when the keywords survive the
+                # raw corpus: min_count prunes the reduced vocabulary further. Catch it now, as a
+                # validation-time error naming the topic, rather than deep in the fit.
+                reduced_vocab = set(base_corpus.vocabulary)
+                empty = [
+                    str(t)
+                    for t, ws in keyatm_keywords.items()
+                    if not any(str(w) in reduced_vocab for w in ws)
+                ]
+                if empty:
+                    raise ValueError(
+                        f"the 'keyatm' baseline's keyword topic(s) {empty} have no keywords left "
+                        f"in the reduced vocabulary (min_count={min_count} pruned them all). Lower "
+                        "min_count, choose keywords that survive the cut, or drop those topics."
+                    )
+
             def _build_keyatm():
                 if keyatm_keywords:
                     km = topica.KeyATM(
