@@ -38,7 +38,9 @@ by construction rather than by memory.
    labels), and the two-level `PA` (`num_super`, `num_sub`).
 2. **`fit(self, data, <side-input>, *, ...)`** — `data` is first; the model's
    supervision/covariate input is a *positional* argument immediately after it,
-   with its `<thing>_names` as the first keyword-only argument.
+   with its `<thing>_names` as the first keyword-only argument. Models steered by
+   user keywords (seed words, keywords, anchor words) have their own shared
+   contract: see [keyword & seed parameters](keyword-parameters.md).
 3. The Gibbs-sampler family shares a fixed keyword block, in this order:
    `iters, num_samples, sample_interval, progress, progress_interval,
    keep_theta_draws, num_theta_draws, convergence_tol, check_every`.
