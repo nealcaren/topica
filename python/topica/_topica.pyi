@@ -3101,14 +3101,14 @@ class ThreadTM:
         content_prior_var: float = 0.5,
         content_smooth: float = 0.0,
         depth_bins: Sequence[int] | None = None,
-        seed_words: dict[int, Sequence[str]] | None = None,
+        seed_words: dict[int, Sequence[str]] | dict[str, Sequence[str]] | None = None,
         seed_prior: str = "frequency",
-        seed_weight: float = 1.0,
+        weight: float = 0.01,
         seed_strength: float | None = None,
         seed_match: str = "fixed",
         case_insensitive: bool = False,
         prevalence_anchor: dict[int | str, Sequence[float]] | None = None,
-        anchor_strength: float = 0.5,
+        prevalence_strength: float = 0.5,
     ) -> "ThreadTM":
         """`data` is a ``topica.Corpus`` or a list of token lists. `parents[d]` is document
         ``d``'s parent index in the reply tree (``-1`` for a thread root), in the SAME order as
@@ -3126,18 +3126,24 @@ class ThreadTM:
         `content_prior_var` (default 0.5) is the deviation-prior scale. Read the shift with
         `content_topic_word` / `content_top_words` / `content_kappa`.
 
-        User supervision (issue #854), both orthogonal to the reply tree. `seed_words` maps a
-        topic index to keyword strings, biasing those topics' word distributions toward the
-        keywords (SeededLDA-style Dirichlet seeding) and pinning them to fixed slots; unseeded
-        topics are learned freely. `seed_prior="frequency"` (default) gives each matched seed word
-        a pseudocount of ``corpus_count(word) * seed_weight`` (scale-robust, a SOFT prior that still
-        learns beyond the seeds); ``"uniform"`` is a flat ``seed_weight`` per word (so the two
+        User supervision (issue #854): two INDEPENDENT axes, both orthogonal to the reply tree —
+        (A) word seeding (`seed_words` + `weight`/`seed_strength`, `seed_prior`, `seed_match`) shapes
+        what seeded topics MEAN; (B) prevalence anchoring (`prevalence_anchor` + `prevalence_strength`)
+        steers a covariate group's topic MIX. They compose and never share a knob.
+        (A) `seed_words` biases seeded topics' word distributions toward the keywords (SeededLDA-style
+        Dirichlet seeding) and pins them to fixed slots; unseeded topics are learned freely. Keys are EITHER int topic
+        indices (explicit slots) OR string topic names (which name the seeded topics and take the
+        leading slots in insertion order, as SeededLDA/KeyATM do, and populate `topic_names`); keys
+        must be all-int or all-string, not mixed. `weight` matches SeededLDA's `weight` (a ``[0, 1]`` fraction,
+        default ``0.01``). `seed_prior="frequency"` (default) gives each matched seed word a
+        pseudocount of ``corpus_count(word) * weight * 100`` (scale-robust, a SOFT prior that still
+        learns beyond the seeds); ``"uniform"`` is a flat ``weight * 100`` per word (so the two
         schemes relate as ``frequency = uniform * corpus_count(word)``); `seed_strength` overrides
-        both with a flat per-word pseudocount. `seed_match` is ``"fixed"`` (exact,
+        both with a flat RAW per-word pseudocount (unscaled). `seed_match` is ``"fixed"`` (exact,
         default), ``"glob"`` (``*``/``?`` wildcards), or ``"regex"``, with `case_insensitive`.
         Seeding is not supported together with a `content` covariate. Audit what glob/regex seeds
         matched with the `seed_matches` property. `prevalence_anchor` maps a covariate group to a
-        length-K target topic mix and shrinks that group's baseline toward it by `anchor_strength`
+        length-K target topic mix and shrinks that group's baseline toward it by `prevalence_strength`
         (0..1), steering topic prevalence (works with `content`); the key is either the encoded
         integer group index (first-seen order) or the string group label (as passed to
         `covariates=`). Note the fit is deterministic; `seed` does not vary it, so refitting across
@@ -3250,6 +3256,14 @@ class ThreadTM:
         ...
     @property
     def vocabulary(self) -> list[str]: ...
+    @property
+    def topic_names(self) -> list[str]:
+        """Per-topic names (length K), in ``topic_word`` row order. Positional ``topic_i`` unless the
+        fit used a string-keyed ``seed_words`` dict, whose keys name the seeded topics (issue #854).
+        Assignable (a full-length list) to rename topics, as in SeededLDA/AnchorLDA."""
+        ...
+    @topic_names.setter
+    def topic_names(self, names: Sequence[str]) -> None: ...
     def top_words(self, n: int = 10, *, topic: int | None = None, weights: bool = False) -> list:
         """Top-n words per topic. With ``topic=None`` returns a list per topic; with an integer
         ``topic`` returns that topic's words. ``weights=True`` returns ``(word, prob)`` pairs."""
