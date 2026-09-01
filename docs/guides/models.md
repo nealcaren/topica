@@ -908,14 +908,17 @@ about, supervise the fit with keyword seeds. Both knobs are orthogonal to the re
 (the tree shapes prevalence; these shape the topic-word content and the group baseline), so
 they compose with coupling and covariates.
 
-`seed_words={topic_index: [keywords]}` biases those topics' word distributions toward the
+`seed_words` biases seeded topics' word distributions toward the
 keywords (SeededLDA-style Dirichlet seeding) and pins each seeded topic to a **fixed slot**,
-which removes the arbitrary permutation an unsupervised fit lands in. Unseeded topic indices
-are still learned freely, so you can seed a few themes and let the rest emerge. The seed is
+which removes the arbitrary permutation an unsupervised fit lands in. Its keys are either int
+topic indices (`{0: [...]}`) or string topic names (`{"space": [...]}`, which name the seeded
+topics and take the leading slots, as SeededLDA/keyATM do, and populate `topic_names`); unseeded
+topics are still learned freely, so you can seed a few themes and let the rest emerge. The seed is
 a **soft** prior: with the default frequency scaling (`seed_prior="frequency"`, each matched
-seed word getting a pseudocount of `corpus_count(word) * seed_weight`, scale-robust) a
+seed word getting a pseudocount of `corpus_count(word) * weight * 100`, scale-robust) a
 seeded topic keeps learning the rest of its vocabulary rather than collapsing onto the seeds.
-`seed_strength` overrides the scheme with a flat per-word pseudocount; `seed_match` is
+`weight` matches SeededLDA's `weight` (a `[0, 1]` fraction, default `0.01`).
+`seed_strength` overrides the scheme with a flat raw per-word pseudocount; `seed_match` is
 `"fixed"` (default), `"glob"` (`tax*`), or `"regex"`, with `case_insensitive`. Seeding the
 word channel is not supported together with a `content` covariate (raise otherwise).
 
@@ -937,7 +940,7 @@ rob.prevalence[("askscience", 3)]   # {'mean', 'ci'} of that (group, topic) prev
 ```
 
 `prevalence_anchor={group: [K-length mix]}` shrinks a covariate group's baseline topic mix toward
-a supplied target by `anchor_strength` (0..1), steering *prevalence*; it works with `content`. The
+a supplied target by `prevalence_strength` (0..1), steering *prevalence*; it works with `content`. The
 key is either the encoded integer group index (first-seen order) or the string group label you
 passed to `covariates=`.
 

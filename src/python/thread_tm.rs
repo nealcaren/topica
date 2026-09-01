@@ -52,6 +52,9 @@ pub struct ThreadTM {
     fitted: bool,
     vocab: Vec<String>,
     group_names: Vec<String>,
+    // Per-topic names (length K). Positional `topic_i` unless seeded with a string-keyed
+    // `seed_words` dict, whose keys name the seeded topics (issue #854). Empty until fitted.
+    topic_names: Vec<String>,
     // Which fitted-vocabulary words each seeded topic's patterns actually matched (issue #856):
     // `seed_matches[t]` is topic `t`'s matched words, empty for an unseeded topic. Lets a user
     // audit what `seed_match="glob"`/`"regex"` resolved to. Empty when the fit was unseeded.
@@ -122,6 +125,8 @@ struct ThreadTmState {
     fitted: bool,
     vocab: Vec<String>,
     group_names: Vec<String>,
+    #[serde(default)]
+    topic_names: Vec<String>,
     #[serde(default)]
     seed_matches: Vec<Vec<String>>,
     beta: Vec<Vec<f64>>,
@@ -459,6 +464,7 @@ impl ThreadTM {
             fitted: false,
             vocab: Vec::new(),
             group_names: Vec::new(),
+            topic_names: Vec::new(),
             seed_matches: Vec::new(),
             beta: Vec::new(),
             doc_topic: Vec::new(),
@@ -499,15 +505,19 @@ impl ThreadTM {
     /// `min_count` drops words rarer than it (the same vocabulary knob `Corpus` spells `min_cf`).
     ///
     /// Seeding and prevalence anchoring (both orthogonal to the reply tree). `seed_words` is a
-    /// `{topic_index: [keywords]}` dict: it biases those topics' word distributions toward the
-    /// keywords and pins them to fixed slots, while unseeded topic indices are learned freely.
+    /// dict biasing seeded topics' word distributions toward the keywords and pinning them to
+    /// fixed slots, while unseeded topics are learned freely. Its keys are EITHER int topic
+    /// indices (`{0: [...]}`, explicit slots) OR string topic names (`{"space": [...]}`, which name
+    /// the seeded topics and take the leading slots in insertion order, as SeededLDA/KeyATM do, and
+    /// populate `topic_names`); keys must be all-int or all-string, not mixed.
+    /// `weight` matches SeededLDA's `weight` (a `[0, 1]` fraction, default `0.01`).
     /// `seed_prior="frequency"` (default) gives each matched seed word a pseudocount of
-    /// `corpus_count(word) * seed_weight`; `"uniform"` a flat `seed_weight` per word; `seed_strength`
-    /// (if set) overrides both with a flat per-word pseudocount (so it silently supersedes
-    /// `seed_prior`/`seed_weight`). `seed_match` is `"fixed"` (default), `"glob"`, or `"regex"`, one
+    /// `corpus_count(word) * weight * 100`; `"uniform"` a flat `weight * 100` per word;
+    /// `seed_strength` (if set) overrides both with a flat RAW per-word pseudocount (so it silently
+    /// supersedes `seed_prior`/`weight`). `seed_match` is `"fixed"` (default), `"glob"`, or `"regex"`, one
     /// strategy for the whole dict, with `case_insensitive`. Seeding is rejected together with a
     /// `content` covariate. `prevalence_anchor={group_index: [K-length mix]}` shrinks a group's
-    /// baseline topic mix toward the target by `anchor_strength` (0..1); the key is the ENCODED
+    /// baseline topic mix toward the target by `prevalence_strength` (0..1); the key is the ENCODED
     /// integer group id (covariates are encoded `0..num_groups` in FIRST-SEEN order, not the string
     /// label and not alphabetical — check `group_names`/`covariate_names`), and the mix need not sum
     /// to 1. NOTE: the fit is deterministic given the inputs; `seed` does NOT vary the fit (the
@@ -517,9 +527,9 @@ impl ThreadTM {
                         content=None, content_names=None, content_prior="l2".to_string(),
                         content_prior_var=0.5, content_smooth=0.0, depth_bins=None,
                         seed_words=None, seed_prior="frequency".to_string(),
-                        seed_weight=1.0, seed_strength=None,
+                        weight=0.01, seed_strength=None,
                         seed_match="fixed".to_string(), case_insensitive=false,
-                        prevalence_anchor=None, anchor_strength=0.5))]
+                        prevalence_anchor=None, prevalence_strength=0.5))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         mut slf: PyRefMut<'_, Self>,
@@ -536,20 +546,21 @@ impl ThreadTM {
         content_smooth: f64,
         depth_bins: Option<Vec<usize>>,
         // User supervision (issue #854). seed_words maps a topic index to keyword strings
-        // (Dirichlet β seeding). seed_prior="frequency" (default) sets each seed word's pseudocount
-        // to corpus_count(word) * seed_weight, so seeding is scale-robust and does not collapse a
-        // topic to its seeds (SeededLDA's scheme); "uniform" uses a flat seed_weight * 100. Passing
-        // seed_strength overrides both with that flat per-word pseudocount. seed_match/case_insensitive
-        // select how patterns match the vocabulary (shared with SeededLDA). prevalence_anchor maps a
-        // covariate-group index to a length-K target topic mix.
+        // (Dirichlet β seeding). `weight` matches SeededLDA's `weight` (a [0, 1] fraction, default
+        // 0.01): seed_prior="frequency" (default) sets each seed word's pseudocount to
+        // corpus_count(word) * weight * 100, so seeding is scale-robust and does not collapse a
+        // topic to its seeds (SeededLDA's scheme); "uniform" uses a flat weight * 100. Passing
+        // seed_strength overrides both with a flat RAW per-word pseudocount (unscaled).
+        // seed_match/case_insensitive select how patterns match the vocabulary (shared with
+        // SeededLDA). prevalence_anchor maps a covariate-group index to a length-K target topic mix.
         seed_words: Option<Bound<'_, PyAny>>,
         seed_prior: String,
-        seed_weight: f64,
+        weight: f64,
         seed_strength: Option<f64>,
         seed_match: String,
         case_insensitive: bool,
         prevalence_anchor: Option<Bound<'_, PyAny>>,
-        anchor_strength: f64,
+        prevalence_strength: f64,
     ) -> PyResult<Py<Self>> {
         require_experimental("ThreadTM")?;
         // Accept either a topica.Corpus (materialise its token strings) or raw token lists, so the
@@ -879,7 +890,7 @@ impl ThreadTM {
         // Build the seed/anchor supervision config (issue #854) from the fit-time vocabulary and
         // covariate groups. seed_words -> β pseudocounts on the matched (topic, word) cells;
         // prevalence_anchor -> per-group η targets (additive-log-ratio of the supplied mix).
-        let (seed_cfg, seed_matches_out) = {
+        let (seed_cfg, seed_matches_out, topic_names_out) = {
             // Seeding the topic-word channel is unsupported alongside a content covariate (SAGE):
             // with content the β M-step is replaced by per-level sparse deviations, so the seed
             // pseudocounts would only reach the initializer, not the fit. Reject the combination.
@@ -889,20 +900,13 @@ impl ThreadTM {
                      without content, or drop seed_words (prevalence_anchor works with content).",
                 ));
             }
-            // Parse seed_words into {topic_index: [words]} with a house-quality error (not the raw
-            // PyO3 "list cannot be converted to PyDict") when a non-dict is passed (issue #856).
-            let sw_map: Option<HashMap<usize, Vec<String>>> = match &seed_words {
-                None => None,
-                Some(obj) => Some(obj.extract().map_err(|_| {
-                    PyValueError::new_err(
-                        "seed_words must be a dict mapping an int topic index to a list of keyword \
-                         strings, e.g. {0: [\"orbit\", \"planet\"]}",
-                    )
-                })?),
-            };
             let mut beta_pseudo: Vec<(usize, usize, f64)> = Vec::new();
             let mut seed_matches: Vec<Vec<String>> = Vec::new();
-            if let Some(sw) = &sw_map {
+            // Topic names default to positional `topic_i`, overridden per slot when seed_words is
+            // string-keyed (a {name: [words]} dict names the seeded topics, as SeededLDA/KeyATM do).
+            // Always length-K so `topic_names` is defined for every fit, seeded or not.
+            let mut topic_names: Vec<String> = (0..k).map(|i| format!("topic_{i}")).collect();
+            if let Some(obj) = &seed_words {
                 // Validate the seeding knobs only on the path that uses them. Guard finiteness and
                 // sign so a NaN/negative pseudocount cannot silently poison β (a negative pseudocount
                 // makes a normalized β entry negative; f64::clamp would let a NaN through untouched).
@@ -911,8 +915,10 @@ impl ThreadTM {
                         "seed_prior must be \"frequency\" or \"uniform\"",
                     ));
                 }
-                if !seed_weight.is_finite() || seed_weight < 0.0 {
-                    return Err(PyValueError::new_err("seed_weight must be finite and >= 0"));
+                if !weight.is_finite() || !(0.0..=1.0).contains(&weight) {
+                    return Err(PyValueError::new_err(
+                        "weight must be finite and in [0, 1] (as in SeededLDA / the seededlda package)",
+                    ));
                 }
                 if let Some(s) = seed_strength {
                     if !s.is_finite() || s < 0.0 {
@@ -922,16 +928,55 @@ impl ThreadTM {
                     }
                 }
                 let mode = crate::python::SeedMatch::parse(&seed_match)?;
-                // Lay the dict out positionally (0..K) and resolve patterns with the shared matcher
-                // (fixed/glob/regex, dedup within a topic) SeededLDA/CorEx use.
+                // seed_words keys are EITHER int topic indices (explicit positional slots) OR string
+                // topic names (which name the seeded topics and take the leading slots 0..G in
+                // insertion order, as SeededLDA/KeyATM do). Keys must be all-int or all-string, not
+                // mixed. Values resolve against the vocabulary with the shared matcher (fixed/glob/
+                // regex, dedup within a topic) that SeededLDA/CorEx use. Dict iteration is
+                // insertion-ordered (Python 3.7+), so string-keyed slots are assigned deterministically.
+                let dict = obj.downcast::<PyDict>().map_err(|_| {
+                    PyValueError::new_err(
+                        "seed_words must be a dict mapping a topic (an int index or a string name) \
+                         to a list of keyword strings, e.g. {0: [\"orbit\", \"planet\"]} or \
+                         {\"space\": [\"orbit\", \"planet\"]}",
+                    )
+                })?;
                 let mut per_topic: Vec<Vec<String>> = vec![Vec::new(); k];
-                for (&t, words) in sw {
-                    if t >= k {
-                        return Err(PyValueError::new_err(format!(
-                            "seed_words topic index {t} is out of range for num_topics={k}"
-                        )));
+                let (mut saw_int, mut saw_str, mut str_slot) = (false, false, 0usize);
+                for (key, val) in dict.iter() {
+                    let words: Vec<String> = val.extract().map_err(|_| {
+                        PyValueError::new_err("seed_words values must be a list of keyword strings")
+                    })?;
+                    if let Ok(name) = key.extract::<String>() {
+                        saw_str = true;
+                        if str_slot >= k {
+                            return Err(PyValueError::new_err(format!(
+                                "seed_words names {} topics but num_topics={k}; pass at most K names",
+                                str_slot + 1
+                            )));
+                        }
+                        per_topic[str_slot] = words;
+                        topic_names[str_slot] = name;
+                        str_slot += 1;
+                    } else if let Ok(t) = key.extract::<usize>() {
+                        saw_int = true;
+                        if t >= k {
+                            return Err(PyValueError::new_err(format!(
+                                "seed_words topic index {t} is out of range for num_topics={k}"
+                            )));
+                        }
+                        per_topic[t] = words;
+                    } else {
+                        return Err(PyValueError::new_err(
+                            "seed_words keys must be an int topic index or a string topic name",
+                        ));
                     }
-                    per_topic[t] = words.clone();
+                }
+                if saw_int && saw_str {
+                    return Err(PyValueError::new_err(
+                        "seed_words keys must be all int topic indices or all string topic names, \
+                         not a mix",
+                    ));
                 }
                 let matched =
                     crate::python::seed_word_ids(&per_topic, &vocab, k, mode, case_insensitive)?;
@@ -945,16 +990,19 @@ impl ThreadTM {
                 for (t, ids) in matched.iter().enumerate() {
                     for &id in ids {
                         // Pseudocount per matched seed word. `seed_strength` (if given) overrides the
-                        // scheme with a flat count. Otherwise "frequency" = corpus_count(word) *
-                        // seed_weight (scale-robust, so a common seed word is trusted more) and
-                        // "uniform" = seed_weight (a flat count per word); the two schemes therefore
-                        // relate as frequency = uniform * corpus_count(word).
+                        // scheme with a flat RAW count (unscaled). Otherwise `weight` matches
+                        // SeededLDA's `weight`: "frequency" = corpus_count(word) * weight * 100
+                        // (scale-robust, so a common seed word is trusted more), "uniform" = a flat
+                        // weight * 100 per word; the two schemes relate as frequency =
+                        // uniform * corpus_count(word). The *100 is SeededLDA's unit convention that
+                        // lets `weight` be a tidy [0, 1] fraction while landing at a count-magnitude
+                        // pseudocount (weight=0.01 default => 1x corpus count).
                         let pc = match seed_strength {
                             Some(s) => s,
                             None if seed_prior == "frequency" => {
-                                counts[vocab[id].as_str()] as f64 * seed_weight
+                                counts[vocab[id].as_str()] as f64 * weight * 100.0
                             }
-                            None => seed_weight,
+                            None => weight * 100.0,
                         };
                         beta_pseudo.push((t, id, pc));
                         n_seeded_words += 1;
@@ -972,9 +1020,9 @@ impl ThreadTM {
             }
             let mut anchor_target: Vec<(usize, Vec<f64>, f64)> = Vec::new();
             if let Some(obj) = &prevalence_anchor {
-                if !anchor_strength.is_finite() || !(0.0..=1.0).contains(&anchor_strength) {
+                if !prevalence_strength.is_finite() || !(0.0..=1.0).contains(&prevalence_strength) {
                     return Err(PyValueError::new_err(
-                        "anchor_strength must be finite and in [0, 1]",
+                        "prevalence_strength must be finite and in [0, 1]",
                     ));
                 }
                 let dict = obj.downcast::<PyDict>().map_err(|_| {
@@ -991,7 +1039,7 @@ impl ThreadTM {
                     .enumerate()
                     .map(|(i, nm)| (nm.as_str(), i))
                     .collect();
-                let s = anchor_strength;
+                let s = prevalence_strength;
                 for (key, val) in dict.iter() {
                     let g: usize = if let Ok(lbl) = key.extract::<String>() {
                         *label_to_idx.get(lbl.as_str()).ok_or_else(|| {
@@ -1046,7 +1094,7 @@ impl ThreadTM {
                     anchor_target,
                 })
             };
-            (cfg, seed_matches)
+            (cfg, seed_matches, topic_names)
         };
 
         let m = py.allow_threads(move || {
@@ -1082,6 +1130,7 @@ impl ThreadTM {
         let gp = m.group_prevalence();
         slf.vocab = vocab;
         slf.group_names = group_names;
+        slf.topic_names = topic_names_out;
         slf.seed_matches = seed_matches_out;
         slf.doc_eta = m.lambda.clone();
         slf.doc_topic_var = m.doc_topic_var.clone();
@@ -1594,6 +1643,29 @@ impl ThreadTM {
         Ok(self.vocab.clone())
     }
 
+    /// Per-topic names (length K), in `topic_word` row order. Positional `topic_i` unless the fit
+    /// used a string-keyed `seed_words` dict, whose keys name the seeded topics (issue #854).
+    /// Assignable (a full-length list) to rename topics, as in SeededLDA/AnchorLDA.
+    #[getter]
+    fn topic_names(&self) -> PyResult<Vec<String>> {
+        self.require_fitted()?;
+        Ok(self.topic_names.clone())
+    }
+
+    #[setter]
+    fn set_topic_names(&mut self, names: Vec<String>) -> PyResult<()> {
+        self.require_fitted()?;
+        if names.len() != self.beta.len() {
+            return Err(PyValueError::new_err(format!(
+                "expected {} topic names, got {}",
+                self.beta.len(),
+                names.len()
+            )));
+        }
+        self.topic_names = names;
+        Ok(())
+    }
+
     /// Which fitted-vocabulary words each seeded topic's patterns actually matched (issue #856), as
     /// `{topic_index: [words]}` over the seeded topics only. Lets you audit what `seed_words` with
     /// `seed_match="glob"`/`"regex"` resolved to (e.g. confirm `"planet*"` caught `planet`,
@@ -1865,6 +1937,7 @@ impl ThreadTM {
                 fitted: self.fitted,
                 vocab: self.vocab.clone(),
                 group_names: self.group_names.clone(),
+                topic_names: self.topic_names.clone(),
                 seed_matches: self.seed_matches.clone(),
                 beta: self.beta.clone(),
                 doc_topic: self.doc_topic.clone(),
@@ -1911,6 +1984,7 @@ impl ThreadTM {
             fitted: s.fitted,
             vocab: s.vocab,
             group_names: s.group_names,
+            topic_names: s.topic_names,
             seed_matches: s.seed_matches,
             beta: s.beta,
             doc_topic: s.doc_topic,

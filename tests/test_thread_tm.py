@@ -1216,6 +1216,32 @@ def test_thread_tm_seed_words_pin_topics_to_slots():
         assert masses[t] > 0.6
 
 
+def test_thread_tm_seed_words_string_keys_name_topics():
+    """A string-keyed seed_words dict names the seeded topics and assigns them leading slots in
+    insertion order (as SeededLDA/keyATM do), exposed via topic_names. Same recovery as int keys."""
+    docs, parents, groups, block_words, _ = _planted_block_corpus()
+    named = {f"block{t}": block_words[t] for t in range(4)}  # insertion order 0..3
+    m = _fit_seeded(docs, parents, groups, seed_words=named)
+    assert list(m.topic_names) == ["block0", "block1", "block2", "block3"]
+    for t in range(4):
+        masses = [_block_mass(m, t, block_words[b]) for b in range(4)]
+        assert int(np.argmax(masses)) == t, f"named topic {t} did not land in its slot"
+    # topic_names is assignable (rename), like SeededLDA/AnchorLDA.
+    m.topic_names = ["a", "b", "c", "d"]
+    assert list(m.topic_names) == ["a", "b", "c", "d"]
+    with pytest.raises(ValueError, match="expected 4"):
+        m.topic_names = ["only", "three", "names"]
+
+
+def test_thread_tm_seed_words_unnamed_default_and_mixed_keys():
+    """Int-keyed (or unseeded) fits get positional topic_i names; mixing int and string keys errors."""
+    docs, parents, groups, block_words, _ = _planted_block_corpus()
+    m = _fit_seeded(docs, parents, groups, seed_words={0: block_words[0]})
+    assert list(m.topic_names) == ["topic_0", "topic_1", "topic_2", "topic_3"]
+    with pytest.raises(ValueError, match="all-int or all-string|not a mix"):
+        _fit_seeded(docs, parents, groups, seed_words={0: block_words[0], "b1": block_words[1]})
+
+
 def test_thread_tm_seed_is_soft_learns_beyond_seeds():
     """Seeding only a FEW of a block's words still pulls the whole block in: seeded topics keep
     substantial mass on the UNSEEDED block words (a soft prior, not a lock on the seeds), while
@@ -1223,7 +1249,8 @@ def test_thread_tm_seed_is_soft_learns_beyond_seeds():
     single topic can occasionally shed its tail, but the soft-prior behavior holds in aggregate."""
     docs, parents, groups, block_words, _ = _planted_block_corpus()
     partial = {t: block_words[t][:3] for t in range(4)}  # 3 of 10 words per block
-    m = _fit_seeded(docs, parents, groups, seed_words=partial, seed_weight=0.5)
+    # weight matches SeededLDA's scale (x100): 0.005 => 0.5x corpus count, a gentle seed.
+    m = _fit_seeded(docs, parents, groups, seed_words=partial, weight=0.005)
     aligned = sum(int(np.argmax([_block_mass(m, t, block_words[b]) for b in range(4)]) == t)
                   for t in range(4))
     assert aligned == 4, "seeding a few words per block failed to recover the blocks in-slot"
@@ -1233,7 +1260,7 @@ def test_thread_tm_seed_is_soft_learns_beyond_seeds():
 
 def test_thread_tm_prevalence_anchor_steers_group():
     """Pulling a group's anchor toward a target mix moves its recovered prevalence toward the
-    target, monotonically in anchor_strength."""
+    target, monotonically in prevalence_strength."""
     docs, parents, groups, block_words, _ = _planted_block_corpus()
     base = _fit_seeded(docs, parents, groups, seed_words=block_words)
     gp0 = np.asarray(base.group_prevalence)[0]
@@ -1241,7 +1268,7 @@ def test_thread_tm_prevalence_anchor_steers_group():
     prev = None
     for s in (0.0, 0.5, 0.9):
         m = _fit_seeded(docs, parents, groups, seed_words=block_words,
-                        prevalence_anchor={0: target.tolist()}, anchor_strength=s)
+                        prevalence_anchor={0: target.tolist()}, prevalence_strength=s)
         d = abs(np.asarray(m.group_prevalence)[0][0] - target[0])
         if prev is not None:
             assert d <= prev + 1e-6, "stronger anchor did not move prevalence toward the target"
@@ -1270,16 +1297,18 @@ def test_thread_tm_seed_validation_and_content_guard():
         _fit_seeded(docs, parents, groups, prevalence_anchor={0: [0.5, 0.5]})
     with pytest.raises(ValueError, match="not supported together with a content"):
         _fit_seeded(docs, parents, groups, seed_words={0: ["w0"]}, content="depth")
-    # finiteness / sign guards on the strength knobs (f64::clamp would let NaN through)
+    # finiteness / range guards on the strength knobs (f64::clamp would let NaN through).
+    # weight mirrors SeededLDA: bounded to [0, 1]. seed_strength is a raw pseudocount: >= 0.
+    for bad in (float("nan"), -0.1, 1.5):
+        with pytest.raises(ValueError, match="weight"):
+            _fit_seeded(docs, parents, groups, seed_words={0: ["w0"]}, weight=bad)
     for bad in (float("nan"), -1.0):
-        with pytest.raises(ValueError, match="seed_weight"):
-            _fit_seeded(docs, parents, groups, seed_words={0: ["w0"]}, seed_weight=bad)
         with pytest.raises(ValueError, match="seed_strength"):
             _fit_seeded(docs, parents, groups, seed_words={0: ["w0"]}, seed_strength=bad)
     for bad in (float("nan"), 1.5, -0.1):
-        with pytest.raises(ValueError, match="anchor_strength"):
+        with pytest.raises(ValueError, match="prevalence_strength"):
             _fit_seeded(docs, parents, groups,
-                        prevalence_anchor={0: [0.25, 0.25, 0.25, 0.25]}, anchor_strength=bad)
+                        prevalence_anchor={0: [0.25, 0.25, 0.25, 0.25]}, prevalence_strength=bad)
     with pytest.raises(ValueError, match="non-negative topic mix"):
         _fit_seeded(docs, parents, groups, prevalence_anchor={0: [0.5, -0.2, 0.4, 0.3]})
 
@@ -1316,10 +1345,10 @@ def test_thread_tm_prevalence_anchor_accepts_string_label():
     target = [0.7, 0.1, 0.1, 0.1]
     by_label = topica.ThreadTM(4, em_iters=60, seed=13, coupling="parent").fit(
         docs, parents=parents, covariates=labels, min_count=1,
-        prevalence_anchor={"g0": target}, anchor_strength=0.9)
+        prevalence_anchor={"g0": target}, prevalence_strength=0.9)
     by_index = topica.ThreadTM(4, em_iters=60, seed=13, coupling="parent").fit(
         docs, parents=parents, covariates=labels, min_count=1,
-        prevalence_anchor={0: target}, anchor_strength=0.9)
+        prevalence_anchor={0: target}, prevalence_strength=0.9)
     assert np.allclose(np.asarray(by_label.group_prevalence),
                        np.asarray(by_index.group_prevalence))
     with pytest.raises(ValueError, match="is not one of the covariate groups"):
