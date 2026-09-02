@@ -1745,6 +1745,33 @@ def test_blend_se_nan_without_blend_coupling():
     assert np.isnan(w["alpha"]) and np.isnan(w["alpha_se"])
 
 
+def test_blend_split_se_nan_when_unidentified_but_anchor_finite():
+    """On a shallow (depth-2-only) tree the alpha-vs-beta split is not identified (the fit warns).
+    The individual weight SEs must be NaN there rather than reading as a spuriously tight interval,
+    while the anchor SE — the SE of the identified combined share alpha+beta — stays finite (#863)."""
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=40, depth=2)
+    m = topica.ThreadTM(2, em_iters=30, seed=13, coupling="blend")
+    with pytest.warns(UserWarning, match="not separately identified"):
+        m.fit(docs, parents=parents)
+    assert np.isnan(m.blend_alpha_se) and np.isnan(m.blend_beta_se)
+    assert np.isfinite(m.blend_anchor_se) and m.blend_anchor_se >= 0.0
+    w = m.blend_weights()
+    assert np.isnan(w["alpha_se"]) and np.isnan(w["beta_se"])
+    assert np.isfinite(w["anchor_se"])
+
+
+def test_blend_se_is_deterministic():
+    """The clustered SE must be bit-identical across two identical fits (determinism contract):
+    the meat is summed in a fixed cluster order, not HashMap iteration order (#863)."""
+    docs, parents = _mixed_corpus(n_threads=80)
+    ses = []
+    for _ in range(4):
+        m = topica.ThreadTM(4, em_iters=60, seed=13, coupling="blend")
+        m.fit(docs, parents=parents)
+        ses.append((m.blend_alpha_se, m.blend_beta_se, m.blend_anchor_se))
+    assert all(s == ses[0] for s in ses), ses
+
+
 def test_blend_se_survives_save_load(tmp_path):
     """The clustered SEs round-trip through save/load (issue #863)."""
     docs, parents = _mixed_corpus(n_threads=60)

@@ -872,8 +872,11 @@ standard error (`blend_alpha_se`, `blend_beta_se`, `blend_anchor_se`; `blend_wei
 all six together), so a community's position on the parent–root axis comes with an interval.
 The SEs are asymptotic and conditional on the topic fit; like any Wald interval they are not
 strictly valid when a weight sits on a boundary (0 or the `α+β=1` simplex edge), and a pinned
-weight reports SE `0`. For a paired parent-vs-root contrast on the fair held-out scale (rather
-than a within-fit weight), use `reply_completion` below.
+weight reports SE `0`. On a shallow tree where the α-vs-β split is not identified (the same
+condition that raises the identifiability warning), `blend_alpha_se` and `blend_beta_se` are
+`NaN` while `blend_anchor_se` stays finite — the anchor share depends only on the identified
+combined weight `α + β`, not on how it splits. For a paired parent-vs-root contrast on the fair
+held-out scale (rather than a within-fit weight), use `reply_completion` below.
 
 **Letting the data pick the coupling on the held-out scale.** To let the data say which
 structure fits, fit these variants and compare them on held-out replies with the `"root"` and

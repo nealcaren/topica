@@ -3197,8 +3197,9 @@ class ThreadTM:
     @property
     def blend_alpha_se(self) -> float:
         """Cluster-robust (thread-root) sandwich SE of blend_alpha (issue #863). NaN unless
-        coupling="blend" fitted with >=2 threads; 0 when blend_alpha was pinned. Asymptotic and
-        conditional on the topic fit; not strictly valid at a weight boundary."""
+        coupling="blend" fitted with >=2 threads; 0 when blend_alpha was pinned; NaN when the tree
+        lacks depth-3 structure so the alpha-vs-beta split is unidentified (read blend_anchor_se there).
+        Asymptotic and conditional on the topic fit; not strictly valid at a weight boundary."""
         ...
     @property
     def blend_beta_se(self) -> float:
@@ -3206,7 +3207,8 @@ class ThreadTM:
         ...
     @property
     def blend_anchor_se(self) -> float:
-        """SE of the anchor weight 1-alpha-beta, propagated from the joint (alpha, beta) covariance."""
+        """Cluster-robust sandwich SE of the anchor weight 1-alpha-beta (the SE of the identified
+        combined share alpha+beta). Stays finite even when the alpha-vs-beta split is unidentified."""
         ...
     def blend_weights(self) -> dict[str, float]:
         """The estimated blend mix as {"alpha", "beta", "anchor", "alpha_se", "beta_se", "anchor_se"}:
