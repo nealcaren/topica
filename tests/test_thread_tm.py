@@ -1695,6 +1695,96 @@ def test_blend_estimates_both_weights_positive():
     assert m.blend_alpha > 0.01 and m.blend_beta > 0.01
 
 
+def test_blend_weights_have_clustered_se():
+    """The estimated (alpha, beta, anchor) blend mix comes with a thread-root-clustered SE
+    (issue #863): finite and positive for a both-free fit, the three shares sum to 1, and
+    blend_weights() bundles the six numbers consistently with the scalar getters."""
+    docs, parents = _mixed_corpus()
+    m = topica.ThreadTM(4, em_iters=80, seed=13, coupling="blend")
+    m.fit(docs, parents=parents)
+    w = m.blend_weights()
+    assert set(w) == {"alpha", "beta", "anchor", "alpha_se", "beta_se", "anchor_se"}
+    # scalar getters agree with the dict
+    assert w["alpha"] == m.blend_alpha and w["beta"] == m.blend_beta
+    assert w["anchor"] == pytest.approx(m.blend_anchor)
+    assert w["alpha_se"] == m.blend_alpha_se and w["beta_se"] == m.blend_beta_se
+    assert w["anchor_se"] == pytest.approx(m.blend_anchor_se)
+    # the three shares are a convex mix
+    assert w["alpha"] + w["beta"] + w["anchor"] == pytest.approx(1.0)
+    # both weights estimated, so both SEs are finite and strictly positive
+    assert np.isfinite(m.blend_alpha_se) and m.blend_alpha_se > 0.0
+    assert np.isfinite(m.blend_beta_se) and m.blend_beta_se > 0.0
+    assert np.isfinite(m.blend_anchor_se) and m.blend_anchor_se >= 0.0
+    # a plausibly tight interval on a strong planted signal (not a spuriously huge SE)
+    assert m.blend_alpha_se < 0.2 and m.blend_beta_se < 0.2
+
+
+def test_blend_pinned_weight_has_zero_se():
+    """A pinned weight was fixed, not estimated, so its SE is 0 while the free partner keeps a
+    finite positive SE (issue #863)."""
+    docs, parents = _mixed_corpus()
+    ma = topica.ThreadTM(4, em_iters=60, seed=13, coupling="blend", blend_alpha=0.6)
+    ma.fit(docs, parents=parents)
+    assert ma.blend_alpha_se == 0.0
+    assert np.isfinite(ma.blend_beta_se) and ma.blend_beta_se > 0.0
+    mb = topica.ThreadTM(4, em_iters=60, seed=13, coupling="blend", blend_beta=0.3)
+    mb.fit(docs, parents=parents)
+    assert mb.blend_beta_se == 0.0
+    assert np.isfinite(mb.blend_alpha_se) and mb.blend_alpha_se > 0.0
+
+
+def test_blend_se_nan_without_blend_coupling():
+    """The blend readouts are NaN for a non-blend fit (nothing to report)."""
+    docs, parents = _mixed_corpus(n_threads=40)
+    m = topica.ThreadTM(4, em_iters=40, seed=13)  # parent coupling
+    m.fit(docs, parents=parents)
+    assert np.isnan(m.blend_alpha_se) and np.isnan(m.blend_beta_se)
+    assert np.isnan(m.blend_anchor) and np.isnan(m.blend_anchor_se)
+    # blend_weights() on a fitted non-blend model returns NaNs rather than raising
+    w = m.blend_weights()
+    assert np.isnan(w["alpha"]) and np.isnan(w["alpha_se"])
+
+
+def test_blend_split_se_nan_when_unidentified_but_anchor_finite():
+    """On a shallow (depth-2-only) tree the alpha-vs-beta split is not identified (the fit warns).
+    The individual weight SEs must be NaN there rather than reading as a spuriously tight interval,
+    while the anchor SE — the SE of the identified combined share alpha+beta — stays finite (#863)."""
+    docs, parents, cov, vocab = _threaded_corpus(n_threads=40, depth=2)
+    m = topica.ThreadTM(2, em_iters=30, seed=13, coupling="blend")
+    with pytest.warns(UserWarning, match="not separately identified"):
+        m.fit(docs, parents=parents)
+    assert np.isnan(m.blend_alpha_se) and np.isnan(m.blend_beta_se)
+    assert np.isfinite(m.blend_anchor_se) and m.blend_anchor_se >= 0.0
+    w = m.blend_weights()
+    assert np.isnan(w["alpha_se"]) and np.isnan(w["beta_se"])
+    assert np.isfinite(w["anchor_se"])
+
+
+def test_blend_se_is_deterministic():
+    """The clustered SE must be bit-identical across two identical fits (determinism contract):
+    the meat is summed in a fixed cluster order, not HashMap iteration order (#863)."""
+    docs, parents = _mixed_corpus(n_threads=80)
+    ses = []
+    for _ in range(4):
+        m = topica.ThreadTM(4, em_iters=60, seed=13, coupling="blend")
+        m.fit(docs, parents=parents)
+        ses.append((m.blend_alpha_se, m.blend_beta_se, m.blend_anchor_se))
+    assert all(s == ses[0] for s in ses), ses
+
+
+def test_blend_se_survives_save_load(tmp_path):
+    """The clustered SEs round-trip through save/load (issue #863)."""
+    docs, parents = _mixed_corpus(n_threads=60)
+    m = topica.ThreadTM(4, em_iters=50, seed=13, coupling="blend")
+    m.fit(docs, parents=parents)
+    p = tmp_path / "blend_se.bin"
+    m.save(str(p))
+    m2 = topica.ThreadTM.load(str(p))
+    assert m2.blend_alpha_se == m.blend_alpha_se
+    assert m2.blend_beta_se == m.blend_beta_se
+    assert m2.blend_anchor_se == pytest.approx(m.blend_anchor_se)
+
+
 def test_blend_fixed_weights_respected():
     docs, parents = _mixed_corpus(n_threads=30)
     m = topica.ThreadTM(4, em_iters=40, seed=13, coupling="blend", blend_alpha=0.6, blend_beta=0.3)

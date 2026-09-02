@@ -72,6 +72,17 @@ pub struct ThreadTmModel {
     /// Blend coupling root weight `β` (`NaN` unless `coupling="blend"`): how much a node's prior mean
     /// tracks its thread root. The anchor gets the remaining `1 - α - β`.
     pub blend_beta: f64,
+    /// Asymptotic cluster-robust (sandwich) standard errors of the blend weights, from the blend
+    /// M-step estimating equations clustered on the reply-tree root. `blend_anchor_se` is the SE of
+    /// the anchor share `1-α-β`. All `NaN` unless `coupling="blend"` fitted with at least two threads;
+    /// a PINNED weight gets SE `0` (it was fixed, not estimated). When the tree lacks depth-3
+    /// structure the α-vs-β split is not identified (the fit warns), so `blend_alpha_se`/
+    /// `blend_beta_se` are `NaN` there while `blend_anchor_se` — the SE of the identified combined
+    /// share `α+β` — stays finite. Conditional on the topic fit, and — like any Wald SE — not
+    /// strictly valid when a weight sits on a boundary (0 or the `α+β=1` simplex edge).
+    pub blend_alpha_se: f64,
+    pub blend_beta_se: f64,
+    pub blend_anchor_se: f64,
     /// Reported per-edge variance: the mean marginal variance of the fitted full edge covariance
     /// `sigma_edge` (a scalar summary; the edge prior is the full `sigma_edge`).
     pub sigma2: f64,
@@ -875,6 +886,136 @@ pub fn fit_thread_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         }
     }
 
+    // Blend-weight uncertainty (issue #863): asymptotic cluster-robust (sandwich) SEs of the fitted
+    // (α, β) and of the anchor share 1-α-β, clustered on the thread root exactly as anchor_se is. The
+    // M-step solves the errors-in-variables estimating equation Σ ψ_i = 0 with
+    //   ψ_i = [ xp·y − (xp²−ν_p)·α − (xp·xr−ν_pr)·β ,  xr·y − (xp·xr−ν_pr)·α − (xr²−ν_r)·β ],
+    // whose Jacobian is the de-attenuated Gram G = [[a11, a12], [a12, a22]] (a11 = spp−Σν_p, etc.).
+    // The sandwich pairs that "bread" G⁻¹ with a "meat" built from the per-THREAD score ψ_c = Σ_{i∈c}
+    // ψ_i, so within-thread correlation does not deflate the interval. ψ_i must be the SAME estimating
+    // function that produced the point estimate: the residual part xp·(y−α·xp−β·xr) plus the ν
+    // "add-back" α·ν_p + β·ν_pr (and the mirror for the root regressor), or the meat would not be the
+    // score of the de-attenuated estimator the bread differentiates (its cluster scores would not sum
+    // to zero at the solution). A pinned weight is fixed (SE 0); its free partner gets the conditional
+    // 1-D sandwich. NaN unless blend was actually fitted with ≥2 threads.
+    let (mut blend_alpha_se, mut blend_beta_se, mut blend_anchor_se) =
+        (f64::NAN, f64::NAN, f64::NAN);
+    if let Some(bc) = blend {
+        if field_fit_ran && n_edges > 0 {
+            let (mut spp, mut spr, mut srr) = (0.0, 0.0, 0.0f64);
+            let (mut snu_p, mut snu_r, mut snu_pr) = (0.0, 0.0, 0.0f64);
+            // Per-cluster accumulators: [Σ xp·e, Σ xr·e, Σ ν_p, Σ ν_r, Σ ν_pr]. The ν sums turn the
+            // residual score into the de-attenuated estimating-function score below. A BTreeMap (not a
+            // HashMap) keeps the meat summation order deterministic across fits, so the SE is
+            // reproducible to the ULP like every other topica estimate (determinism contract, #410).
+            let mut acc: std::collections::BTreeMap<usize, [f64; 5]> =
+                std::collections::BTreeMap::new();
+            for c in 0..d {
+                let par = parents[c];
+                if par < 0 || !has_tokens[c] {
+                    continue;
+                }
+                let (p, r) = (par as usize, bc.root[c]);
+                if !has_tokens[p] || !has_tokens[r] {
+                    continue;
+                }
+                let ag = &anchor[groups[c]];
+                let s = acc.entry(thread_root[c]).or_insert([0.0; 5]);
+                for i in 0..km1 {
+                    let xp = lambda[p][i] - ag[i];
+                    let xr = lambda[r][i] - ag[i];
+                    let y = lambda[c][i] - ag[i];
+                    let e = y - alpha * xp - beta_w * xr;
+                    spp += xp * xp;
+                    spr += xp * xr;
+                    srr += xr * xr;
+                    let (nup, nur) = (last_nu_diag[p][i], last_nu_diag[r][i]);
+                    snu_p += nup;
+                    snu_r += nur;
+                    s[0] += xp * e;
+                    s[1] += xr * e;
+                    s[2] += nup;
+                    s[3] += nur;
+                    if p == r {
+                        snu_pr += nup;
+                        s[4] += nup;
+                    }
+                }
+            }
+            // The α-vs-β split is identified only with depth-3+ structure (a node whose parent is not
+            // its thread root); with fewer than two such nodes the fit warns and the split is
+            // arbitrary. Match that threshold: when unidentified we report NaN for the individual
+            // weight SEs but keep the anchor SE, since α+β (hence 1-α-β) IS identified there.
+            let n_deep = (0..d)
+                .filter(|&c| parents[c] >= 0 && bc.root[c] != parents[c] as usize)
+                .count();
+            let split_identified = n_deep >= 2;
+            let n_clusters = acc.len();
+            if n_clusters >= 2 {
+                let cf = n_clusters as f64 / (n_clusters as f64 - 1.0); // small-cluster correction
+                let ridge = 1e-6 * (spp + srr) + 1e-9;
+                let a11 = (spp - snu_p).max(0.0) + ridge;
+                let a22 = (srr - snu_r).max(0.0) + ridge;
+                let a12 = spr - snu_pr;
+                // De-attenuated per-cluster scores ψ_c = [s0 + α·Σν_p + β·Σν_pr, s1 + α·Σν_pr + β·Σν_r].
+                let (mut m11, mut m12, mut m22) = (0.0, 0.0, 0.0f64);
+                for s in acc.values() {
+                    let psi0 = s[0] + alpha * s[2] + beta_w * s[4];
+                    let psi1 = s[1] + alpha * s[4] + beta_w * s[3];
+                    m11 += psi0 * psi0;
+                    m12 += psi0 * psi1;
+                    m22 += psi1 * psi1;
+                }
+                m11 *= cf;
+                m12 *= cf;
+                m22 *= cf;
+                match (bc.fixed_alpha, bc.fixed_beta) {
+                    // Both pinned: no weight was estimated, so nothing carries sampling variance.
+                    (Some(_), Some(_)) => {
+                        blend_alpha_se = 0.0;
+                        blend_beta_se = 0.0;
+                        blend_anchor_se = 0.0;
+                    }
+                    // One pinned: the free weight's conditional 1-D sandwich (bread = its own
+                    // de-attenuated Gram diagonal). Pinning one weight also identifies the split, so
+                    // the anchor SE equals the free weight's SE (the pinned partner is a constant).
+                    (Some(_), None) => {
+                        blend_alpha_se = 0.0;
+                        blend_beta_se = m22.sqrt() / a22;
+                        blend_anchor_se = blend_beta_se;
+                    }
+                    (None, Some(_)) => {
+                        blend_beta_se = 0.0;
+                        blend_alpha_se = m11.sqrt() / a11;
+                        blend_anchor_se = blend_alpha_se;
+                    }
+                    // Both free: the 2×2 sandwich Cov = G⁻¹ · M · G⁻¹. Var(1-α-β) = Var(α+β) =
+                    // cov11 + cov22 + 2·cov12 is identified even when the α/β split is not, so the
+                    // anchor SE stays finite while the individual weight SEs are NaN'd under
+                    // non-identification.
+                    (None, None) => {
+                        let det = a11 * a22 - a12 * a12;
+                        if det.abs() > 1e-12 {
+                            let (g11, g12, g22) = (a22 / det, -a12 / det, a11 / det);
+                            let gm11 = g11 * m11 + g12 * m12;
+                            let gm12 = g11 * m12 + g12 * m22;
+                            let gm21 = g12 * m11 + g22 * m12;
+                            let gm22 = g12 * m12 + g22 * m22;
+                            let cov11 = gm11 * g11 + gm12 * g12;
+                            let cov12 = gm11 * g12 + gm12 * g22;
+                            let cov22 = gm21 * g12 + gm22 * g22;
+                            blend_anchor_se = (cov11 + cov22 + 2.0 * cov12).max(0.0).sqrt();
+                            if split_identified {
+                                blend_alpha_se = cov11.max(0.0).sqrt();
+                                blend_beta_se = cov22.max(0.0).sqrt();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // κ CI is the dominant per-fit cost (a 99-point profile, each an inner Nelder-Mead), and it is
     // usually not read (persistence() supersedes it). Compute it here only when explicitly asked;
     // otherwise the binding computes it lazily from the stored fit via `kappa_profile_ci`.
@@ -928,6 +1069,9 @@ pub fn fit_thread_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         kappa: kappa_out,
         blend_alpha: alpha_out,
         blend_beta: beta_out,
+        blend_alpha_se,
+        blend_beta_se,
+        blend_anchor_se,
         sigma2,
         p0,
         sigma_root,

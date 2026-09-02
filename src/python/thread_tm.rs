@@ -49,6 +49,12 @@ pub struct ThreadTM {
     // Effective (fitted or pinned) blend weights after fit; NaN unless coupling="blend" and fitted.
     blend_alpha: f64,
     blend_beta: f64,
+    // Cluster-robust (thread-root) sandwich SEs of the fitted blend weights and the anchor share
+    // (issue #863); NaN unless blend fitted with >=2 threads, 0 for a pinned weight, and the
+    // individual weight SEs NaN (anchor SE kept) when the α/β split is not identified.
+    blend_alpha_se: f64,
+    blend_beta_se: f64,
+    blend_anchor_se: f64,
     fitted: bool,
     vocab: Vec<String>,
     group_names: Vec<String>,
@@ -122,6 +128,12 @@ struct ThreadTmState {
     blend_alpha: f64,
     #[serde(default = "default_nan")]
     blend_beta: f64,
+    #[serde(default = "default_nan")]
+    blend_alpha_se: f64,
+    #[serde(default = "default_nan")]
+    blend_beta_se: f64,
+    #[serde(default = "default_nan")]
+    blend_anchor_se: f64,
     fitted: bool,
     vocab: Vec<String>,
     group_names: Vec<String>,
@@ -461,6 +473,9 @@ impl ThreadTM {
             blend_beta_fixed: blend_beta,
             blend_alpha: f64::NAN,
             blend_beta: f64::NAN,
+            blend_alpha_se: f64::NAN,
+            blend_beta_se: f64::NAN,
+            blend_anchor_se: f64::NAN,
             fitted: false,
             vocab: Vec::new(),
             group_names: Vec::new(),
@@ -1195,6 +1210,9 @@ impl ThreadTM {
         slf.kappa_ci = m.kappa_ci;
         slf.blend_alpha = m.blend_alpha;
         slf.blend_beta = m.blend_beta;
+        slf.blend_alpha_se = m.blend_alpha_se;
+        slf.blend_beta_se = m.blend_beta_se;
+        slf.blend_anchor_se = m.blend_anchor_se;
         slf.sigma2 = m.sigma2;
         slf.p0 = m.p0;
         slf.sigma_root = m.sigma_root;
@@ -1987,6 +2005,9 @@ impl ThreadTM {
                 blend_beta_fixed: self.blend_beta_fixed,
                 blend_alpha: self.blend_alpha,
                 blend_beta: self.blend_beta,
+                blend_alpha_se: self.blend_alpha_se,
+                blend_beta_se: self.blend_beta_se,
+                blend_anchor_se: self.blend_anchor_se,
                 fitted: self.fitted,
                 vocab: self.vocab.clone(),
                 group_names: self.group_names.clone(),
@@ -2039,6 +2060,9 @@ impl ThreadTM {
             blend_beta_fixed: s.blend_beta_fixed,
             blend_alpha: s.blend_alpha,
             blend_beta: s.blend_beta,
+            blend_alpha_se: s.blend_alpha_se,
+            blend_beta_se: s.blend_beta_se,
+            blend_anchor_se: s.blend_anchor_se,
             fitted: s.fitted,
             vocab: s.vocab,
             group_names: s.group_names,
@@ -2348,6 +2372,65 @@ impl ThreadTM {
         self.blend_beta
     }
 
+    /// Blend anchor weight `1 - α - β` (how much a node reverts to its covariate-group baseline
+    /// rather than to its parent or root), `NaN` unless the model was fit with `coupling="blend"`.
+    /// Together with `blend_alpha`/`blend_beta` these three shares are a hand-coding-free structural
+    /// readout of how a discourse space is organised: parent-chained (α large), broadcast-around-the-
+    /// root (β large), or context-free (anchor large).
+    #[getter]
+    fn blend_anchor(&self) -> f64 {
+        1.0 - self.blend_alpha - self.blend_beta
+    }
+
+    /// Asymptotic cluster-robust (sandwich) standard error of `blend_alpha`, clustered on the thread
+    /// root (issue #863). `NaN` unless `coupling="blend"` was fitted with at least two threads; `0`
+    /// when `blend_alpha` was pinned in the constructor (it was fixed, not estimated); and `NaN` when
+    /// the tree lacks depth-3 structure so the α-vs-β split is not identified (the fit warns) — read
+    /// `blend_anchor_se` there, which stays finite because `α+β` is identified. Conditional on the
+    /// topic fit; like any Wald SE it is not strictly valid at a boundary (a weight at 0 or on the
+    /// `α+β=1` edge). For a paired parent-vs-root contrast on the held-out scale, use
+    /// `evaluate.reply_completion` with the `"root"`/`"blend"` baselines instead.
+    #[getter]
+    fn blend_alpha_se(&self) -> f64 {
+        self.blend_alpha_se
+    }
+
+    /// Asymptotic cluster-robust (sandwich) SE of `blend_beta`, clustered on the thread root; same
+    /// conventions and caveats as `blend_alpha_se`.
+    #[getter]
+    fn blend_beta_se(&self) -> f64 {
+        self.blend_beta_se
+    }
+
+    /// Cluster-robust (sandwich) SE of the anchor weight `1 - α - β` — the SE of the identified
+    /// combined share `α + β`. `NaN` unless fitted with `coupling="blend"` and ≥2 threads; `0` when
+    /// both weights are pinned. Unlike the individual weight SEs, this stays finite even when the
+    /// α-vs-β split is unidentified (shallow trees), since the anchor share does not depend on the
+    /// split.
+    #[getter]
+    fn blend_anchor_se(&self) -> f64 {
+        self.blend_anchor_se
+    }
+
+    /// The estimated blend mix as a labelled dict: `{"alpha", "beta", "anchor", "alpha_se", "beta_se",
+    /// "anchor_se"}` — the parent, root, and anchor shares of each node's prior mean, each with its
+    /// thread-root-clustered SE (issue #863). All `NaN` unless the model was fit with
+    /// `coupling="blend"`. A pinned weight reads its fixed value with SE `0`; on a shallow tree where
+    /// the α-vs-β split is unidentified, `alpha_se`/`beta_se` are `NaN` but `anchor_se` is finite.
+    /// This is the structural characterisation a discourse space earns from `coupling="blend"`:
+    /// whether topics track the reply chain (α), the thread root (β), or neither (anchor).
+    fn blend_weights<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        self.require_fitted()?;
+        let d = PyDict::new_bound(py);
+        d.set_item("alpha", self.blend_alpha)?;
+        d.set_item("beta", self.blend_beta)?;
+        d.set_item("anchor", 1.0 - self.blend_alpha - self.blend_beta)?;
+        d.set_item("alpha_se", self.blend_alpha_se)?;
+        d.set_item("beta_se", self.blend_beta_se)?;
+        d.set_item("anchor_se", self.blend_anchor_se)?;
+        Ok(d)
+    }
+
     /// Per-edge (OU step) variance: the mean marginal variance of the fitted full edge covariance
     /// Σ_edge (a scalar summary; the edge prior is the full Σ_edge, on the same footing as the root
     /// Σ_root). `NaN` when there are no reply edges / the field was not fit.
@@ -2435,9 +2518,14 @@ impl ThreadTM {
     fn __repr__(&self) -> String {
         if self.fitted && self.coupling == "blend" {
             return format!(
-                "ThreadTM(num_topics={}, coupling=\"blend\", fitted, alpha={:.3}, beta={:.3}, \
-                 sigma2={:.3})",
-                self.num_topics, self.blend_alpha, self.blend_beta, self.sigma2
+                "ThreadTM(num_topics={}, coupling=\"blend\", fitted, alpha={:.3}±{:.3}, \
+                 beta={:.3}±{:.3}, sigma2={:.3})",
+                self.num_topics,
+                self.blend_alpha,
+                self.blend_alpha_se,
+                self.blend_beta,
+                self.blend_beta_se,
+                self.sigma2
             );
         }
         if self.fitted {
