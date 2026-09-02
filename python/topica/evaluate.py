@@ -1139,6 +1139,17 @@ def reply_completion(
       the mix estimated. ``delta["blend"]`` is parent-coupling minus blend-coupling;
       a negative value means the blend of edge and thread structure predicts better
       than the reply edge alone.
+
+    Every ThreadTM baseline above (``no_tree``, ``permuted``, ``root``, ``blend``) is a
+    matched fit scored with the *same* posterior-predictive ``E[softmax(η)]`` estimator
+    as the ``tree`` (issue #838), so all the coupling contrasts sit on one fair
+    held-out scale. ``delta`` reports each against the parent ``tree``; for any *other*
+    coupling pairing (``root - no_tree``, ``blend - root``, …) name it in ``contrasts``
+    to get the thread-clustered CI directly, or read ``result.paired`` — the per-leaf,
+    per-model held-out log-likelihood matrix — and cluster it yourself. This is the
+    surface for turning the genre boundary into a "which structure fits which
+    discourse" result (issue #863): one matched fit on one held-out split, every
+    parent/root/blend contrast on the posterior-predictive scale.
     - ``lda`` / ``stm`` (issue #828): off-the-shelf comparators — a plain
       ``LDA(K)``, and an ``STM(K)`` with the ``covariates`` one-hot encoded as
       prevalence — fit on the same reduced corpus (pinned to the tree model's

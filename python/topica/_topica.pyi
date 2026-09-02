@@ -3189,6 +3189,32 @@ class ThreadTM:
         """Blend root weight beta (NaN unless fit with coupling="blend"); the anchor takes 1-alpha-beta."""
         ...
     @property
+    def blend_anchor(self) -> float:
+        """Blend anchor weight 1-alpha-beta: how much a node reverts to its covariate-group baseline
+        rather than to its parent or root (NaN unless fit with coupling="blend"). With blend_alpha and
+        blend_beta, a hand-coding-free structural readout of how a discourse space is organised."""
+        ...
+    @property
+    def blend_alpha_se(self) -> float:
+        """Cluster-robust (thread-root) sandwich SE of blend_alpha (issue #863). NaN unless
+        coupling="blend" fitted with >=2 threads; 0 when blend_alpha was pinned. Asymptotic and
+        conditional on the topic fit; not strictly valid at a weight boundary."""
+        ...
+    @property
+    def blend_beta_se(self) -> float:
+        """Cluster-robust (thread-root) sandwich SE of blend_beta; same conventions as blend_alpha_se."""
+        ...
+    @property
+    def blend_anchor_se(self) -> float:
+        """SE of the anchor weight 1-alpha-beta, propagated from the joint (alpha, beta) covariance."""
+        ...
+    def blend_weights(self) -> dict[str, float]:
+        """The estimated blend mix as {"alpha", "beta", "anchor", "alpha_se", "beta_se", "anchor_se"}:
+        the parent, root, and anchor shares of each node's prior mean, each with its thread-root-
+        clustered SE (issue #863). All NaN unless fit with coupling="blend"; a pinned weight reads its
+        fixed value with SE 0."""
+        ...
+    @property
     def topic_word(self) -> numpy.typing.NDArray[numpy.float64]: ...
     @property
     def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:

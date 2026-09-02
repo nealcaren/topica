@@ -848,7 +848,7 @@ shrinks each node toward BOTH its parent and its thread root:
 ```python
 m = topica.ThreadTM(num_topics=25, seed=13, coupling="blend")
 m.fit(docs, parents=parents)
-m.blend_alpha, m.blend_beta   # fitted parent weight and root weight
+m.blend_weights()   # {"alpha", "beta", "anchor", "alpha_se", "beta_se", "anchor_se"}
 ```
 
 The prior mean is `alpha * parent + beta * root + (1 - alpha - beta) * anchor`. The weights
@@ -861,11 +861,44 @@ weights or use `coupling="parent"`/`"root"`. Blend also needs enough tokens per 
 very short replies the leaf's own η is too noisy for the two-regressor weight estimator, and
 blend can underperform plain `coupling="parent"`; on short-reply corpora prefer `"parent"` or
 `"root"`, or pin the weights. `kappa`/`kappa_ci` are `NaN` under blend, since
-the mix is described by the two weights instead of a single reversion. To let the data say which structure fits, fit
-these variants and compare them on held-out replies with the `"root"` and `"blend"` baselines
-in `reply_completion` below: `delta["root"]` is parent-coupling minus root-coupling, positive
-where the reply edge matters more than the thread topic and negative where it does not, and
-`delta["blend"]` is parent-coupling minus the estimated blend.
+the mix is described by the two weights instead of a single reversion.
+
+**The blend mix as a structural estimand.** The three shares — `blend_alpha` (parent),
+`blend_beta` (root), `blend_anchor` (= `1 - alpha - beta`) — *characterize how a discourse
+space is organized*, with no hand coding: parent-chained (α large, the reply edge carries the
+topic), broadcast-around-the-root (β large, replies track the thread topic), or context-free
+(anchor large, the group baseline dominates). Each carries a thread-root-clustered sandwich
+standard error (`blend_alpha_se`, `blend_beta_se`, `blend_anchor_se`; `blend_weights()` returns
+all six together), so a community's position on the parent–root axis comes with an interval.
+The SEs are asymptotic and conditional on the topic fit; like any Wald interval they are not
+strictly valid when a weight sits on a boundary (0 or the `α+β=1` simplex edge), and a pinned
+weight reports SE `0`. For a paired parent-vs-root contrast on the fair held-out scale (rather
+than a within-fit weight), use `reply_completion` below.
+
+**Letting the data pick the coupling on the held-out scale.** To let the data say which
+structure fits, fit these variants and compare them on held-out replies with the `"root"` and
+`"blend"` baselines in `reply_completion` below. Every ThreadTM baseline is scored with the
+same posterior-predictive `E[softmax(η)]` (issue #838) as the parent tree, so the couplings are
+compared on one fair estimator. `delta["root"]` is parent-coupling minus root-coupling, positive
+where the reply edge matters more than the thread topic and negative where it does not;
+`delta["blend"]` is parent-coupling minus the estimated blend. Any *other* pairing — for
+instance `root` versus `no_tree`, or `blend` versus `root` — comes with a thread-clustered CI
+by naming it in `contrasts=` (issue #852):
+
+```python
+res = topica.evaluate.reply_completion(
+    docs, parents, num_topics=25,
+    baselines=("no_tree", "root", "blend"),
+    contrasts=[("root", "no_tree"), ("blend", "root")],
+)
+res.delta["root"], res.delta["blend"]        # each vs the parent tree, with CIs
+res.contrast["root-no_tree"], res.contrast["blend-root"]   # arbitrary coupling pairings
+res.paired                                    # per-leaf, per-model held-out log-likelihoods
+```
+
+`res.paired` is the per-thread paired held-out matrix (leaves × models): it lets you cluster
+*any* coupling contrast yourself on the thread root, so the whole parent/root/blend comparison
+comes off one matched fit on one held-out split.
 
 **Content drift: how a topic's words shift downstream.** The covariate above shapes topic
 *prevalence* (which topics a group's threads use). A **content** covariate instead shapes the
