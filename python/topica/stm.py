@@ -2005,6 +2005,223 @@ def spline(x, df=4, knots=None, name="x"):
     return basis, names
 
 
+# ---------------------------------------------------------------------------
+# B-spline basis (bs / s): column-identical to R stm's s() == splines::bs()
+# ---------------------------------------------------------------------------
+
+def _bspline_order_bases(x, knots, order):
+    """Cox--de Boor: order-1..`order` B-spline bases on the augmented knot vector.
+
+    Returns a list ``Nk`` where ``Nk[k]`` is the order-``k`` (degree ``k-1``)
+    basis evaluated at ``x``, shape ``(len(x), len(knots) - k)``. The last
+    positive-width knot span is right-closed so ``x`` at the right boundary knot
+    lands in the final basis function -- ``splines::splineDesign``'s endpoint rule.
+    """
+    x = np.asarray(x, dtype=np.float64)
+    t = np.asarray(knots, dtype=np.float64)
+    nk = len(t)
+    last_pos = max(i for i in range(nk - 1) if t[i + 1] > t[i])
+    n1 = np.zeros((len(x), nk - 1), dtype=np.float64)
+    for i in range(nk - 1):
+        left, right = t[i], t[i + 1]
+        if right <= left:
+            continue  # zero-width span from a repeated knot
+        if i == last_pos:
+            n1[:, i] = (x >= left) & (x <= right)
+        else:
+            n1[:, i] = (x >= left) & (x < right)
+    nk_list = [None, n1]
+    for k in range(2, order + 1):
+        prev = nk_list[k - 1]
+        cur = np.zeros((len(x), nk - k), dtype=np.float64)
+        for i in range(nk - k):
+            d1 = t[i + k - 1] - t[i]
+            d2 = t[i + k] - t[i + 1]
+            term = np.zeros(len(x))
+            if d1 > 0:
+                term = term + (x - t[i]) / d1 * prev[:, i]
+            if d2 > 0:
+                term = term + (t[i + k] - x) / d2 * prev[:, i + 1]
+            cur[:, i] = term
+        nk_list.append(cur)
+    return nk_list
+
+
+def _bspline_derivs(x, knots, order, max_deriv):
+    """Value and derivatives 0..`max_deriv` of the order-`order` B-spline basis.
+
+    Returns a list ``D`` of length ``max_deriv + 1`` where ``D[r]`` is the
+    ``r``-th derivative, shape ``(len(x), len(knots) - order)``. Used both for
+    the basis itself (``r=0``) and for R's boundary Taylor extrapolation.
+    """
+    x = np.asarray(x, dtype=np.float64)
+    t = np.asarray(knots, dtype=np.float64)
+    nk = len(t)
+    bases = _bspline_order_bases(x, t, order)
+    table = {0: {m: bases[m] for m in range(1, order + 1)}}
+    for r in range(1, max_deriv + 1):
+        table[r] = {1: np.zeros((len(x), nk - 1))}  # derivative of a step basis is 0
+        for m in range(2, order + 1):
+            lower = table[r - 1][m - 1]
+            cur = np.zeros((len(x), nk - m), dtype=np.float64)
+            for i in range(nk - m):
+                d1 = t[i + m - 1] - t[i]
+                d2 = t[i + m] - t[i + 1]
+                val = np.zeros(len(x))
+                if d1 > 0:
+                    val = val + lower[:, i] / d1
+                if d2 > 0:
+                    val = val - lower[:, i + 1] / d2
+                cur[:, i] = (m - 1) * val
+            table[r][m] = cur
+    return [table[r][order] for r in range(max_deriv + 1)]
+
+
+def _shove_boundary_knots(interior, b0, b1):
+    """Replicate R ``splines::bs``: an interior (quantile) knot that lands exactly
+    on a boundary knot is shoved 1/8 of the gap toward the nearest distinct
+    interior knot, so a spike-at-boundary covariate still yields a well-defined
+    basis. Matches R's warning-free shove for the not-all-equal case.
+    """
+    interior = np.array(interior, dtype=np.float64)  # already sorted (quantiles)
+    if interior.size == 0:
+        return interior
+    if interior.min() == b0:  # R: range(knots)[1] %in% Boundary.knots
+        i = interior == b0
+        above = interior[interior > b0]
+        if above.size:  # not all interior knots equal the boundary
+            interior[i] = b0 + (above.min() - b0) / 8.0
+    if interior.max() == b1:
+        i = interior == b1
+        below = interior[interior < b1]
+        if below.size:
+            interior[i] = b1 - (b1 - below.max()) / 8.0
+    return np.sort(interior)
+
+
+def _bs_knots(x, df, degree, knots=None, boundary_knots=None):
+    """Interior and boundary knots for a B-spline basis (R ``splines::bs`` rule).
+
+    Boundary knots default to ``range(x)``; interior knots to the ``df - degree``
+    type-7 quantiles of ``x`` (numpy's default interpolation matches R's), with any
+    knot coinciding with a boundary shoved inside as R does. Returns
+    ``(interior (k,), (b0, b1))``. The formula layer captures these at fit time and
+    replays them on the prediction grid so both share one basis.
+
+    When boundary knots are derived from ``x`` (the training call), ``x`` must be
+    finite and non-constant -- R ``stm`` likewise needs complete, varying metadata.
+    On the prediction path ``boundary_knots`` is supplied, so the grid is not
+    re-checked (R extrapolates beyond the boundary there).
+    """
+    x = np.asarray(x, dtype=np.float64).ravel()
+    if boundary_knots is None:
+        if not np.all(np.isfinite(x)):
+            raise ValueError(
+                "covariate for a B-spline (bs/s) contains non-finite values (NaN "
+                "or inf). Prevalence covariates must be complete, as R stm's "
+                "metadata must be; drop or impute the missing values first."
+            )
+        b0, b1 = float(np.min(x)), float(np.max(x))
+        if b1 <= b0:
+            raise ValueError(
+                "covariate for a B-spline (bs/s) is constant (all values equal); a "
+                "spline basis needs a covariate that varies."
+            )
+    else:
+        b0, b1 = float(boundary_knots[0]), float(boundary_knots[1])
+    if knots is None:
+        n_interior = df - degree
+        if n_interior > 0:
+            probs = np.linspace(0.0, 1.0, n_interior + 2)[1:-1]
+            interior = _shove_boundary_knots(np.quantile(x, probs), b0, b1)
+        else:
+            interior = np.array([], dtype=np.float64)
+    else:
+        interior = np.sort(np.asarray(knots, dtype=np.float64).ravel())
+    return interior, (b0, b1)
+
+
+def bs(x, df=10, *, degree=3, knots=None, boundary_knots=None, name="x"):
+    """B-spline basis, **column-identical to R** ``splines::bs`` (and so to
+    ``stm``'s ``s()`` smooth prevalence term).
+
+    This is the polynomial-spline basis R ``stm`` puts on a continuous prevalence
+    covariate when you write ``prevalence = ~ s(day)``. Prefer it over
+    :func:`spline` (a restricted natural cubic spline) when you want a design that
+    matches R ``stm`` term for term -- for example when ``topica.STM`` is a
+    baseline in a comparison study. For a fair full-strength STM, wrap every
+    continuous prevalence covariate in ``bs``/``s`` (or the ``s(...)`` formula
+    term); a raw linear covariate is a weaker model than R ``stm``'s default.
+
+    Interior knots are placed at type-7 quantiles of ``x`` (R's default), boundary
+    knots at ``range(x)``. Points outside the boundary use R's degree-``degree``
+    Taylor extrapolation, so the basis matches ``predict(bs_obj, newx)`` off the
+    data range too. Pass ``knots=`` (interior) and ``boundary_knots=`` to re-apply
+    a training basis to new data -- this is what the ``bs(...)`` formula term does
+    under the hood so a fitted design and a prediction grid share one basis.
+
+    ``df`` counts columns (``df - degree`` interior knots); the default ``df=10``
+    matches R ``stm``'s ``s()``. No intercept column is produced (R's
+    ``intercept=FALSE``), because :meth:`STM.fit` prepends its own intercept.
+
+    Returns ``(basis (n, df), names)``; column ``i`` is named
+    ``bs(<name>, df=<df>)[<i>]``.
+    """
+    x = np.asarray(x, dtype=np.float64).ravel()
+    order = degree + 1
+    interior, (b0, b1) = _bs_knots(x, df, degree, knots, boundary_knots)
+    all_knots = np.concatenate(
+        [np.repeat(b0, order), np.sort(interior), np.repeat(b1, order)]
+    )
+    n_basis = len(all_knots) - order
+    basis = np.zeros((len(x), n_basis), dtype=np.float64)
+
+    inside = (x >= b0) & (x <= b1)
+    if np.any(inside):
+        basis[inside] = _bspline_derivs(x[inside], all_knots, order, 0)[0]
+
+    # Out-of-boundary: order-`degree` Taylor expansion at the nearest boundary
+    # knot, exactly as splines::bs does for predict() beyond the data range.
+    from math import factorial
+
+    for outside, pivot in ((x < b0, b0), (x > b1, b1)):
+        if not np.any(outside):
+            continue
+        derivs = _bspline_derivs(np.array([pivot]), all_knots, order, degree)
+        tt = np.vstack([d[0] for d in derivs])  # (degree+1, n_basis)
+        dx = x[outside] - pivot
+        powers = np.vstack([dx ** r for r in range(degree + 1)]).T
+        fact = np.array([factorial(r) for r in range(degree + 1)], dtype=np.float64)
+        basis[outside] = powers @ (tt / fact[:, None])
+
+    basis = basis[:, 1:]  # intercept=FALSE: drop the first B-spline column
+    names = [f"bs({name}, df={df})[{j}]" for j in range(basis.shape[1])]
+    return basis, names
+
+
+def s(x, df=None, *, degree=3, knots=None, boundary_knots=None, name="x"):
+    """R ``stm``'s smooth prevalence term ``s(x)`` -- a thin wrapper over
+    :func:`bs` with ``stm``'s default degrees of freedom.
+
+    ``stm::s`` uses ``df = min(10, n_unique(x) - 1)`` when ``df`` is not given, so
+    a low-cardinality covariate (say an integer ``depth`` with only a handful of
+    distinct values) gets a smaller, well-conditioned basis while a continuous
+    covariate gets the full ``df=10``. This is the term to reach for when porting
+    an R ``stm`` ``prevalence = ~ s(day)`` design; on the data range the columns
+    are identical to R's to machine precision (R's polynomial extrapolation off the
+    range is reproduced to a looser tolerance).
+
+    Returns ``(basis, names)`` -- see :func:`bs`.
+    """
+    x = np.asarray(x, dtype=np.float64).ravel()
+    if df is None:
+        df = min(10, len(np.unique(x)) - 1)
+    basis, _ = bs(x, df=df, degree=degree, knots=knots,
+                  boundary_knots=boundary_knots, name=name)
+    names = [f"s({name}, df={df})[{j}]" for j in range(basis.shape[1])]
+    return basis, names
+
+
 def interaction(a, b, name="interaction"):
     """Interaction columns between two covariate blocks (all pairwise products of
     their columns) — for terms like R ``stm``'s ``~ treatment * party``.
@@ -2209,13 +2426,141 @@ from .validation import (  # noqa: E402,F401
 )
 
 
+# ---------------------------------------------------------------------------
+# STM: thin Python wrapper adding the fit-time formula= / data= prevalence path
+# ---------------------------------------------------------------------------
+from ._topica import STM as _STM  # noqa: E402
+
+
+class STM(_STM):
+    """Structural Topic Model — a correlated topic model whose per-document topic
+    prior mean is a regression on document covariates (prevalence).
+
+    This wraps the compiled core to add an R-``stm``-style **formula** interface at
+    fit time. Fit one of two ways:
+
+    - **Raw design** — ``STM(K).fit(corpus, prevalence=X)`` with a covariate matrix
+      you built yourself (via :func:`topica.design.one_hot`, :func:`bs`, :func:`s`,
+      :func:`spline`, ...). This is the compiled-core path.
+    - **Formula** — ``STM(K).fit(corpus, formula="~ rating + s(day)", data=meta)``
+      with an R-style formula and a per-document DataFrame. The prevalence design is
+      built for you via :func:`topica.design.design_matrix`, and a continuous
+      covariate wrapped in ``s(...)`` gets R ``stm``'s smooth B-spline basis
+      (:func:`s`), so ``topica.STM`` is a fair full-strength comparator to R ``stm``.
+      This mirrors R's ``stm(documents, vocab, prevalence = ~ rating + s(day),
+      data = meta)``. Pass the **identical** ``formula`` and ``data`` to
+      :func:`estimate_effect` / :func:`predicted_prevalence`; they rebuild the same
+      design (the spline knots are a deterministic function of ``data``, so the same
+      frame reproduces the fitted basis exactly). A different formula or frame there
+      answers a different question than the model, so keep them in step.
+
+    **Continuous prevalence covariates enter linearly unless you wrap them.** A bare
+    ``~ depth`` term is a *weaker* model than R ``stm``'s default, which smooths
+    continuous terms. Use ``s(depth)`` (R ``stm``'s ``s()``, B-spline, df=min(10,
+    n_unique-1)) for parity, or ``spline(depth, df=k)`` for topica's restricted
+    natural cubic spline.
+
+    All other constructor and fit arguments are exactly the compiled core's; see
+    :meth:`fit`.
+    """
+
+    def fit(
+        self,
+        corpus,
+        prevalence=None,
+        *,
+        formula=None,
+        data=None,
+        prevalence_names=None,
+        content=None,
+        content_names=None,
+        content_time=None,
+        content_smooth=1.0,
+        content_prior_var=0.5,
+        content_prior="l2",
+        iters=500,
+        convergence_tol=1e-5,
+        gamma_prior="pooled",
+        gamma_enet=1.0,
+        beta_init=None,
+        em_tol=None,
+        covariates=None,
+        keep_eta_cov=True,
+        num_threads=None,
+        spectral_projection_threshold=10000,
+        progress=None,
+    ):
+        """Fit the model. Same arguments as the compiled core (``prevalence``,
+        ``content``, ``iters``, ``gamma_prior``, ... — see the type stub or
+        ``help``) plus an R-``stm``-style formula path:
+
+        corpus : Corpus or list[list[str]]
+            The documents. (The compiled core names this argument ``data``; here it
+            is ``corpus`` so ``data=`` can carry the metadata frame, matching R
+            ``stm`` and :func:`estimate_effect`. Pass it positionally as usual.)
+        formula : str, optional
+            R-style prevalence formula, e.g. ``"~ rating + s(day)"``. Built into the
+            prevalence design via :func:`topica.design.design_matrix` (needs the
+            optional ``topica[formula]`` extra). Continuous covariates wrapped in
+            ``s(...)`` get R ``stm``'s smooth B-spline; bare terms stay linear.
+            Mutually exclusive with ``prevalence=`` / ``covariates=``.
+        data : pandas.DataFrame, optional
+            One row per document, holding the columns ``formula`` references.
+            Required when ``formula`` is given, ignored otherwise.
+        """
+        if formula is not None:
+            if prevalence is not None or covariates is not None:
+                raise ValueError(
+                    "pass either formula= or prevalence=/covariates=, not both."
+                )
+            if data is None:
+                raise ValueError(
+                    "formula= requires data= (a per-document DataFrame with the "
+                    "columns the formula references)."
+                )
+            from .formulas import design_matrix
+
+            # No knot capture needed at fit: fit does not predict, and the knots
+            # are a deterministic function of `data`, so estimate_effect /
+            # predicted_prevalence reproduce this exact basis from the same frame.
+            prevalence, names = design_matrix(formula, data)
+            if prevalence_names is None:
+                prevalence_names = names
+        return _STM.fit(
+            self,
+            corpus,
+            prevalence,
+            prevalence_names=prevalence_names,
+            content=content,
+            content_names=content_names,
+            content_time=content_time,
+            content_smooth=content_smooth,
+            content_prior_var=content_prior_var,
+            content_prior=content_prior,
+            iters=iters,
+            convergence_tol=convergence_tol,
+            gamma_prior=gamma_prior,
+            gamma_enet=gamma_enet,
+            beta_init=beta_init,
+            em_tol=em_tol,
+            covariates=covariates,
+            keep_eta_cov=keep_eta_cov,
+            num_threads=num_threads,
+            spectral_projection_threshold=spectral_projection_threshold,
+            progress=progress,
+        )
+
+
 __all__ = [
+    "STM",
     "estimate_effect",
     "TopicEffect",
     "predicted_prevalence",
     "PredictedPrevalence",
     "posterior_theta_samples",
     "spline",
+    "bs",
+    "s",
     "interaction",
     "align_corpus",
     "transform",

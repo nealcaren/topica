@@ -6,6 +6,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Added
+
+- **Smooth/spline prevalence terms for STM — parity with R `stm`** (#867). `topica.STM`
+  now takes an R-style formula at fit time — `STM(K).fit(docs, formula="~ party + s(day)",
+  data=meta)` — mirroring R `stm(prevalence = ~ ..., data = ...)`. Continuous covariates
+  wrapped in `s(...)` get R `stm`'s smooth B-spline (`df = min(10, n_unique - 1)`), and the
+  new `topica.design.bs` / `topica.design.s` helpers are **column-identical to R
+  `splines::bs` / `stm:::s`** to machine precision, including R's out-of-range Taylor
+  extrapolation (verified in `parity/stm_bspline_867.py`). The `s(...)` and `bs(...)` terms
+  also work inside any `design_matrix` formula, with the spline knots captured at fit and
+  replayed on the `estimate_effect` / `predicted_prevalence` grid. A bare continuous term
+  still enters linearly, so wrap it (`s(day)`) to make `topica.STM` a fair full-strength
+  baseline against R `stm`.
+
 ## [0.57.0] - 2026-09-03
 
 ### Added

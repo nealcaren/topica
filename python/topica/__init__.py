@@ -69,7 +69,6 @@ from ._topica import (
     LabeledLDA,
     SAGE,
     CTM,
-    STM,
     STS,
     HDP,
     DTM,
@@ -230,7 +229,9 @@ from .art import AuthorRecipientTopic, ART  # noqa: E402  (pure-Python ART wrapp
 # PLTM is the paper's acronym for the Polylingual Topic Model.
 PLTM = PolylingualLDA  # noqa: E402
 from . import stm  # noqa: E402  (stm imports names defined above)
-from .stm import align_corpus, spline, interaction, topic_correlation_ci, TopicCorrelationCI  # noqa: E402  (general covariate-design helpers)
+# STM is a thin Python wrapper over the compiled core that adds the fit-time
+# formula=/data= prevalence path (R stm-style s() smooth terms); see stm.STM.
+from .stm import STM, align_corpus, spline, bs, s, interaction, topic_correlation_ci, TopicCorrelationCI  # noqa: E402  (general covariate-design helpers)
 from .embedding_regression import (  # noqa: E402  (conText embedding regression: covariate effects on meaning)
     embedding_regression,
     EmbeddingRegression,

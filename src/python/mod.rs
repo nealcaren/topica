@@ -8265,7 +8265,11 @@ impl CTM {
 /// chooses the covariance approximation (``"laplace"`` full, or ``"diagonal"``
 /// for a faster mean-field one at high K), and ``fit(keep_eta_cov=False)`` trades
 /// stored covariance for far less memory at large K.
-#[pyclass(module = "topica")]
+// `subclass` lets the thin Python `topica.STM` wrapper (python/topica/stm.py)
+// subclass this core to add the fit-time `formula=`/`data=` prevalence path
+// (R-style `~ s(day)` smooth terms). `fit` returns `slf.into()`, so the wrapper
+// instance -- with its captured knot context -- is what comes back.
+#[pyclass(module = "topica", subclass)]
 pub struct STM {
     num_topics: usize,
     sigma_shrink: f64,

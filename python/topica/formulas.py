@@ -37,7 +37,7 @@ class _KnotCapturingContext:
 
     def training_context(self) -> dict:
         """Return a formulaic ``context`` dict that records knots during training."""
-        from .stm import spline as _spline
+        from .stm import _bs_knots, bs as _bs, s as _s, spline as _spline
 
         ctx = self
 
@@ -53,11 +53,30 @@ class _KnotCapturingContext:
             ctx._call_order += 1
             return basis
 
-        return {"spline": spline}
+        def bs(x, df=10, degree=3, knots=None, boundary_knots=None):
+            interior, boundary = _bs_knots(x, df, degree, knots, boundary_knots)
+            ctx._knots_by_order[ctx._call_order] = ("bs", degree, interior, boundary)
+            ctx._call_order += 1
+            basis, _ = _bs(x, df=df, degree=degree, knots=knots,
+                           boundary_knots=boundary_knots)
+            return basis
+
+        def s(x, df=None, degree=3, knots=None, boundary_knots=None):
+            # R stm::s default df = min(10, n_unique - 1); capture the resolved df.
+            xd = np.asarray(x, dtype=np.float64)
+            rdf = min(10, len(np.unique(xd)) - 1) if df is None else df
+            interior, boundary = _bs_knots(xd, rdf, degree, knots, boundary_knots)
+            ctx._knots_by_order[ctx._call_order] = ("bs", degree, interior, boundary)
+            ctx._call_order += 1
+            basis, _ = _s(x, df=df, degree=degree, knots=knots,
+                          boundary_knots=boundary_knots)
+            return basis
+
+        return {"spline": spline, "bs": bs, "s": s}
 
     def prediction_context(self) -> dict:
         """Return a formulaic ``context`` dict that re-uses training knots in order."""
-        from .stm import spline as _spline
+        from .stm import bs as _bs, s as _s, spline as _spline
 
         ctx = self
         call_order = [0]
@@ -65,23 +84,59 @@ class _KnotCapturingContext:
         def spline(x, df=4, knots=None):
             key = call_order[0]
             call_order[0] += 1
-            frozen_knots = ctx._knots_by_order.get(key, knots)
-            basis, _ = _spline(x, df=df, knots=frozen_knots)
+            frozen = ctx._knots_by_order.get(key, knots)
+            basis, _ = _spline(x, df=df, knots=frozen)
             return basis
 
-        return {"spline": spline}
+        def bs(x, df=10, degree=3, knots=None, boundary_knots=None):
+            key = call_order[0]
+            call_order[0] += 1
+            frozen = ctx._knots_by_order.get(key)
+            if isinstance(frozen, tuple) and frozen and frozen[0] == "bs":
+                _, degree, interior, boundary = frozen
+                basis, _ = _bs(x, degree=degree, knots=interior,
+                               boundary_knots=boundary)
+            else:
+                basis, _ = _bs(x, df=df, degree=degree, knots=knots,
+                               boundary_knots=boundary_knots)
+            return basis
+
+        def s(x, df=None, degree=3, knots=None, boundary_knots=None):
+            key = call_order[0]
+            call_order[0] += 1
+            frozen = ctx._knots_by_order.get(key)
+            if isinstance(frozen, tuple) and frozen and frozen[0] == "bs":
+                _, degree, interior, boundary = frozen
+                # Re-apply the training basis exactly (df/knots come from training).
+                basis, _ = _bs(x, degree=degree, knots=interior,
+                               boundary_knots=boundary)
+            else:
+                basis, _ = _s(x, df=df, degree=degree, knots=knots,
+                              boundary_knots=boundary_knots)
+            return basis
+
+        return {"spline": spline, "bs": bs, "s": s}
 
 
 def _formula_context():
     """Symbols available inside a formula beyond the data columns."""
-    from .stm import spline as _spline
+    from .stm import bs as _bs, s as _s, spline as _spline
 
     def spline(x, df=4, knots=None):
         # formulaic names the columns spline(col, df=k)[0..]; we return just the
         # basis (drop the names tuple from topica.design.spline).
         return _spline(x, df=df, knots=knots)[0]
 
-    return {"spline": spline}
+    def bs(x, df=10, degree=3, knots=None, boundary_knots=None):
+        return _bs(x, df=df, degree=degree, knots=knots,
+                   boundary_knots=boundary_knots)[0]
+
+    def s(x, df=None, degree=3, knots=None, boundary_knots=None):
+        # R stm's smooth term: bs(x, df=min(10, n_unique-1)).
+        return _s(x, df=df, degree=degree, knots=knots,
+                  boundary_knots=boundary_knots)[0]
+
+    return {"spline": spline, "bs": bs, "s": s}
 
 
 def design_matrix(formula, data, _knot_ctx=None):
