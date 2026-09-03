@@ -6,8 +6,23 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.57.0] - 2026-09-03
+
 ### Added
 
+- **ThreadTM blend-weight uncertainty and fair-scale coupling contrasts** (#863). The
+  three shares of each node's prior mean are now readable as fitted attributes:
+  `blend_anchor` (`= 1 - alpha - beta`) joins `blend_alpha`/`blend_beta`, and each carries
+  a thread-root-clustered sandwich SE (`blend_alpha_se`, `blend_beta_se`,
+  `blend_anchor_se`). `blend_weights()` returns all six as a dict, turning
+  `coupling="parent"|"root"|"blend"` into a publication-grade "which structure fits which
+  discourse" readout.
+- **ThreadTM seed-word API parity with SeededLDA** (#854). ThreadTM's user-supervision
+  surface now matches the other keyword models: `seed_weight` (1.0) becomes `weight`
+  (0.01) on SeededLDA's `[0, 1]` scale with `× 100` pseudocount scaling, so the same
+  number means the same seeding strength across models. Default behaviour is unchanged.
+  ThreadTM is pre-1.0 and experimental, so these are hard renames with no back-compat
+  shims.
 - **`reply_completion` gains `keyatm` and `rtm` off-the-shelf baselines** (#860). The
   two tools a reviewer reaches for after LDA and STM now fit on the SAME reduced corpus
   (identical vocabulary, `num_topics`, `min_count`, `seed`) and score through the
