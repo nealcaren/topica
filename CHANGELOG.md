@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.58.0] - 2026-09-03
+
 ### Added
 
 - **Smooth/spline prevalence terms for STM — parity with R `stm`** (#867). `topica.STM`
