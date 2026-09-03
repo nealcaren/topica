@@ -9,13 +9,15 @@ package root (``topica.design.design_matrix``, ``topica.design.spline``, ``topic
 from __future__ import annotations
 
 from .formulas import design_matrix, design_matrix_predict
-from .stm import spline, interaction, align_corpus
+from .stm import spline, bs, s, interaction, align_corpus
 
 __all__ = [
     "one_hot",
     "design_matrix",
     "design_matrix_predict",
     "spline",
+    "bs",
+    "s",
     "interaction",
     "align_corpus",
 ]

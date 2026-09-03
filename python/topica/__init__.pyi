@@ -10,7 +10,6 @@ from ._topica import (
     LabeledLDA as LabeledLDA,
     SAGE as SAGE,
     CTM as CTM,
-    STM as STM,
     HDP as HDP,
     DTM as DTM,
     SupervisedLDA as SupervisedLDA,
@@ -30,6 +29,7 @@ from ._topica import (
     DEFAULT_TOKEN_REGEX as DEFAULT_TOKEN_REGEX,
     __version__ as __version__,
 )
+from .stm import STM as STM  # Python wrapper (adds fit-time formula=/data=)
 from . import content as content
 from . import stm as stm
 from . import keyatm as keyatm

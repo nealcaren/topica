@@ -18,6 +18,37 @@ model = topica.STM(num_topics=20, seed=1)
 model.fit(docs, prevalence=X, prevalence_names=names)
 ```
 
+You can also pass an R-style formula and a metadata frame, exactly as in R
+`stm(documents, vocab, prevalence = ~ ..., data = meta)`:
+
+```python
+model = topica.STM(num_topics=20, seed=1).fit(
+    docs, formula="~ party + s(day)", data=meta)
+```
+
+### Smooth (spline) prevalence terms — parity with R `stm`
+
+A **continuous** prevalence covariate enters **linearly** unless you wrap it. A
+bare `~ day` fits one slope; R `stm` instead smooths continuous terms with a
+B-spline by default, so a linear-only design is a *weaker* — and unfair —
+full-strength STM baseline (issue #867). Wrap continuous covariates to match:
+
+| R `stm`                    | topica                                        |
+|----------------------------|-----------------------------------------------|
+| `~ s(day)`                 | `~ s(day)` — B-spline, `df=min(10, n_unique-1)`, **column-identical to `stm:::s`** |
+| `~ bs(day, df=8)`          | `~ bs(day, df=8)` — `splines::bs`, any `df`   |
+| (natural cubic instead)    | `~ spline(day, df=4)` — topica's restricted cubic spline |
+
+`s(...)` is the drop-in for R `stm`'s smooth: it puts R's exact `splines::bs`
+basis on the covariate (verified column-identical to machine precision on the data
+range, and R's polynomial extrapolation off the range is reproduced to a looser
+tolerance; see `parity/stm_bspline_867.py`). The same terms
+work as standalone design helpers — `topica.design.s`, `topica.design.bs`,
+`topica.design.spline` — when you build the matrix yourself. Pass the **same**
+`formula=` and `data=` to `fit`, `estimate_effect`, and `predicted_prevalence`
+so all three share one basis (the spline knots are captured at fit and replayed
+on the effects/prediction grid).
+
 ## Estimate effects with well-calibrated uncertainty
 
 A naive regression of point topic proportions on covariates treats θ as if it
@@ -44,9 +75,9 @@ for e in effects:
           f"z={d[names[0]]['z']:+.2f}")
 ```
 
-For non-linear time trends and interactions, build the design matrix with
-`stm.spline` and `stm.interaction`, the same `~ s(year)` and `~ a*b` you'd write
-in R.
+For non-linear time trends and interactions, use the smooth terms above
+(`s`/`bs`/`spline`) and `stm.interaction`, the same `~ s(year)` and `~ a*b`
+you'd write in R.
 
 `topica.effects.standard_errors` wraps this in one call: it detects the model family,
 draws the right posterior for you, and returns the same effects. It also reaches
