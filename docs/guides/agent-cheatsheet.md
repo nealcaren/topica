@@ -149,7 +149,7 @@ TopicalNGrams(num_topics, *, alpha_sum=50.0, beta=0.01, gamma=0.01, delta1=1.0, 
 
 STM(num_topics, *, sigma_shrink=0.0, seed=13, init='spectral', variational='laplace')
     Structural topic model: relate topic prevalence and content to covariates.
-    .fit(corpus, prevalence=None, *, formula=None, data=None, prevalence_names=None, content=None, content_names=None, content_time=None, content_smooth=1.0, content_prior_var=0.5, content_prior='l2', iters=500, convergence_tol=1e-05, gamma_prior='pooled', gamma_enet=1.0, beta_init=None, em_tol=None, covariates=None, keep_eta_cov=True, num_threads=None, spectral_projection_threshold=10000, progress=None)
+    .fit(corpus, prevalence=None, *, formula=None, data=None, prevalence_names=None, content=None, content_names=None, content_time=None, content_smooth=1.0, content_prior_var=0.5, content_prior='l2', iters=500, convergence_tol=1e-05, gamma_prior='pooled', gamma_enet=1.0, beta_init=None, em_tol=None, covariates=None, keep_eta_cov=True, num_threads=None, spectral_projection_threshold=10000, restarts=1, progress=None)
 
 STS(num_topics, *, seed=13, init='spectral')
     Structural topic-and-sentiment model over document metadata.

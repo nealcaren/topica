@@ -2403,6 +2403,92 @@ def transform(model, docs, *, prevalence=None, data=None, formula=None, X=None):
     return model.transform(docs)
 
 
+def beta_from_reference(beta, ref_vocab, target, *, floor=1e-8):
+    """Align an externally-fit topic-word matrix to topica's vocabulary, ready to
+    seed :meth:`STM.fit` via ``beta_init=`` for exact replication of another fit.
+
+    topica's spectral init and R ``stm``'s converge to *different, equally valid*
+    topic solutions (R's default anchor recovery is a non-converging, machine-order
+    dependent iteration — not a portably reproducible target; see issue #871). To
+    reproduce a *specific* R ``stm`` fit's basin, take its topic-word matrix and
+    inject it as the initialization:
+
+    .. code-block:: r
+
+        # in R, on the same prepped documents:
+        fit  <- stm(documents, vocab, K = 20, prevalence = ~ ..., data = meta)
+        beta <- exp(fit$beta$logbeta[[1]])          # K x V, over `vocab`
+        write.csv(beta, "beta.csv"); writeLines(vocab, "vocab.txt")
+
+    .. code-block:: python
+
+        beta = np.loadtxt("beta.csv", delimiter=",", skiprows=1)
+        ref_vocab = open("vocab.txt").read().split()
+        binit = topica.stm.beta_from_reference(beta, ref_vocab, corpus)
+        m = topica.STM(20).fit(corpus, prevalence=X, beta_init=binit)  # lands in R's basin
+
+    Parameters
+    ----------
+    beta : array-like, shape (K, V_ref) or (V_ref, K)
+        The reference topic-word matrix (rows = topics). Transposed input is
+        detected and fixed from ``ref_vocab``'s length.
+    ref_vocab : sequence[str]
+        The reference model's vocabulary, in the column order of ``beta``.
+    target : Corpus, fitted model with ``.vocabulary``, or sequence[str]
+        Supplies topica's target vocabulary and its order.
+    floor : float, default 1e-8
+        Probability floor for target words absent from ``ref_vocab`` (rows are
+        renormalized after alignment).
+
+    Returns
+    -------
+    numpy.ndarray, shape (K, V_target)
+        A row-normalized topic-word matrix over topica's vocabulary, for
+        ``STM.fit(beta_init=...)``. Emits a warning if reference/target vocabulary
+        overlap is low (the injected init would be mostly floor).
+    """
+    import warnings as _warnings
+
+    beta = np.asarray(beta, dtype=np.float64)
+    ref_vocab = list(ref_vocab)
+    if beta.ndim != 2:
+        raise ValueError("beta must be 2-D (K x V_ref)")
+    if beta.shape[1] != len(ref_vocab):
+        if beta.shape[0] == len(ref_vocab):
+            beta = beta.T  # given as (V_ref, K); topics must be rows
+        else:
+            raise ValueError(
+                f"beta has shape {beta.shape} but ref_vocab has {len(ref_vocab)} "
+                "words; one axis must match ref_vocab."
+            )
+    k = beta.shape[0]
+
+    if hasattr(target, "vocabulary"):
+        target_vocab = list(target.vocabulary)
+    else:
+        target_vocab = list(target)
+    ref_index = {w: i for i, w in enumerate(ref_vocab)}
+
+    out = np.full((k, len(target_vocab)), floor, dtype=np.float64)
+    hit = 0
+    for j, w in enumerate(target_vocab):
+        i = ref_index.get(w)
+        if i is not None:
+            col = beta[:, i]
+            out[:, j] = np.where(col > 0, col, floor)
+            hit += 1
+    coverage = hit / max(len(target_vocab), 1)
+    if coverage < 0.5:
+        _warnings.warn(
+            f"beta_from_reference: only {coverage:.0%} of topica's vocabulary is "
+            "present in ref_vocab; the injected init is mostly floor. Check that "
+            "both were built from the same prepped documents.",
+            stacklevel=2,
+        )
+    out /= out.sum(axis=1, keepdims=True)
+    return np.ascontiguousarray(out)
+
+
 # ---------------------------------------------------------------------------
 # Back-compatibility: the general post-hoc diagnostics were moved to
 # ``topica.evaluate.diagnostics`` (they apply to any model, not just STM) and are
@@ -2464,6 +2550,28 @@ class STM(_STM):
     :meth:`fit`.
     """
 
+    def __init__(
+        self,
+        num_topics,
+        *,
+        sigma_shrink=0.0,
+        seed=13,
+        init="spectral",
+        variational="laplace",
+    ):
+        # The compiled ``_STM`` (a PyO3 class) is constructed in ``__new__`` from
+        # these same arguments; ``__init__`` only records them so ``fit(restarts=N)``
+        # can spawn fresh, independently-seeded models (the core fixes seed/init at
+        # construction). Do NOT forward to ``super().__init__`` — object.__init__
+        # rejects extra args once __new__ has already built the instance.
+        self._ctor_args = dict(
+            num_topics=num_topics,
+            sigma_shrink=sigma_shrink,
+            seed=seed,
+            init=init,
+            variational=variational,
+        )
+
     def fit(
         self,
         corpus,
@@ -2488,6 +2596,7 @@ class STM(_STM):
         keep_eta_cov=True,
         num_threads=None,
         spectral_projection_threshold=10000,
+        restarts=1,
         progress=None,
     ):
         """Fit the model. Same arguments as the compiled core (``prevalence``,
@@ -2507,6 +2616,17 @@ class STM(_STM):
         data : pandas.DataFrame, optional
             One row per document, holding the columns ``formula`` references.
             Required when ``formula`` is given, ignored otherwise.
+        restarts : int, default 1
+            Number of independently-seeded EM restarts. With ``restarts=1`` (the
+            default) a single fit runs from the configured init. With ``restarts=N``
+            the model is fit ``N`` times — restart 0 from the configured init
+            (spectral by default), the rest from fresh random seeds — and the fit
+            with the best variational bound is returned. At large vocabularies the
+            logistic-normal EM has catastrophic local optima that any single init
+            can land in; those carry the worst bound, so best-of-N is a robust,
+            deterministic guard (#871). ``restarts>1`` returns the best model, so
+            capture the return value (``model = STM(K).fit(corpus, restarts=8)``);
+            it is incompatible with a fixed ``beta_init``.
         """
         if formula is not None:
             if prevalence is not None or covariates is not None:
@@ -2526,10 +2646,8 @@ class STM(_STM):
             prevalence, names = design_matrix(formula, data)
             if prevalence_names is None:
                 prevalence_names = names
-        return _STM.fit(
-            self,
-            corpus,
-            prevalence,
+
+        fit_kwargs = dict(
             prevalence_names=prevalence_names,
             content=content,
             content_names=content_names,
@@ -2547,8 +2665,38 @@ class STM(_STM):
             keep_eta_cov=keep_eta_cov,
             num_threads=num_threads,
             spectral_projection_threshold=spectral_projection_threshold,
-            progress=progress,
         )
+
+        if restarts is not None and int(restarts) > 1:
+            # Multi-start EM: the logistic-normal EM has catastrophic local optima
+            # at large vocabularies that ANY single init (spectral or random) can
+            # fall into; those bad basins carry the worst variational bound, so
+            # keeping the best-bound restart reliably avoids them (#871). Restart 0
+            # uses the configured init (spectral by default); the rest use fresh
+            # random seeds. Returns the best-bound model — use the return value.
+            if beta_init is not None:
+                raise ValueError(
+                    "restarts>1 is for the default spectral/random init path; a "
+                    "fixed beta_init leaves every restart identical. Drop beta_init "
+                    "or use restarts=1."
+                )
+            base = getattr(self, "_ctor_args", None) or dict(
+                num_topics=self.num_topics, seed=13, init="spectral",
+            )
+            best, best_bound = None, float("-inf")
+            for i in range(int(restarts)):
+                args = dict(base)
+                args["seed"] = base.get("seed", 13) + i
+                if i > 0:
+                    args["init"] = "random"
+                cand = type(self)(**args)
+                _STM.fit(cand, corpus, prevalence, progress=progress, **fit_kwargs)
+                b = float(cand.bound)
+                if b > best_bound:
+                    best_bound, best = b, cand
+            return best
+
+        return _STM.fit(self, corpus, prevalence, progress=progress, **fit_kwargs)
 
 
 __all__ = [
@@ -2564,6 +2712,7 @@ __all__ = [
     "interaction",
     "align_corpus",
     "transform",
+    "beta_from_reference",
     "frex",
     "label_topics",
     "topic_correlation",
