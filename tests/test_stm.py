@@ -635,6 +635,71 @@ def test_stm_beta_init_warm_start():
     np.testing.assert_allclose(warm.topic_word, default.topic_word, atol=1e-9)
 
 
+def test_stm_restarts_returns_best_bound():
+    """STM.fit(restarts=N) fits N seeded inits and returns the best-bound model
+    (the #871 multi-start reliability guard against catastrophic local optima)."""
+    import topica
+    rng = np.random.default_rng(0)
+    docs, x = _make_synthetic_corpus(rng, n_per_class=60)
+    X = x.reshape(-1, 1)
+    single = topica.STM(num_topics=2, seed=1).fit(docs, prevalence=X, iters=30)
+    multi = topica.STM(num_topics=2, seed=1).fit(docs, prevalence=X, iters=30, restarts=4)
+    assert isinstance(multi, topica.STM)
+    assert np.asarray(multi.topic_word).shape == np.asarray(single.topic_word).shape
+    # restart 0 reuses the single fit's seed+init, so best-of-N is never worse.
+    assert float(multi.bound) >= float(single.bound) - 1e-6
+
+
+def test_stm_restarts_rejects_beta_init():
+    """A fixed beta_init makes every restart identical, so it is rejected."""
+    import topica
+    rng = np.random.default_rng(0)
+    docs, x = _make_synthetic_corpus(rng, n_per_class=40)
+    X = x.reshape(-1, 1)
+    b = topica.STM(num_topics=2, seed=1).fit(docs, prevalence=X, iters=0).topic_word
+    with pytest.raises(ValueError, match="restarts"):
+        topica.STM(num_topics=2, seed=1).fit(docs, prevalence=X, restarts=3, beta_init=b)
+
+
+def test_beta_from_reference_aligns_normalizes_and_seeds():
+    """beta_from_reference maps an external topic-word matrix onto topica's
+    vocabulary (handling permutation + transpose) for beta_init replication (#871)."""
+    import topica
+    rng = np.random.default_rng(0)
+    docs, x = _make_synthetic_corpus(rng, n_per_class=40)
+    corpus = topica.Corpus.from_documents(docs)
+    vocab = list(corpus.vocabulary)
+    V = len(vocab)
+    ref_vocab = vocab[::-1]  # full permutation: every target word present
+    beta = rng.random((2, V))
+    beta /= beta.sum(axis=1, keepdims=True)
+    out = topica.stm.beta_from_reference(beta, ref_vocab, corpus)
+    assert out.shape == (2, V)
+    np.testing.assert_allclose(out.sum(axis=1), 1.0, atol=1e-9)
+    # a target word's column equals the reference column for that same word.
+    i = ref_vocab.index(vocab[0])
+    np.testing.assert_allclose(out[:, 0], beta[:, i], atol=1e-12)
+    # transposed (V x K) input is detected and fixed.
+    np.testing.assert_allclose(
+        topica.stm.beta_from_reference(beta.T, ref_vocab, corpus), out, atol=1e-12
+    )
+    # usable directly as a warm start.
+    m = topica.STM(num_topics=2, seed=1).fit(docs, prevalence=x.reshape(-1, 1),
+                                             iters=5, beta_init=out)
+    assert np.asarray(m.topic_word).shape == (2, V)
+
+
+def test_beta_from_reference_warns_on_low_overlap():
+    import topica
+    rng = np.random.default_rng(0)
+    docs, _ = _make_synthetic_corpus(rng, n_per_class=30)
+    corpus = topica.Corpus.from_documents(docs)
+    vocab = list(corpus.vocabulary)
+    beta = rng.random((2, 2))
+    with pytest.warns(UserWarning, match="vocabulary"):
+        topica.stm.beta_from_reference(beta, vocab[:2], corpus)
+
+
 def test_content_kappa_reconstructs_content_beta():
     """SAGE kappa decomposition (issue #237): m + kappa_topic + kappa_cov +
     kappa_interaction, softmax over words, reproduces the per-group topic-word."""

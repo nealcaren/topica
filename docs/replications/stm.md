@@ -80,19 +80,44 @@ that the two optimizers split differently, never a systematic offset — the
 expected behavior of a non-convex model, where there is no single STM fit to
 reproduce.
 
-### Spectral initialization reproduces R's recovery exactly
+### Initialization: what is and isn't a reproducible target
 
 The cosines above are EM optima of a non-convex objective, so they differ across
-optimizers. The *initialization* underneath them is the deterministic Arora
-anchor-word recovery, and topica reproduces R `stm`'s `recoverL2()` step exactly:
-on identical documents the spectral topic-word matrix matches R's reference
-recovery at a cosine of **1.0** (`parity/spectral_recover_stm.py`). (Earlier
-topica's recovery used a fixed, too-large exponentiated-gradient step that diverged
-to vertices rather than the constrained optimum; the step is now scale-adaptive and
-runs to convergence — issue #234.) For a guaranteed "replicate the original" mode,
-`STM.fit(..., beta_init=)` / `CTM.fit(..., beta_init=)` inject an externally
-computed base β (for example R `stm`'s exact spectral β), so a fit can start from
-R's initialization and reproduce that run.
+optimizers *and* across initializations. The initialization underneath them is the
+Arora anchor-word recovery. topica's recovery runs a scale-adaptive exponentiated
+gradient to the **constrained optimum**, and on identical documents it matches R
+`stm`'s *reference* recovery (`recoverL2(recoverEG = FALSE)`, the quadratic-program
+solve) at a cosine of **1.0** (`parity/spectral_recover_stm.py`, issue #234).
+
+R `stm`'s **default** recovery is a different object: `recoverL2(recoverEG = TRUE)`,
+a fixed-step exponentiated gradient that runs a set number of iterations *without
+converging*. Its output is sensitive to floating-point order (a 1e-9 perturbation of
+the co-occurrence matrix moves it substantially), so it is **not a portably
+reproducible target** — R, and any reimplementation, land in different basins from
+identical inputs (issue #871). topica's converged recovery and R's default are two
+different, equally valid starting points; neither reproduces the other bit-for-bit.
+
+Two practical consequences:
+
+- **Reliability — use restarts.** At large vocabularies the logistic-normal EM has
+  catastrophic local optima (much worse held-out completion, and the *worst*
+  variational bound) that any single initialization — spectral or random — can fall
+  into. `STM.fit(..., restarts=N)` fits `N` independently-seeded starts and returns
+  the one with the best bound, a deterministic guard that avoids those basins.
+
+  ```python
+  model = topica.STM(20).fit(corpus, prevalence=X, restarts=8)  # keeps best-bound fit
+  ```
+
+- **Exact replication — inject the reference β.** To reproduce a *specific* R `stm`
+  run, start EM from that run's topic-word matrix via `beta_init=`.
+  `topica.stm.beta_from_reference` aligns R's `exp(fit$beta$logbeta[[1]])` to
+  topica's vocabulary:
+
+  ```python
+  binit = topica.stm.beta_from_reference(r_beta, r_vocab, corpus)
+  model = topica.STM(20).fit(corpus, prevalence=X, beta_init=binit)  # lands in R's basin
+  ```
 
 What replicates stably across optima is the substantive conclusion. On the
 2,000-document Poliblog fixture at K = 20, the committed gold now checks the whole
