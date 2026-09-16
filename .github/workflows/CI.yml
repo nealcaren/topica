@@ -326,6 +326,11 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
+          # Install rustfmt/clippy upfront (matches rust-toolchain.toml and the lint job).
+          # Without this, `maturin sdist` -> `cargo metadata` triggers a LAZY rustfmt install
+          # that conflicts with the existing cargo-fmt binary and fails the release publish
+          # (#885): "detected conflict: 'bin/cargo-fmt'".
+          components: rustfmt, clippy
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v6
