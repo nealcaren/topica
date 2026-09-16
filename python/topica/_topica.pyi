@@ -3229,10 +3229,14 @@ class ThreadTM:
         self, *, n_samples: int = 400, seed: int = 13
     ) -> numpy.typing.NDArray[numpy.float64]:
         """D×K posterior-predictive proportions ``E[softmax([η, 0])]``, a Monte-Carlo average of
-        ``n_samples`` η draws from ``N(doc_eta, diag(doc_topic_var))``. Unlike the overconfident
+        ``n_samples`` η draws from the Gaussian posterior ``N(doc_eta, ν)``. Unlike the overconfident
         plug-in ``doc_topic`` it integrates over ν, hedging thin leaves instead of overcommitting,
         which puts it on the same estimator footing as a sample-averaged model like LDA for a fair
-        held-out comparison (#838). Deterministic given ``seed``; draws use only the diagonal of ν."""
+        held-out comparison (#838). Deterministic given ``seed``. Draws use the FULL Laplace
+        covariance ν via its Cholesky factor when available (issue #872): diagonal-only sampling
+        ignores the softmax-induced negative topic correlations, over-dispersing the free topics and
+        biasing the fixed reference topic. Falls back to the diagonal for documents with no full ν
+        (empty docs, or models saved before the full ν was retained)."""
         ...
     @property
     def doc_eta(self) -> numpy.typing.NDArray[numpy.float64]:
@@ -3243,6 +3247,12 @@ class ThreadTM:
     def doc_topic_var(self) -> numpy.typing.NDArray[numpy.float64]:
         """D×(K-1) posterior variance ν of η (measurement-error variance). Exposed for diagnostics;
         ``persistence()`` uses it with an uncoupled η for its attenuation correction."""
+        ...
+    @property
+    def doc_topic_var_full(self) -> list[numpy.typing.NDArray[numpy.float64]]:
+        """Length-D list of full ``(K-1)×(K-1)`` posterior covariances ν of η (with off-diagonals);
+        an empty ``(0, 0)`` array for a document with no tokens. ``posterior_doc_topic`` samples from
+        these (issue #872); ``doc_topic_var`` is their diagonal."""
         ...
     @property
     def group_prevalence(self) -> numpy.typing.NDArray[numpy.float64]:

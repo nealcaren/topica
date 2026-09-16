@@ -105,6 +105,13 @@ pub struct ThreadTmModel {
     /// the measurement-error variance of each `lambda` row so a reduced-form persistence estimator
     /// can correct child-on-parent regression for attenuation.
     pub doc_topic_var: Vec<Vec<f64>>,
+    /// Per-document FULL posterior covariance of `η` (D × (K-1)²  row-major), the final-iteration
+    /// Laplace `ν` with off-diagonals retained. Empty (`Vec::new()`) for documents with no tokens
+    /// (their `η` is never updated). `posterior_doc_topic` samples from this full covariance so the
+    /// posterior-predictive `E[softmax(η)]` respects the softmax-induced negative topic correlations;
+    /// sampling from the diagonal alone over-disperses the free topics and biases the fixed reference
+    /// topic (issue #872). `doc_topic_var` above is its diagonal, kept for the attenuation correction.
+    pub doc_topic_var_full: Vec<Vec<f64>>,
     /// Content-covariate deviations `κ` (SAGE / STM content model), `None` unless fit with a content
     /// covariate. Topic words shift by content level on top of the global `beta` (issue #841).
     pub content_kappa: Option<crate::ctm::ContentKappa>,
@@ -316,7 +323,8 @@ pub fn fit_thread_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     let mut lambda = vec![vec![0.0f64; km1]; d];
     let mut anchor = vec![vec![0.0f64; km1]; num_groups.max(1)];
     let mut last_nu_diag: Vec<Vec<f64>> = vec![vec![0.0f64; km1]; d]; // final-iter posterior var
-                                                                      // field hyperparameters; a = 1 - kappa
+    let mut last_nu_full: Vec<Vec<f64>> = vec![Vec::new(); d]; // final-iter FULL posterior cov (#872)
+                                                               // field hyperparameters; a = 1 - kappa
     let mut a = 0.7f64;
     let mut sigma2 = 1.0f64;
     let mut p0 = 1.0f64;
@@ -451,6 +459,7 @@ pub fn fit_thread_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
             }
         }
         last_nu_diag.clone_from(&nu_diag_store); // keep the final-iteration posterior variances
+        last_nu_full.clone_from(&nu_full); // keep the final-iteration FULL covariances (#872)
 
         // Only honor convergence once the field has been fit at least once (or there are no edges,
         // so there is no field to fit). Otherwise a fast-converging corpus would return the field
@@ -1081,6 +1090,7 @@ pub fn fit_thread_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
         converged,
         em_iters_run,
         doc_topic_var: last_nu_diag,
+        doc_topic_var_full: last_nu_full,
         content_kappa: content_kappa_out,
         content_beta: content_beta_out,
         num_content_groups: n_content,
