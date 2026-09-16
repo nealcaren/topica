@@ -6,6 +6,27 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.59.0] - 2026-09-16
+
+### Fixed
+
+- **`ThreadTM.posterior_doc_topic` now samples from the full posterior covariance ν**
+  (#872, #879). The posterior-predictive `E[softmax(η)]` drew η from `N(mode, diag(ν))`,
+  discarding the off-diagonal Laplace covariance the E-step already computes. Diagonal-only
+  sampling ignores the softmax-induced negative topic correlations, so it over-disperses the
+  free topics and — being chart-dependent — starves the fixed reference topic (synthetic OU
+  90% coverage: free topics 0.97, reference topic 0.68 vs a nominal 0.90). Full-covariance
+  sampling via the Cholesky factor is chart-invariant and restores nominal, symmetric
+  calibration (all topics ~0.90). This is a calibration fix; it does not by itself close the
+  plug-in-vs-posterior held-out completion gap on real corpora (that residual is the hedging
+  magnitude, tracked in #871), so #872 stays open, re-scoped.
+
+### Added
+
+- **`ThreadTM.doc_topic_var_full`** — the full per-document `(K-1)×(K-1)` posterior
+  covariance ν of η (with off-diagonals), the diagonal of which is `doc_topic_var`. Exposed
+  for diagnostics and used by `posterior_doc_topic` for full-covariance sampling (#872).
+
 ## [0.58.0] - 2026-09-03
 
 ### Added
