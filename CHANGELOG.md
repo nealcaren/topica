@@ -6,6 +6,22 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-09-16
+
+### Fixed
+
+- **Spline prevalence confidence bands no longer depend on the covariate's numeric
+  scale** (#882, #883). `predicted_prevalence` / `estimate_effect` regularized the
+  coefficient covariance with a fixed absolute Cholesky jitter (`Σ + 1e-10·I`) and then
+  sampled the band via `η = β_draws @ X_newᵀ`, which injects `1e-10·‖X_new‖²` into each
+  grid point's variance. On a large or uncentered natural-cubic `spline()` covariate
+  (e.g. `day ∈ [0, 3500]`, basis O(1e3)) that term swamps the true variance, so the band
+  inflated ~10–25× toward the high end and turned asymmetric even under uniform document
+  density — while rescaling the covariate (`day/1000`, z-score), a mathematical no-op,
+  collapsed it. The coefficient-draw square root is now formed from the eigendecomposition
+  (clipping tiny negative eigenvalues) with no additive jitter, so the band is
+  scale-invariant. Point estimates are unchanged.
+
 ## [0.59.0] - 2026-09-16
 
 ### Fixed
