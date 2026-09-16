@@ -556,20 +556,37 @@ def test_posterior_doc_topic_predictive(tmp_path):
     with pytest.raises(ValueError):
         m.posterior_doc_topic(n_samples=0)
 
-    # MC correctness: it converges to an independent numpy E[softmax([eta, 0])] over the SAME
-    # diagonal-nu Gaussian posterior. This pins the estimator, not merely "differs from plug-in".
+    # MC correctness: it converges to an independent numpy E[softmax([eta, 0])] over the FULL-nu
+    # Gaussian posterior (issue #872 — sampling uses the full Laplace covariance, not just its
+    # diagonal). This pins the estimator to the full-covariance integral, not merely "differs
+    # from plug-in".
     eta = np.asarray(m.doc_eta)
-    var = np.clip(np.asarray(m.doc_topic_var), 0.0, None)
+    nu_full = m.doc_topic_var_full  # length-D list of (K-1, K-1) covariances
+    km1 = eta.shape[1]
+    # every token-bearing document exposes a full (K-1)x(K-1) covariance with real off-diagonals
+    fulls = [np.asarray(c, float) for c in nu_full]
+    assert any(c.shape == (km1, km1) and np.abs(c[np.triu_indices(km1, 1)]).max() > 1e-9
+               for c in fulls), "expected non-trivial off-diagonal posterior covariance"
     rng = np.random.default_rng(0)
-    z = rng.standard_normal((20000,) + eta.shape)
-    draws = eta[None] + z * np.sqrt(var)[None]
-    full = np.concatenate([draws, np.zeros(draws.shape[:2] + (1,))], axis=2)
-    full -= full.max(axis=2, keepdims=True)
-    e = np.exp(full)
-    ref = (e / e.sum(axis=2, keepdims=True)).mean(axis=0)
+    ref = np.zeros_like(eta)
+    ref = np.concatenate([ref, np.zeros((eta.shape[0], 1))], axis=1)
+    for d in range(eta.shape[0]):
+        cov = fulls[d]
+        if cov.shape != (km1, km1):
+            continue
+        try:
+            lchol = np.linalg.cholesky(cov)
+        except np.linalg.LinAlgError:
+            lchol = np.diag(np.sqrt(np.clip(np.diag(cov), 0.0, None)))
+        z = rng.standard_normal((20000, km1))
+        draws = eta[d][None] + z @ lchol.T
+        padded = np.concatenate([draws, np.zeros((draws.shape[0], 1))], axis=1)
+        padded -= padded.max(axis=1, keepdims=True)
+        e = np.exp(padded)
+        ref[d] = (e / e.sum(axis=1, keepdims=True)).mean(axis=0)
     assert np.abs(np.asarray(m.posterior_doc_topic(n_samples=8000, seed=1)) - ref).max() < 0.02
 
-    # it depends only on doc_eta + doc_topic_var, which round-trip, so it survives save/load
+    # it depends only on doc_eta + the full nu, which round-trip, so it survives save/load
     p = str(tmp_path / "reply.topica")
     m.save(p)
     m2 = topica.ThreadTM.load(p)

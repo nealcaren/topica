@@ -69,6 +69,9 @@ pub struct ThreadTM {
     doc_topic: Vec<Vec<f64>>,
     doc_eta: Vec<Vec<f64>>,
     doc_topic_var: Vec<Vec<f64>>,
+    // Full per-doc posterior covariance of η (D × (K-1)² row-major; empty for empty docs). Used by
+    // posterior_doc_topic for full-covariance sampling (#872). Diagonal lives in doc_topic_var.
+    doc_topic_var_full: Vec<Vec<f64>>,
     group_prevalence: Vec<Vec<f64>>,
     prevalence_se: Vec<Vec<f64>>,
     kappa: f64,
@@ -145,6 +148,10 @@ struct ThreadTmState {
     doc_topic: Vec<Vec<f64>>,
     doc_eta: Vec<Vec<f64>>,
     doc_topic_var: Vec<Vec<f64>>,
+    // #872: full per-doc posterior covariance. `serde(default)` -> empty for saves that predate the
+    // field, in which case posterior_doc_topic falls back to the stored diagonal.
+    #[serde(default)]
+    doc_topic_var_full: Vec<Vec<f64>>,
     group_prevalence: Vec<Vec<f64>>,
     prevalence_se: Vec<Vec<f64>>,
     kappa: f64,
@@ -485,6 +492,7 @@ impl ThreadTM {
             doc_topic: Vec::new(),
             doc_eta: Vec::new(),
             doc_topic_var: Vec::new(),
+            doc_topic_var_full: Vec::new(),
             group_prevalence: Vec::new(),
             prevalence_se: Vec::new(),
             kappa: f64::NAN,
@@ -1202,6 +1210,7 @@ impl ThreadTM {
         slf.seed_matches = seed_matches_out;
         slf.doc_eta = m.lambda.clone();
         slf.doc_topic_var = m.doc_topic_var.clone();
+        slf.doc_topic_var_full = m.doc_topic_var_full.clone();
         slf.beta = m.beta;
         slf.doc_topic = dt;
         slf.group_prevalence = gp;
@@ -1519,6 +1528,35 @@ impl ThreadTM {
         Ok(vecs_to_arr2(&self.doc_topic_var).to_pyarray_bound(py))
     }
 
+    /// D list of full (K-1)×(K-1) per-document posterior covariances ν of η (the Laplace curvature
+    /// with off-diagonals). Each entry is a `(K-1)×(K-1)` array, or an empty `(0, 0)` array for a
+    /// document with no tokens. `posterior_doc_topic` samples from these (issue #872); `doc_topic_var`
+    /// is their diagonal. Returned as a Python list because rows can differ in shape (empty docs).
+    #[getter]
+    fn doc_topic_var_full<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        self.require_fitted()?;
+        let km1 = if self.doc_eta.is_empty() {
+            0
+        } else {
+            self.doc_eta[0].len()
+        };
+        let items: Vec<Bound<'py, PyArray2<f64>>> = self
+            .doc_topic_var_full
+            .iter()
+            .map(|flat| {
+                if flat.len() == km1 * km1 {
+                    let rows: Vec<Vec<f64>> = (0..km1)
+                        .map(|i| flat[i * km1..(i + 1) * km1].to_vec())
+                        .collect();
+                    vecs_to_arr2(&rows).to_pyarray_bound(py)
+                } else {
+                    vecs_to_arr2(&Vec::<Vec<f64>>::new()).to_pyarray_bound(py)
+                }
+            })
+            .collect();
+        Ok(PyList::new_bound(py, items))
+    }
+
     /// D×K document-topic proportions θ.
     ///
     /// This is the PLUG-IN `softmax([mean η, 0])`, which discards the per-document posterior
@@ -1535,14 +1573,19 @@ impl ThreadTM {
     }
 
     /// D×K posterior-predictive document-topic proportions `E[softmax([η, 0])]`, a Monte-Carlo
-    /// average of `n_samples` draws of η from each document's Gaussian posterior
-    /// `N(doc_eta, diag(doc_topic_var))`. Unlike the plug-in `doc_topic`, this integrates over the
-    /// posterior variance ν, so it hedges thin, high-ν documents instead of committing to an
-    /// overconfident point estimate. That puts it on the same estimator footing as a collapsed-Gibbs
-    /// model's sample-averaged θ (e.g. LDA), which is what makes a held-out token comparison a model
-    /// comparison rather than an estimator artifact (issue #838). Deterministic given `seed`. Note
-    /// the draws use only the diagonal of ν (the stored marginal variances), not its full
-    /// off-diagonal covariance.
+    /// average of `n_samples` draws of η from each document's Gaussian posterior `N(doc_eta, ν)`.
+    /// Unlike the plug-in `doc_topic`, this integrates over the posterior covariance ν, so it hedges
+    /// thin, high-ν documents instead of committing to an overconfident point estimate. That puts it
+    /// on the same estimator footing as a collapsed-Gibbs model's sample-averaged θ (e.g. LDA), which
+    /// is what makes a held-out token comparison a model comparison rather than an estimator artifact
+    /// (issue #838). Deterministic given `seed`.
+    ///
+    /// The draws use the FULL Laplace covariance ν (via its Cholesky factor) when available, not just
+    /// the diagonal (issue #872): the softmax/simplex constraint induces strong negative topic
+    /// correlations, and diagonal-only sampling both over-disperses the free topics and — because it
+    /// is chart-dependent — biases the fixed reference topic. Full-covariance sampling is chart-
+    /// invariant, so it fixes both. Falls back to the stored diagonal `doc_topic_var` for documents
+    /// with no full covariance (empty docs, or models saved before the full ν was retained).
     #[pyo3(signature = (*, n_samples=400, seed=13))]
     fn posterior_doc_topic<'py>(
         &self,
@@ -1556,6 +1599,7 @@ impl ThreadTM {
         }
         let eta = &self.doc_eta;
         let var = &self.doc_topic_var;
+        let full = &self.doc_topic_var_full;
         let km1 = if eta.is_empty() { 0 } else { eta[0].len() };
         let k = km1 + 1;
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
@@ -1568,14 +1612,29 @@ impl ThreadTM {
         let mut out = vec![vec![0.0f64; k]; eta.len()];
         let inv_s = 1.0 / n_samples as f64;
         for (di, mean) in eta.iter().enumerate() {
+            // Lower-triangular Cholesky L (L Lᵀ = ν) for full-covariance draws, when the full ν is
+            // present and PD; otherwise fall back to the diagonal standard deviations.
+            let chol: Option<Vec<f64>> = full
+                .get(di)
+                .filter(|f| f.len() == km1 * km1)
+                .and_then(|f| crate::linalg::cholesky(f, km1));
             let sd: Vec<f64> = var[di].iter().map(|v| v.max(0.0).sqrt()).collect();
             let acc = &mut out[di];
+            let mut zbuf = vec![0.0f64; km1];
             for _ in 0..n_samples {
-                // draw η_s = mean + sd ⊙ z, then softmax([η_s, 0]) with reference topic K-1 at 0.
+                for zi in zbuf.iter_mut() {
+                    *zi = gauss(&mut rng);
+                }
+                // draw η_s = mean + L·z (full) or mean + sd ⊙ z (diagonal fallback), then
+                // softmax([η_s, 0]) with the reference topic K-1 held at 0.
                 let mut logits = vec![0.0f64; k];
                 let mut mx = 0.0f64; // reference logit is 0, so the running max starts at 0
                 for i in 0..km1 {
-                    let e = mean[i] + sd[i] * gauss(&mut rng);
+                    let noise = match &chol {
+                        Some(l) => (0..=i).map(|j| l[i * km1 + j] * zbuf[j]).sum::<f64>(),
+                        None => sd[i] * zbuf[i],
+                    };
+                    let e = mean[i] + noise;
                     logits[i] = e;
                     if e > mx {
                         mx = e;
@@ -2017,6 +2076,7 @@ impl ThreadTM {
                 doc_topic: self.doc_topic.clone(),
                 doc_eta: self.doc_eta.clone(),
                 doc_topic_var: self.doc_topic_var.clone(),
+                doc_topic_var_full: self.doc_topic_var_full.clone(),
                 group_prevalence: self.group_prevalence.clone(),
                 prevalence_se: self.prevalence_se.clone(),
                 kappa: self.kappa,
@@ -2072,6 +2132,7 @@ impl ThreadTM {
             doc_topic: s.doc_topic,
             doc_eta: s.doc_eta,
             doc_topic_var: s.doc_topic_var,
+            doc_topic_var_full: s.doc_topic_var_full,
             group_prevalence: s.group_prevalence,
             prevalence_se: s.prevalence_se,
             kappa: s.kappa,
