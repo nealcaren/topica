@@ -753,3 +753,40 @@ class TestTupleContrastIssue99:
                 contrast=(0.0, 1.0),
                 nsims=5, n_sim=50, seed=0,
             )
+
+
+# ---------------------------------------------------------------------------
+# #882: spline confidence bands must not depend on the covariate's numeric scale
+# ---------------------------------------------------------------------------
+
+def test_spline_ci_is_scale_invariant():
+    """predicted_prevalence spline CIs must not depend on the covariate's numeric
+    scale. A large/uncentered covariate (``day`` in [0, 3500]) and its rescale
+    (``day/1000``) are a mathematical no-op, so the band must match and stay
+    ~symmetric. Before #882 the raw-``day`` band inflated ~10-25x at the high end
+    (a fixed ``+1e-10*I`` Cholesky jitter contributes ``1e-10*||X_new||^2`` to the
+    variance, which explodes when the natural-cubic ``spline()`` basis is O(1e3))."""
+    rng = np.random.default_rng(3)
+    n = 240
+    day = rng.uniform(0.0, 3500.0, n)  # uniform document density over the range
+    p_mil = 1.0 / (1.0 + np.exp(-(day - 1750.0) / 700.0))
+    docs = []
+    for pm in p_mil:
+        heavy, light = (MIL, ECON) if rng.random() < pm else (ECON, MIL)
+        docs.append(rng.choice(heavy, 9).tolist() + rng.choice(light, 3).tolist())
+    meta = pd.DataFrame({"day": day, "day_k": day / 1000.0})
+
+    m_raw = topica.STM(2, seed=5).fit(docs, formula="~ spline(day, df=4)", data=meta, iters=60)
+    m_k = topica.STM(2, seed=5).fit(docs, formula="~ spline(day_k, df=4)", data=meta, iters=60)
+    kw = dict(npoints=25, nsims=20, n_sim=800, seed=0)
+    raw = predicted_prevalence(m_raw, formula="~ spline(day, df=4)", data=meta, continuous="day", **kw)
+    scaled = predicted_prevalence(m_k, formula="~ spline(day_k, df=4)", data=meta, continuous="day_k", **kw)
+
+    for r_raw, r_k in zip(raw, scaled):
+        w_raw = np.asarray(r_raw.ci_high) - np.asarray(r_raw.ci_low)
+        w_k = np.asarray(r_k.ci_high) - np.asarray(r_k.ci_low)
+        assert np.all(w_raw >= 0) and np.all(w_k >= 0)
+        # rescaling is a no-op: the band matches between raw and scaled covariate
+        assert np.allclose(w_raw, w_k, rtol=0.25, atol=5e-3)
+        # and the raw-covariate band is not blown up / right-heavy (was 10-25x pre-fix)
+        assert w_raw.max() / max(w_raw.min(), 1e-9) < 4.0

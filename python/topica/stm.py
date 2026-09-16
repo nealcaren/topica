@@ -1725,13 +1725,15 @@ def predicted_prevalence(
 
     out: list[PredictedPrevalence] = []
     for (beta, Sigma, _r2), t in zip(pooled, topic_list):
-        # Symmetrise and regularise Sigma for Cholesky.
-        Sigma_sym = 0.5 * (Sigma + Sigma.T) + 1e-10 * np.eye(p)
-        try:
-            L = np.linalg.cholesky(Sigma_sym)
-        except np.linalg.LinAlgError:
-            w, v = np.linalg.eigh(Sigma_sym)
-            L = v @ np.diag(np.sqrt(np.clip(w, 0.0, None)))
+        # Sampling square root of the coefficient covariance via eigendecomposition,
+        # clipping tiny negative eigenvalues from float noise. Do NOT add an absolute
+        # Cholesky jitter (`+1e-10*I`): its contribution `1e-10*||X_new[g]||^2` to
+        # `Var(eta_g)` is not scale-invariant, so on a large/uncentered spline covariate
+        # (e.g. `day` in [0, 3500], where the grid rows have norm ~1e4) it swamps the true
+        # variance and inflates/asymmetrises the confidence band (issue #882). The eigh
+        # square root needs no jitter and gives a scale-invariant band.
+        w, v = np.linalg.eigh(0.5 * (Sigma + Sigma.T))
+        L = v @ np.diag(np.sqrt(np.clip(w, 0.0, None)))
 
         # Draw n_sim coefficient vectors from the posterior N(beta, Sigma).
         Z = rng.standard_normal((n_sim, p))
