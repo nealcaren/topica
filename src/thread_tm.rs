@@ -324,7 +324,7 @@ pub fn fit_thread_tm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     let mut anchor = vec![vec![0.0f64; km1]; num_groups.max(1)];
     let mut last_nu_diag: Vec<Vec<f64>> = vec![vec![0.0f64; km1]; d]; // final-iter posterior var
     let mut last_nu_full: Vec<Vec<f64>> = vec![Vec::new(); d]; // final-iter FULL posterior cov (#872)
-                                                                      // field hyperparameters; a = 1 - kappa
+                                                               // field hyperparameters; a = 1 - kappa
     let mut a = 0.7f64;
     let mut sigma2 = 1.0f64;
     let mut p0 = 1.0f64;
