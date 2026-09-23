@@ -1,8 +1,9 @@
 """Tests for the per-model fit-statistics summary (issue #806).
 
-Covers the three tiers of ``LDA.summary`` — the free repr, the ``texts=`` quality
-tier, and the ``heldout=`` held-out fit tier — plus the held-out guard from the
-sample-user audit (issue #809): a bare corpus must not be reported as held-out.
+Covers the three tiers of ``summary`` (the printed block, the ``texts=`` quality
+tier, and the ``heldout=`` held-out fit tier), the held-out guard from the sample-user
+audit (issue #809: a bare corpus must not be reported as held-out), and the rollout
+to every registered model.
 """
 
 import numpy as np
@@ -71,7 +72,7 @@ def test_free_tier_has_no_corpus_metrics(fitted):
 
 def test_texts_tier_adds_quality_but_not_perplexity(fitted, toy_docs):
     """The key regression: coherence/exclusivity come from texts=, but perplexity
-    must NOT be computed from the (training) texts — that was the mislabel bug."""
+    must NOT be computed from the (training) texts; that was the mislabel bug."""
     s = fitted.summary(texts=toy_docs)
     assert s.coherence is not None
     assert s.exclusivity is not None
@@ -203,3 +204,44 @@ def test_models_without_fit_history_or_converged_still_summarize(toy_corpus):
     s = fitted_model.summary()
     assert s.fitted and s.converged is None and s.objective is None
     assert s.num_topics == 3
+
+
+# every conformance-registry model, fitted with its own recipe, prints and summarizes
+from test_convergence_interface import _PARAMS, _fit_model  # noqa: E402
+
+
+@pytest.mark.parametrize("name,factory,family", _PARAMS, ids=[p[0] for p in _PARAMS])
+def test_every_fitted_model_prints_its_summary(name, factory, family):
+    model = _fit_model(name, factory)
+    text = str(model)
+    assert text.startswith(name)
+    assert "\n" in text
+    assert "<table" in model._repr_html_()
+    assert model.summary().fitted
+
+
+def test_bare_float_trace_summarizes():
+    """InfoCTM's fit_history is a bare per-epoch list, not (iteration, value) pairs;
+    printing it used to raise TypeError."""
+    from test_infoctm import _fit
+
+    model, _ = _fit()
+    s = model.summary()
+    assert s.objective_label == "ELBO per document"
+    assert s.iterations == len(model.fit_history)
+    assert np.isfinite(s.objective)
+    assert "ELBO per document (in-sample)" in str(model)
+
+
+def test_scaling_model_omits_the_texts_hint_and_rejects_texts():
+    """Wordfish has no topic-word matrix: no coherence hint, and texts= says why."""
+    from test_wordfish import _planted
+
+    docs, group, _, _ = _planted(seed=1)
+    m = topica.Wordfish(seed=1)
+    m.fit(docs, group=group, anchors={"a0": -1.0, "a39": 1.0}, iters=50)
+    text = str(m)
+    assert "summary(texts=" not in text
+    assert "log-likelihood (up to a constant)" in text
+    with pytest.raises(ValueError, match="no flat topic-word matrix"):
+        m.summary(texts=docs)

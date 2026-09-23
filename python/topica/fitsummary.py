@@ -33,27 +33,38 @@ import numpy as np
 # witnesses, comparable only within one model, never across families. A model absent
 # from this table gets the neutral "objective" label rather than a guessed one.
 _LL = "log-likelihood"
+_ELBO_DOC = "ELBO per document"
 _OBJECTIVE_LABEL = {
-    # collapsed Gibbs: joint log-likelihood of the training tokens
+    # collapsed Gibbs: joint log-likelihood of the training tokens (DMR, GDMR,
+    # LabeledLDA, SAGE, and SupervisedLDA return their log_likelihood_history)
     "LDA": _LL, "PT": _LL, "KeyATM": _LL, "SeededLDA": _LL, "FactorialLDA": _LL,
-    "AuthorTopic": _LL, "MGLDA": _LL, "TopicsOverTime": _LL, "Wordfish": _LL,
+    "AuthorTopic": _LL, "MGLDA": _LL, "TopicsOverTime": _LL, "DMR": _LL, "GDMR": _LL,
+    "LabeledLDA": _LL, "SAGE": _LL, "SupervisedLDA": _LL,
+    # Wordfish's Poisson log-likelihood drops the -log(y!) constant
+    "Wordfish": "log-likelihood (up to a constant)",
     # per-token averages
     "HDP": "log-likelihood per token", "GSDMM": "log-likelihood per token",
     "GaussianLDA": "log-likelihood per token",
-    # variational / amortized inference
+    # variational EM: corpus-level bound
     "OnlineLDA": "ELBO", "CTM": "variational bound", "STM": "variational bound",
-    "ETM": "variational bound", "ProdLDA": "ELBO", "DETM": "ELBO",
+    # amortized (VAE) inference: the batch-mean ELBO, per document
+    "ProdLDA": _ELBO_DOC, "CombinedTM": _ELBO_DOC, "ZeroShotTM": _ELBO_DOC,
+    "Scholar": _ELBO_DOC, "InfoCTM": _ELBO_DOC, "DETM": _ELBO_DOC,
+    # ETM reports either, depending on its inference route
+    "ETM": lambda m: _ELBO_DOC if _get(m, "inference") == "vae" else "variational bound",
     # factorization and other objectives
     "NMF": "reconstruction error", "CorEx": "total correlation",
     "FASTopic": "Sinkhorn loss (negated)",
-    # traces that are convergence measures, not objectives
+    # traces that are not objectives
+    "TopicalNGrams": "bigram tokens",
     "SemanticSignalSeparation": "convergence measure",
     "TensorLDA": "convergence measure",
 }
 
 
 def _objective_label(model) -> str:
-    return _OBJECTIVE_LABEL.get(type(model).__name__, "objective")
+    label = _OBJECTIVE_LABEL.get(type(model).__name__, "objective")
+    return label(model) if callable(label) else label
 
 
 def _sampler_kind(model) -> str:
@@ -159,6 +170,9 @@ class FitSummary:
     # quality metrics (model-agnostic; need a reference corpus, so only with texts=)
     coherence: float | None = None
     exclusivity: float | None = None
+    # whether the model has a flat topic-word matrix (scaling models do not), which
+    # decides whether the texts= quality tier applies at all
+    has_topics: bool = True
 
     def _shape_rows(self):
         topics = self.num_topics
@@ -217,7 +231,7 @@ class FitSummary:
             lines.append("  --- quality (vs. reference corpus) ---")
             for label, value in self._quality_rows():
                 lines.append(f"  {label:<{width}}  {_fmt(value)}")
-        else:
+        elif self.has_topics:
             lines.append("  (call .summary(texts=corpus) for coherence and exclusivity)")
         return "\n".join(lines)
 
@@ -339,8 +353,13 @@ def _build_summary(model, *, texts=None, heldout=None, assume_unseen=False, n=10
 
     history = _get(model, "fit_history")
     history = list(history) if history else []
-    iterations = int(history[-1][0]) if history else None
-    objective = float(history[-1][1]) if history else None
+    iterations = objective = None
+    if history:
+        last = history[-1]
+        if isinstance(last, (tuple, list)) and len(last) == 2:
+            iterations, objective = int(last[0]), float(last[1])
+        else:  # a bare per-iteration trace (InfoCTM)
+            iterations, objective = len(history), float(last)
     converged = _get(model, "converged")
 
     # Topic-health tier: cheap and corpus-free, from the phi/theta already in memory.
@@ -350,6 +369,11 @@ def _build_summary(model, *, texts=None, heldout=None, assume_unseen=False, n=10
     topic_significance, weak_topics = _significance_health(model)
 
     coherence = exclusivity = None
+    if texts is not None and _topic_word(model) is None:
+        raise ValueError(
+            f"{name} has no flat topic-word matrix, so coherence and exclusivity do not "
+            "apply; call summary() without texts="
+        )
     if texts is not None:
         # Quality tier proper: coherence and exclusivity need the reference corpus.
         from . import evaluate
@@ -409,6 +433,7 @@ def _build_summary(model, *, texts=None, heldout=None, assume_unseen=False, n=10
         weak_topics=weak_topics,
         coherence=coherence,
         exclusivity=exclusivity,
+        has_topics=_topic_word(model) is not None,
     )
 
 
