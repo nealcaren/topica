@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Changed
+
+- **Spectral initialization floors anchor-word candidates at 0.3% of documents** (#874).
+  Farthest-point anchor selection picked near-singleton words on large corpora of short
+  documents, and the converged recovery built on those anchors could start EM in a
+  catastrophic basin (ChangeMyView: −6.36 held-out nats per token on the exact path on
+  every mask we tested, and on the default projected path on one of three; R `stm`
+  behaves the same with `recoverEG = FALSE`). With the floor the collapse is gone on both
+  paths, and on the default path topica matches R `stm`'s default (−6.151 vs −6.151)
+  with a converged, deterministic recovery. Anchors on the gadarian and Poliblog parity
+  corpora are unchanged, and corpora under about 333 documents are unaffected.
+  `STM.fit` / `CTM.fit(spectral_anchor_min_doc_frac=0.0)` restores `stm`'s unfloored
+  anchors. The same default applies to every other model that uses the spectral init
+  (ThreadTM, DTM, STS, and `LDA(init="spectral")`), which do not expose the switch.
+
 ## [0.61.0] - 2026-09-23
 
 ### Added

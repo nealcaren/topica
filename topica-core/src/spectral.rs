@@ -31,6 +31,18 @@ use std::collections::{BTreeMap, HashMap};
 /// dimension (otherwise the projection overhead exceeds the savings).
 pub const DEFAULT_PROJ_THRESHOLD: usize = 10000;
 const PROJ_DIM: usize = 1024;
+/// Default floor on anchor-word candidates, as a fraction of documents: a word can
+/// be an anchor only if it appears in at least `ceil(frac * D)` documents (issue
+/// #874). Farthest-point anchor selection rewards large co-occurrence-row norms,
+/// and a rare word's row is noisy and large, so without a floor the anchors on a
+/// big, thin-document corpus are near-singleton words and the converged recovery
+/// builds a poor init around them (R `stm` has no floor either; its default
+/// recovery hides the problem only because it never converges, see #871). This is
+/// a document-frequency candidate threshold in the spirit of Arora et al. (2013),
+/// expressed as a fraction so it scales with the corpus. At 0.003 it leaves the anchors,
+/// and so the init, unchanged on the gadarian and Poliblog parity corpora; pass
+/// `0.0` for `stm`'s unfloored candidate set.
+pub const DEFAULT_ANCHOR_MIN_DOC_FRAC: f64 = 0.003;
 /// Fixed seed for the projection so the projected path stays a deterministic,
 /// seed-independent function of the corpus: the same corpus and threshold always
 /// yield the same init (the projection is an internal implementation detail, not a
@@ -95,11 +107,34 @@ fn dot(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
-/// Greedy farthest-point anchor selection (Gram-Schmidt residuals). Only words
-/// with marginal `p_w >= min_p` are candidates (avoids rare-word anchors).
-fn fast_anchor_words(qbar: &[Vec<f64>], p: &[f64], k: usize, min_p: f64) -> Option<Vec<usize>> {
+/// Document frequency of each word (the number of documents containing it), over
+/// all documents.
+fn doc_freq(docs: &[Vec<u32>], v: usize) -> Vec<usize> {
+    let mut df = vec![0usize; v];
+    let mut last_doc = vec![usize::MAX; v];
+    for (i, doc) in docs.iter().enumerate() {
+        for &w in doc {
+            let w = w as usize;
+            if last_doc[w] != i {
+                last_doc[w] = i;
+                df[w] += 1;
+            }
+        }
+    }
+    df
+}
+
+/// Greedy farthest-point anchor selection (Gram-Schmidt residuals), matching R
+/// `stm`'s `fastAnchor`. Only words with `doc_freq[w] >= min_docs` are candidates
+/// (`min_docs = 0` makes every word a candidate, as in `stm`).
+fn fast_anchor_words(
+    qbar: &[Vec<f64>],
+    doc_freq: &[usize],
+    k: usize,
+    min_docs: usize,
+) -> Option<Vec<usize>> {
     let v = qbar.len();
-    let candidates: Vec<usize> = (0..v).filter(|&w| p[w] >= min_p).collect();
+    let candidates: Vec<usize> = (0..v).filter(|&w| doc_freq[w] >= min_docs).collect();
     if candidates.len() < k {
         return None;
     }
@@ -367,6 +402,23 @@ pub fn spectral_init_with_threshold(
     v: usize,
     proj_threshold: usize,
 ) -> Option<Vec<Vec<f64>>> {
+    spectral_init_with_options(docs, k, v, proj_threshold, DEFAULT_ANCHOR_MIN_DOC_FRAC)
+}
+
+/// [`spectral_init_with_threshold`] with the anchor-candidate floor given
+/// explicitly: a word can be an anchor only if it appears in at least
+/// `ceil(anchor_min_doc_frac * D)` of the `D` documents (see
+/// [`DEFAULT_ANCHOR_MIN_DOC_FRAC`]). `0.0` disables the floor, reproducing R
+/// `stm`'s candidate set. If the floor leaves too few candidates for `k`
+/// independent anchors (a small corpus), the selection falls back to the
+/// unfloored set rather than failing.
+pub fn spectral_init_with_options(
+    docs: &[Vec<u32>],
+    k: usize,
+    v: usize,
+    proj_threshold: usize,
+    anchor_min_doc_frac: f64,
+) -> Option<Vec<Vec<f64>>> {
     if v < k {
         return None;
     }
@@ -375,9 +427,21 @@ pub fn spectral_init_with_threshold(
     } else {
         cooccurrence(docs, v)?
     };
-    // Require anchors to have at least a small marginal mass.
-    let min_p = 0.0;
-    let anchors = fast_anchor_words(&qbar, &p, k, min_p)?;
+    let df = doc_freq(docs, v);
+    let frac = if anchor_min_doc_frac.is_finite() {
+        anchor_min_doc_frac.max(0.0)
+    } else {
+        0.0
+    };
+    // D counts every document, including the length-0/1 ones the co-occurrence step
+    // skips; `doc_freq` counts over all documents too, so the floor and the
+    // frequencies it is compared against share one denominator.
+    let min_docs = (frac * docs.len() as f64).ceil() as usize;
+    let anchors = match fast_anchor_words(&qbar, &df, k, min_docs) {
+        Some(a) => a,
+        None if min_docs > 0 => fast_anchor_words(&qbar, &df, k, 0)?,
+        None => return None,
+    };
     Some(recover(&qbar, &p, &anchors, k, v))
 }
 
@@ -518,6 +582,71 @@ mod tests {
             projected, projected_again,
             "projected path not deterministic"
         );
+    }
+
+    #[test]
+    fn anchor_floor_excludes_rare_words_and_zero_restores_unfloored() {
+        // #874: a rare word that co-occurs with only one other rare word has a large,
+        // noisy Q-bar row, so unfloored farthest-point selection picks it as an
+        // anchor. Three planted blocks (common words 0..9) plus rare singleton pairs
+        // (words 9..) that each appear in only a couple of documents.
+        let blocks = [[0u32, 1, 2], [3, 4, 5], [6, 7, 8]];
+        let mut docs = Vec::new();
+        for i in 0..900 {
+            let b = blocks[i % 3];
+            docs.push(vec![b[0], b[1], b[2], b[0], b[1], b[2]]);
+        }
+        let n_rare_pairs = 10u32;
+        for r in 0..n_rare_pairs {
+            let (a, b) = (9 + 2 * r, 10 + 2 * r);
+            docs.push(vec![a, b]);
+            docs.push(vec![a, b]);
+        }
+        let v = (9 + 2 * n_rare_pairs) as usize;
+        let (qbar, _p) = cooccurrence(&docs, v).expect("cooccurrence");
+        let df = doc_freq(&docs, v);
+        assert_eq!(df[9], 2);
+        let min_docs = (DEFAULT_ANCHOR_MIN_DOC_FRAC * docs.len() as f64).ceil() as usize;
+        assert!(min_docs > 2, "floor must exclude the 2-document words");
+
+        let unfloored = fast_anchor_words(&qbar, &df, 3, 0).expect("unfloored anchors");
+        assert!(
+            unfloored.iter().any(|&a| a >= 9),
+            "fixture should reproduce the rare-anchor failure: {unfloored:?}"
+        );
+        let floored = fast_anchor_words(&qbar, &df, 3, min_docs).expect("floored anchors");
+        assert!(
+            floored.iter().all(|&a| a < 9),
+            "rare word anchored: {floored:?}"
+        );
+        let blocks_hit: std::collections::HashSet<usize> = floored.iter().map(|&a| a / 3).collect();
+        assert_eq!(
+            blocks_hit.len(),
+            3,
+            "one anchor per planted block: {floored:?}"
+        );
+
+        // frac = 0.0 reproduces the unfloored (R stm) anchors through the public path.
+        let b0 = spectral_init_with_options(&docs, 3, v, DEFAULT_PROJ_THRESHOLD, 0.0).unwrap();
+        let bu = recover(&qbar, &_p, &unfloored, 3, v);
+        assert_eq!(b0, bu);
+    }
+
+    #[test]
+    fn anchor_floor_falls_back_when_too_few_candidates() {
+        // A floor above every word's document frequency leaves no candidates; the
+        // init must fall back to the unfloored set rather than fail.
+        let blocks = [[0u32, 1, 2], [3, 4, 5], [6, 7, 8]];
+        let docs: Vec<Vec<u32>> = (0..60)
+            .map(|i| {
+                let b = blocks[i % 3];
+                vec![b[0], b[1], b[2], b[0], b[1], b[2]]
+            })
+            .collect();
+        let hi = spectral_init_with_options(&docs, 3, 9, DEFAULT_PROJ_THRESHOLD, 0.9);
+        let none = spectral_init_with_options(&docs, 3, 9, DEFAULT_PROJ_THRESHOLD, 0.0);
+        assert!(hi.is_some());
+        assert_eq!(hi, none);
     }
 
     #[test]

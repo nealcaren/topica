@@ -1105,7 +1105,11 @@ fn mu_from(x_d: &[f64], gamma: &[Vec<f64>], km1: usize) -> Vec<f64> {
 /// switches from the exact V×V co-occurrence to a random projection (see
 /// [`crate::spectral::spectral_init_with_threshold`]); pass
 /// [`crate::spectral::DEFAULT_PROJ_THRESHOLD`] to match R `stm`. It only matters
-/// when `init_spectral` is set.
+/// when `init_spectral` is set. `spectral_anchor_min_doc_frac` is the
+/// anchor-candidate document-frequency floor (see
+/// [`crate::spectral::spectral_init_with_options`]); pass
+/// [`crate::spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC`] for the default or `0.0` for R
+/// `stm`'s unfloored anchors.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_ctm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     docs: &[Vec<u32>],
@@ -1125,6 +1129,7 @@ pub fn fit_ctm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     keep_nu: bool,
     diagonal: bool,
     spectral_proj_threshold: usize,
+    spectral_anchor_min_doc_frac: f64,
     mut on_progress: F,
     rng: &mut R,
 ) -> CtmModel {
@@ -1192,11 +1197,12 @@ pub fn fit_ctm<R: Rng, F: FnMut(usize, usize, f64) -> bool>(
     // computed base β (e.g. R `stm`'s exact spectral β) and reproduce that fit.
     let (mut beta, init_route): (Vec<Vec<f64>>, &'static str) = match init_beta {
         Some(b) => (b.iter().map(|row| row.to_vec()).collect(), "provided"),
-        None if init_spectral => match crate::spectral::spectral_init_with_threshold(
+        None if init_spectral => match crate::spectral::spectral_init_with_options(
             docs,
             k,
             num_types,
             spectral_proj_threshold,
+            spectral_anchor_min_doc_frac,
         ) {
             Some(b) => (b, "spectral"),
             None => (random_beta(rng), "random-fallback"),
@@ -1557,6 +1563,7 @@ pub fn fit_ctm_svi<R: Rng>(
     keep_nu: bool,
     diagonal: bool,
     spectral_proj_threshold: usize,
+    spectral_anchor_min_doc_frac: f64,
     rng: &mut R,
 ) -> CtmModel {
     let k = num_topics;
@@ -1579,11 +1586,12 @@ pub fn fit_ctm_svi<R: Rng>(
         b
     };
     let (mut beta, init_route): (Vec<Vec<f64>>, &'static str) = if init_spectral {
-        match crate::spectral::spectral_init_with_threshold(
+        match crate::spectral::spectral_init_with_options(
             docs,
             k,
             num_types,
             spectral_proj_threshold,
+            spectral_anchor_min_doc_frac,
         ) {
             Some(b) => (b, "spectral"),
             None => (random_beta(rng), "random-fallback"),
@@ -1924,6 +1932,7 @@ mod tests {
                 true,
                 false,
                 crate::spectral::DEFAULT_PROJ_THRESHOLD,
+                crate::spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
                 |_, _, _| true,
                 &mut rng,
             )
@@ -2020,6 +2029,7 @@ mod tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            crate::spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
             &mut rng,
         );
         // Each planted block is the top of some topic.
@@ -2059,6 +2069,7 @@ mod tests {
                 true,
                 false,
                 crate::spectral::DEFAULT_PROJ_THRESHOLD,
+                crate::spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
                 &mut rng,
             )
             .beta
@@ -2118,6 +2129,7 @@ mod tests {
                 false,
                 false,
                 crate::spectral::DEFAULT_PROJ_THRESHOLD,
+                crate::spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
                 &mut rng,
             )
         };
@@ -2172,6 +2184,7 @@ mod tests {
             false,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            crate::spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
             &mut rng,
         );
         let max_w0 = (0..model.num_topics)
@@ -2212,6 +2225,7 @@ mod tests {
             false,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            crate::spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
             &mut rng,
         );
         assert!(!full.converged, "tol = 0 must not report convergence");
@@ -2234,6 +2248,7 @@ mod tests {
             false,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            crate::spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
             &mut rng,
         );
         assert!(early.converged, "a loose tol should early-stop");
@@ -2277,6 +2292,7 @@ mod tests {
             false,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            crate::spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
             &mut rng,
         );
         let km1 = m.num_topics - 1;
@@ -2332,6 +2348,7 @@ mod tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            crate::spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
             |_, _, _| true,
             &mut rng,
         );
@@ -2383,6 +2400,7 @@ mod tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            crate::spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
             |_, _, _| true,
             &mut rng,
         );
@@ -2461,6 +2479,7 @@ mod tests {
                 true,
                 false,
                 crate::spectral::DEFAULT_PROJ_THRESHOLD,
+                crate::spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
                 |_, _, _| true,
                 &mut rng,
             )
@@ -2531,6 +2550,7 @@ mod tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            crate::spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
             |_, _, _| true,
             &mut rng,
         );
@@ -2567,6 +2587,7 @@ mod tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            crate::spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
             |_, _, _| true,
             &mut rng2,
         );
@@ -2610,6 +2631,7 @@ mod tests {
             true,
             true,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            crate::spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
             |_, _, _| true,
             &mut rng,
         );
@@ -2871,6 +2893,7 @@ mod tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            crate::spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
             |_, _, _| true,
             &mut rng,
         );
@@ -2897,6 +2920,7 @@ mod tests {
             false,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            crate::spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
             |_, _, _| true,
             &mut rng2,
         );
@@ -2983,6 +3007,7 @@ mod tests {
             true,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            crate::spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
             |_, _, _| true,
             &mut rng,
         );
@@ -3006,6 +3031,7 @@ mod tests {
             false,
             false,
             crate::spectral::DEFAULT_PROJ_THRESHOLD,
+            crate::spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
             |_, _, _| true,
             &mut rng2,
         );

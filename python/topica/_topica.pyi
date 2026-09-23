@@ -569,6 +569,7 @@ class CTM:
         keep_eta_cov: bool = True,
         num_threads: Optional[int] = None,
         spectral_projection_threshold: int = 10000,
+        spectral_anchor_min_doc_frac: float = 0.003,
         progress: Callable[[int, int, dict], object] | None = None,
     ) -> "CTM":
         """EM stops once the relative change in the variational bound falls below
@@ -763,6 +764,7 @@ class STM:
         keep_eta_cov: bool = True,
         num_threads: Optional[int] = None,
         spectral_projection_threshold: int = 10000,
+        spectral_anchor_min_doc_frac: float = 0.003,
         progress: Callable[[int, int, dict], object] | None = None,
     ) -> "STM":
         """Fit. prevalence (or covariates, a symmetric alias) is (num_docs, F)

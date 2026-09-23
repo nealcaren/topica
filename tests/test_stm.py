@@ -730,6 +730,29 @@ def test_stm_restarts_validates(bad):
         topica.STM(num_topics=2).fit(docs, prevalence=x.reshape(-1, 1), iters=2, restarts=bad)
 
 
+@pytest.mark.parametrize("bad", [-0.1, 1.0, float("nan")])
+def test_stm_anchor_floor_validates(bad):
+    import topica
+    rng = np.random.default_rng(0)
+    docs, x = _make_synthetic_corpus(rng, n_per_class=20)
+    with pytest.raises(ValueError, match="spectral_anchor_min_doc_frac"):
+        topica.STM(num_topics=2).fit(docs, prevalence=x.reshape(-1, 1), iters=2,
+                                     spectral_anchor_min_doc_frac=bad)
+
+
+def test_stm_anchor_floor_default_is_inert_on_small_corpora():
+    """Below ~333 documents the default 0.3% floor is one document, so the spectral
+    init (and the fit) equals the unfloored R-stm path exactly (#874)."""
+    import topica
+    rng = np.random.default_rng(0)
+    docs, x = _make_synthetic_corpus(rng, n_per_class=60)
+    X = x.reshape(-1, 1)
+    a = topica.STM(num_topics=3).fit(docs, prevalence=X, iters=5)
+    b = topica.STM(num_topics=3).fit(docs, prevalence=X, iters=5,
+                                     spectral_anchor_min_doc_frac=0.0)
+    np.testing.assert_array_equal(np.asarray(a.topic_word), np.asarray(b.topic_word))
+
+
 def test_content_kappa_reconstructs_content_beta():
     """SAGE kappa decomposition (issue #237): m + kappa_topic + kappa_cov +
     kappa_interaction, softmax over words, reproduces the per-group topic-word."""

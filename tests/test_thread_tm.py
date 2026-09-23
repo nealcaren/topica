@@ -831,18 +831,19 @@ def test_reply_completion_rejects_unknown_theta():
 
 
 def test_reply_completion_stm_kwargs_only_moves_stm_arm():
-    """stm_kwargs (issue #888) changes only the stm arm: a short fit (iters=3) moves its score
-    while the ThreadTM arms stay bit-identical; the options are recorded in settings."""
+    """stm_kwargs (issue #888) changes only the stm arm: a one-iteration fit moves its score
+    while the ThreadTM arms stay bit-identical; the options are recorded in settings. (One
+    iteration, not a few: from the spectral init this arm converges in about three.)"""
     docs, parents = _branching_corpus(seed=1, persistence=0.92)
     cov = [i % 2 for i in range(len(docs))]
     kw = dict(num_topics=5, covariates=cov, baselines=("no_tree", "permuted", "stm"),
               em_iters=40, seed=13, n_boot=50)
     base = topica.evaluate.reply_completion(docs, parents, **kw)
-    short = topica.evaluate.reply_completion(docs, parents, stm_kwargs={"iters": 3}, **kw)
+    short = topica.evaluate.reply_completion(docs, parents, stm_kwargs={"iters": 1}, **kw)
     for name in ("tree", "no_tree", "permuted"):
         assert short.per_token_ll[name] == base.per_token_ll[name]
     assert short.per_token_ll["stm"] != base.per_token_ll["stm"]
-    assert short.settings["stm_kwargs"] == {"iters": 3}
+    assert short.settings["stm_kwargs"] == {"iters": 1}
     assert base.settings["stm_kwargs"] is None
 
 
