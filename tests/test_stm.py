@@ -648,6 +648,11 @@ def test_stm_restarts_returns_best_bound():
     assert np.asarray(multi.topic_word).shape == np.asarray(single.topic_word).shape
     # restart 0 reuses the single fit's seed+init, so best-of-N is never worse.
     assert float(multi.bound) >= float(single.bound) - 1e-6
+    # every restart inherits the constructor settings (not just num_topics).
+    shrunk = topica.STM(num_topics=2, seed=1, sigma_shrink=0.3).fit(
+        docs, prevalence=X, iters=5, restarts=2
+    )
+    assert shrunk.settings["sigma_shrink"] == 0.3
 
 
 def test_stm_restarts_rejects_beta_init():

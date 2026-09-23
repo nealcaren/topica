@@ -2552,28 +2552,6 @@ class STM(_STM):
     :meth:`fit`.
     """
 
-    def __init__(
-        self,
-        num_topics,
-        *,
-        sigma_shrink=0.0,
-        seed=13,
-        init="spectral",
-        variational="laplace",
-    ):
-        # The compiled ``_STM`` (a PyO3 class) is constructed in ``__new__`` from
-        # these same arguments; ``__init__`` only records them so ``fit(restarts=N)``
-        # can spawn fresh, independently-seeded models (the core fixes seed/init at
-        # construction). Do NOT forward to ``super().__init__`` — object.__init__
-        # rejects extra args once __new__ has already built the instance.
-        self._ctor_args = dict(
-            num_topics=num_topics,
-            sigma_shrink=sigma_shrink,
-            seed=seed,
-            init=init,
-            variational=variational,
-        )
-
     def fit(
         self,
         corpus,
@@ -2682,13 +2660,13 @@ class STM(_STM):
                     "fixed beta_init leaves every restart identical. Drop beta_init "
                     "or use restarts=1."
                 )
-            base = getattr(self, "_ctor_args", None) or dict(
-                num_topics=self.num_topics, seed=13, init="spectral",
-            )
+            # ``settings`` holds the constructor arguments (the core fixes seed and
+            # init at construction), so each restart is a fresh, reseeded model.
+            base = dict(self.settings)
             best, best_bound = None, float("-inf")
             for i in range(int(restarts)):
                 args = dict(base)
-                args["seed"] = base.get("seed", 13) + i
+                args["seed"] = base["seed"] + i
                 if i > 0:
                     args["init"] = "random"
                 cand = type(self)(**args)
