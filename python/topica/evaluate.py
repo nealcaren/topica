@@ -21,7 +21,7 @@ from .coherence import (
 )
 
 from .inspect import frex
-from .topic_groups import TopicGroups, topic_groups  # noqa: F401  (issue #803)
+from ._topic_groups import TopicGroups, topic_groups  # noqa: F401  (issue #803)
 
 # Coherence / diversity / exclusivity / intrusion diagnostics belong to the
 # evaluate stage; re-export the public surface from topica.coherence (a leaf

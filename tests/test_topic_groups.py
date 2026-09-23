@@ -106,3 +106,73 @@ def test_validation():
         topic_groups([beta, beta], threshold=1.5)
     with pytest.raises(ValueError, match="metric"):
         topic_groups([beta, beta], metric="euclid")
+
+
+def _reference_merges(dist, run_of):
+    """The plain O(T^3) constrained average linkage: full-matrix argmin every merge."""
+    n = dist.shape[0]
+    D = dist.astype(float).copy()
+    D[run_of[:, None] == run_of[None, :]] = np.inf
+    np.fill_diagonal(D, np.inf)
+    runs = [{int(r)} for r in run_of]
+    sizes = np.ones(n)
+    alive = np.ones(n, dtype=bool)
+    out = []
+    while True:
+        a, b = divmod(int(np.argmin(D)), n)
+        d = D[a, b]
+        if not np.isfinite(d):
+            return out
+        row = (sizes[a] * D[a] + sizes[b] * D[b]) / (sizes[a] + sizes[b])
+        runs[a] |= runs[b]
+        for c in np.flatnonzero(alive):
+            if c != a and runs[c] & runs[a]:
+                row[c] = np.inf
+        row[~alive] = np.inf
+        row[a] = np.inf
+        D[a, :] = D[:, a] = row
+        D[b, :] = D[:, b] = np.inf
+        alive[b] = False
+        sizes[a] += sizes[b]
+        out.append((a, b, float(d)))
+
+
+def test_cached_merges_match_the_full_scan_reference():
+    """The row-minimum cache must reproduce the plain full-scan merge sequence exactly,
+    ties included (quantized rows create many equal distances)."""
+    from topica._topic_groups import _constrained_merges, _similarity
+
+    rng = np.random.default_rng(7)
+    for trial in range(120):
+        ks = rng.integers(1, 6, size=rng.integers(2, 6))
+        if trial % 2:
+            betas = [rng.integers(0, 3, size=(k, 10)).astype(float) + 1e-9 for k in ks]
+        else:
+            betas = [rng.random((k, 10)) for k in ks]
+        pooled = np.vstack(betas)
+        run_of = np.concatenate([np.full(k, r) for r, k in enumerate(ks)])
+        dist = 1.0 - _similarity(pooled, "cosine")
+        assert _constrained_merges(dist, run_of) == _reference_merges(dist, run_of)
+
+
+def test_flat_alias_is_the_function():
+    assert callable(topica.topic_groups)
+    assert topica.topic_groups is topica.evaluate.topic_groups
+
+
+def test_rejects_nan_and_negative_input():
+    beta = _planted()
+    bad = beta.copy()
+    bad[0, 0] = np.nan
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        topic_groups([beta, bad])
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        topic_groups([beta, -beta])
+
+
+def test_mixed_prevalence_warns(toy_corpus):
+    fitted = topica.LDA(3, seed=1).fit(toy_corpus, iters=50)
+    raw = np.asarray(fitted.topic_word)
+    with pytest.warns(UserWarning, match="no document-topic matrix"):
+        g = topic_groups([fitted, raw])
+    assert all(x["weight"] is None for x in g.groups)

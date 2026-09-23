@@ -17,6 +17,7 @@ threshold sweep of TopicCheck's figure 2) without re-clustering.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -70,38 +71,62 @@ def _constrained_merges(dist, run_of):
     (the surviving id is ``a``). Merging stops when no two clusters can join. The
     distances are non-decreasing: a merged row is a size-weighted average of two rows
     whose finite entries are all at least the current minimum, and a forbidden pair
-    stays forbidden because a cluster's set of runs only grows."""
+    stays forbidden because a cluster's set of runs only grows.
+
+    Each row caches its minimum and the column where it occurs, so a merge rescans
+    only the rows whose cached minimum it invalidated, rather than the whole matrix.
+    Ties resolve exactly as a row-major ``argmin`` over the full matrix would (lowest
+    row, then lowest column)."""
     n = dist.shape[0]
+    n_runs = int(run_of.max()) + 1
     D = dist.astype(np.float64).copy()
-    same_run = run_of[:, None] == run_of[None, :]
-    D[same_run] = np.inf
+    D[run_of[:, None] == run_of[None, :]] = np.inf
     np.fill_diagonal(D, np.inf)
-    runs = [{int(r)} for r in run_of]
+    has_run = np.zeros((n, n_runs), dtype=bool)  # which runs each cluster contains
+    has_run[np.arange(n), run_of] = True
     sizes = np.ones(n)
     alive = np.ones(n, dtype=bool)
+    row_arg = np.argmin(D, axis=1)
+    row_min = D[np.arange(n), row_arg]
     merges = []
     while True:
-        flat = int(np.argmin(D))
-        a, b = divmod(flat, n)
-        d = D[a, b]
+        a = int(np.argmin(row_min))
+        b = int(row_arg[a])
+        d = row_min[a]
         if not np.isfinite(d):
             break
         na, nb = sizes[a], sizes[b]
         row = (na * D[a] + nb * D[b]) / (na + nb)
-        runs[a] |= runs[b]
+        has_run[a] |= has_run[b]
         # the merged cluster can no longer join any cluster sharing one of its runs
-        for c in np.flatnonzero(alive):
-            if c != a and runs[c] & runs[a]:
-                row[c] = np.inf
+        row[(has_run[:, has_run[a]]).any(axis=1)] = np.inf
         row[~alive] = np.inf
-        row[a] = np.inf
+        row[a] = row[b] = np.inf
         D[a, :] = row
         D[:, a] = row
         D[b, :] = np.inf
         D[:, b] = np.inf
         alive[b] = False
         sizes[a] = na + nb
+        row_min[b] = np.inf
         merges.append((a, b, float(d)))
+
+        # refresh the cached minima: row a is new; a row whose minimum sat in column a
+        # or b is rescanned; any other row can only improve through its new entry in
+        # column a (column b is now inf, and every other entry is unchanged)
+        stale = alive & ((row_arg == a) | (row_arg == b))
+        stale[a] = alive[a]
+        for c in np.flatnonzero(stale):
+            row_arg[c] = int(np.argmin(D[c]))
+            row_min[c] = D[c, row_arg[c]]
+        fresh = alive & ~stale
+        fresh[a] = False
+        new = D[fresh, a]
+        cur = row_min[fresh]
+        better = (new < cur) | ((new == cur) & (a < row_arg[fresh]))
+        idx = np.flatnonzero(fresh)[better]
+        row_min[idx] = new[better]
+        row_arg[idx] = a
     return merges
 
 
@@ -240,8 +265,11 @@ def _build(betas, prevalences, vocab, sim, offsets, run_of, merges, threshold):
         return x
 
     for a, b, d in merges:
-        if 1.0 - d < threshold:
-            break  # merge similarities are non-increasing, so the rest are lower still
+        # merge similarities are non-increasing, so the rest are lower still; the
+        # tolerance keeps a threshold sitting exactly on a tied value from stopping
+        # one merge early through float round-off in the averaged distances
+        if 1.0 - d < threshold - 1e-12:
+            break
         parent[find(b)] = find(a)
 
     clusters = {}
@@ -303,6 +331,9 @@ def topic_groups(runs, *, threshold=0.5, metric="cosine"):
 
     Notes
     -----
+    Group ``weight`` (mean topic prevalence across runs) needs every run's
+    document-topic matrix; with raw topic-word arrays it is ``None``.
+
     A group never holds two topics from the same run (TopicCheck's up-to-one
     constraint), so a run that splits one theme into two topics contributes one of
     them and leaves the other in a separate, less solid group. Solidity counts runs,
@@ -319,6 +350,8 @@ def topic_groups(runs, *, threshold=0.5, metric="cosine"):
         beta, prev, vocab = _topic_word_and_prevalence(r)
         if beta.ndim != 2 or beta.shape[0] < 1:
             raise ValueError(f"each run needs a 2-D (K, V) topic-word matrix, got shape {beta.shape}")
+        if not np.all(np.isfinite(beta)) or np.any(beta < 0):
+            raise ValueError("topic-word matrices must be finite and non-negative")
         betas.append(beta)
         prevalences.append(prev)
         vocabs.append(vocab)
@@ -332,6 +365,14 @@ def topic_groups(runs, *, threshold=0.5, metric="cosine"):
             "columns line up"
         )
     vocab = known[0] if known else None
+    have_prev = [p is not None for p in prevalences]
+    if any(have_prev) and not all(have_prev):
+        warnings.warn(
+            "some runs have no document-topic matrix (for example raw topic-word arrays), "
+            "so group weights are not reported; pass fitted models for every run to get them",
+            UserWarning,
+            stacklevel=2,
+        )
 
     pooled = np.vstack(betas)
     run_of = np.concatenate([np.full(b.shape[0], r) for r, b in enumerate(betas)])
