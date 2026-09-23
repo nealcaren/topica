@@ -36,10 +36,12 @@ _LL = "log-likelihood"
 _ELBO_DOC = "ELBO per document"
 _OBJECTIVE_LABEL = {
     # collapsed Gibbs: joint log-likelihood of the training tokens (DMR, GDMR,
-    # LabeledLDA, SAGE, and SupervisedLDA return their log_likelihood_history)
+    # LabeledLDA, and SAGE return their log_likelihood_history)
     "LDA": _LL, "PT": _LL, "KeyATM": _LL, "SeededLDA": _LL, "FactorialLDA": _LL,
     "AuthorTopic": _LL, "MGLDA": _LL, "TopicsOverTime": _LL, "DMR": _LL, "GDMR": _LL,
-    "LabeledLDA": _LL, "SAGE": _LL, "SupervisedLDA": _LL,
+    "LabeledLDA": _LL, "SAGE": _LL,
+    # sLDA records only the Gaussian likelihood of the response y, not of the tokens
+    "SupervisedLDA": "response log-likelihood",
     # Wordfish's Poisson log-likelihood drops the -log(y!) constant
     "Wordfish": "log-likelihood (up to a constant)",
     # per-token averages
@@ -49,7 +51,9 @@ _OBJECTIVE_LABEL = {
     "OnlineLDA": "ELBO", "CTM": "variational bound", "STM": "variational bound",
     # amortized (VAE) inference: the batch-mean ELBO, per document
     "ProdLDA": _ELBO_DOC, "CombinedTM": _ELBO_DOC, "ZeroShotTM": _ELBO_DOC,
-    "Scholar": _ELBO_DOC, "InfoCTM": _ELBO_DOC, "DETM": _ELBO_DOC,
+    "Scholar": _ELBO_DOC, "InfoCTM": _ELBO_DOC,
+    # DETM rescales each minibatch to the corpus (D/batch), so its ELBO is corpus-scale
+    "DETM": "ELBO",
     # ETM reports either, depending on its inference route
     "ETM": lambda m: _ELBO_DOC if _get(m, "inference") == "vae" else "variational bound",
     # factorization and other objectives
