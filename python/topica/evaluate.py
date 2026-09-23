@@ -21,6 +21,7 @@ from .coherence import (
 )
 
 from .inspect import frex
+from ._topic_groups import TopicGroups, topic_groups  # noqa: F401  (issue #803)
 
 # Coherence / diversity / exclusivity / intrusion diagnostics belong to the
 # evaluate stage; re-export the public surface from topica.coherence (a leaf
@@ -39,6 +40,7 @@ __all__ = [
     'ReplyCompletionResult',
     'ResidualCheck',
     'TopicDendrogram',
+    'TopicGroups',
     'align_topics',
     'bootstrap_stability',
     'check_residuals',
@@ -57,6 +59,7 @@ __all__ = [
     'reply_completion',
     'thread_stability',
     'ThreadStabilityResult',
+    'topic_groups',
     'semantic_coherence',
     'topic_diversity',
     'topic_semantic_diversity',

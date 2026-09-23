@@ -8,6 +8,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`topica.evaluate.topic_groups(runs)`: a TopicCheck-style groups-by-runs table** (#803).
+  It groups the topics of N runs at once (average-linkage clustering with TopicCheck's
+  up-to-one constraint, so a group holds at most one topic per run) and returns the
+  assignment grid (empty cells mark runs that lack the topic), per-group solidity (share
+  of runs represented), prevalence weight, aggregated top words, and `cut(threshold)` to
+  sweep the same tree from solid to fringe groups. Runs may differ in `K`.
 - **Every fitted model reports a fit-statistics block** (#806), the topic-model analogue
   of a regression table. `print(model)` and notebook display show shape (topics,
   effective topics, documents, vocabulary), convergence and iterations, the in-sample
