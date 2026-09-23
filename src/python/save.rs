@@ -128,7 +128,7 @@ pub(crate) fn model_tag_name(tag: u8) -> &'static str {
         MODEL_TAG_INFOCTM => "InfoCTM",
         MODEL_TAG_ONLINE_LDA => "OnlineLDA",
         MODEL_TAG_S3 => "SemanticSignalSeparation",
-        MODEL_TAG_THREADTM => "ThreadTM",
+        MODEL_TAG_THREADTM => "TreeFieldTM",
         _ => "unknown",
     }
 }

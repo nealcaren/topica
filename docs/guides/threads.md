@@ -1,9 +1,8 @@
-# Threaded conversations: thread-context shrinkage
+# Threaded conversations: ThreadTM
 
 Forum comments are written in reply to something, and deep replies are often too short to
-place on their own words. `topica.threads.ThreadSmoother` keeps an ordinary topic model as the
-base (LDA, STM, CTM, or any fitted model with `doc_topic` and `topic_word`) and lets each
-document borrow topic mass from its reply context:
+place on their own words. `ThreadTM` fits an ordinary topic model as the base (LDA by default,
+or STM or CTM) and lets each document borrow topic mass from its reply context:
 
 $$
 \tilde\theta_d = \frac{n_d\,\theta_d + a_p\,\theta_{\mathrm{par}(d)} + a_t\,\theta_{\mathrm{thr}(d)}}
@@ -11,13 +10,14 @@ $$
 $$
 
 Here $n_d$ is the document's in-vocabulary token count, $\theta_{\mathrm{par}(d)}$ its parent's
-base topic mix, and $\theta_{\mathrm{thr}(d)}$ the token-weighted mean mix of the rest of its
-thread. This is the posterior mean of $\theta_d$ under a Dirichlet prior centered on the reply
-context, with pseudo-counts $a_p$ and $a_t$. A three-token reply is dominated by its context; a
-three-hundred-token reply barely moves.
+base topic mix, and $\theta_{\mathrm{thr}(d)}$ the token-weighted mean mix of every other
+document in its thread except the parent. The two contexts do not overlap, so $a_p$ weights the
+parent and $a_t$ weights everyone else in the thread. This is the posterior mean of $\theta_d$
+under a Dirichlet prior centered on the reply context, with pseudo-counts $a_p$ and $a_t$. A
+three-token reply is dominated by its context; a three-hundred-token reply barely moves.
 
 !!! warning "Experimental"
-    `ThreadSmoother` is an original construction validated by planted recovery (see
+    `ThreadTM` is an original construction validated by planted recovery (see
     `tests/test_threads.py`), with no published reference yet. Call
     `topica.enable_experimental()` first. It may change without a deprecation cycle.
 
@@ -25,35 +25,37 @@ three-hundred-token reply barely moves.
 
 ```python
 import topica
-from topica import threads
 
 topica.enable_experimental()
 data = topica.datasets.load_threads()
 docs, parents = data.documents, data.parents
 
-sm = threads.ThreadSmoother()                   # contexts=("parent", "thread")
-sm.fit(docs, parents,
-       base=lambda corpus: topica.LDA(20, seed=13).fit(corpus, iters=1000),
-       corpus_kwargs={"min_cf": 5}, seed=13)
-print(sm)
-theta = sm.theta_tilde                          # (D, K), one row per input document
+model = topica.ThreadTM(20, seed=13)                 # base="lda"
+model.fit(docs, parents, iters=1000, corpus_kwargs={"min_cf": 5})
+print(model)
+model.top_words(10)                                  # the base model's topics
+theta = model.doc_topic                              # (D, K) smoothed, one row per document
 ```
 
-`base` is a factory, `corpus -> fitted model`, because the pseudo-counts are estimated on a
-masked refit: half the tokens of eligible leaf replies are held out, the base is fit on the
-rest, the pseudo-counts are chosen by held-out log likelihood on validation threads, and every
-reported number comes from separate test threads. The factory is then called once more on the
-full corpus, and `theta_tilde` smooths that fit. For an STM base, index the prevalence design by
-`corpus.kept_indices` inside the factory so its rows follow the documents the corpus kept.
+For an STM base, pass the prevalence design with one row per input document; `ThreadTM` keeps
+its rows aligned with the documents the corpus keeps and uses five best-bound restarts by
+default:
 
-To smooth a model you fit yourself on the same documents, use
-`sm.transform(model, corpus, parents)`.
+```python
+X, names = topica.one_hot(community)
+model = topica.ThreadTM(20, base="stm", seed=13).fit(docs, parents, prevalence=X)
+```
+
+The pseudo-counts are estimated, not assumed. `fit` holds out half the tokens of eligible leaf
+replies, fits the base on the rest, chooses $(a_p, a_t)$ by held-out log likelihood on
+validation threads, and reports every number from separate test threads. It then fits the base
+on the full corpus and smooths that fit.
 
 ## Read
 
 | Attribute | Meaning |
 |---|---|
-| `alpha`, `alpha_ci` | pseudo-counts per context, with 95% thread-bootstrap intervals |
+| `alpha`, `alpha_ci` | the pseudo-counts $a_p$ and $a_t$, with 95% intervals |
 | `parent_share`, `parent_share_ci` | $a_p / (a_p + a_t)$: how dyadic the conversation is |
 | `edge_effect` | held-out gain of the true parent over a shuffled parent, nats per token |
 | `completion` | held-out gain over the base, overall and by reply-length tercile |
@@ -63,24 +65,58 @@ To smooth a model you fit yourself on the same documents, use
 permutes parent assignments within (thread, depth), which keeps every reply's depth and thread
 and every parent's number of children, and changes only which comment each reply answers.
 
+## Uncertainty
+
+Intervals are thread-bootstrap percentiles: validation threads are resampled and the
+pseudo-counts re-chosen for each draw, and test threads are resampled for the held-out gains.
+The parent share is searched on a grid that is evenly spaced on the logit scale and stops just
+short of 0 and 1, so the estimate and its interval stay inside the unit interval (a very weak
+prior against the boundary). `parent_share_at_bound` flags an estimate at the outermost grid
+value, where the data cannot tell the smaller pseudo-count from zero.
+
+A single calibration holds the base fit and the held-out mask fixed. `fit(..., n_refit=R)`
+repeats the calibration `R` more times with new masks and base seeds and pools the bootstrap
+draws, so intervals also reflect masking and base-fit variation. Use it for any number you
+report; `replicates` lists each calibration's point estimates. `draws` holds the pooled
+bootstrap draws, for intervals on derived quantities such as the difference in parent share
+between two corpora.
+
 ## Strip quotes first
 
 Quoted text makes a reply look like its parent for reasons that have nothing to do with topical
 uptake. Strip it before fitting:
 
 ```python
+from topica import threads
+
 texts = [threads.strip_quotes(t) for t in raw_texts]        # ">" and "&gt;" lines, <i> spans
 docs = [topica.tokenize(t, stopwords="english") for t in texts]
 docs = threads.strip_copied_runs(docs, parents, n=5)        # unmarked verbatim copying
 ```
 
+## Smoothing a model you already fit
+
+`topica.threads.ThreadSmoother` is the layer underneath. Give it a factory
+`base(corpus)` (or `base(corpus, seed)`) and it calibrates and smooths any model with
+`doc_topic` and `topic_word`; `transform(model, corpus, parents)` applies fitted pseudo-counts
+to another fit over the same documents.
+
+## Relation to other threaded models
+
+[`CSATM`](models.md#csatm) also smooths each comment toward its ancestors after fitting, with a
+fixed distance decay. `ThreadTM` estimates how much to borrow on held-out replies, separates the
+parent from the rest of the thread, and nets the parent's contribution against a placebo.
+[`TreeFieldTM`](models.md#treefieldtm) builds the reply tree into a logistic-normal prior and
+estimates it jointly; it was topica's earlier threaded model under the name `ThreadTM`.
+
 ## Limits
 
 - One pseudo-count per context borrows for every reply alike. When only some replies take up
   their parent's topics and the others turn to sharply different ones, borrowing can cost the
-  second group as much as it helps the first, and the fit returns zero. Read a zero
-  pseudo-count as "borrowing does not help on average", not "no reply follows its parent".
-  The gain by reply length (`completion["by_length"]`) shows where borrowing helps and hurts.
-- Pseudo-counts are calibrated on leaf replies and applied to every document.
-- `theta_tilde` is a topic measure. Lexical reuse of the parent's own words is a separate
-  construct and is not folded in.
+  second group as much as it helps the first, and the fit returns little or no borrowing. Read
+  a small pseudo-count as "borrowing does not help on average", not "no reply follows its
+  parent". `completion["by_length"]` shows where borrowing helps and hurts.
+- Pseudo-counts are calibrated on leaf replies and applied to every document. For an internal
+  comment, the thread mix includes its own replies.
+- `doc_topic` is a topic measure. Reuse of the parent's own words is a separate construct and
+  is not folded in.

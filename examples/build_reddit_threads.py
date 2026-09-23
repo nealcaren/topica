@@ -1,7 +1,7 @@
-"""Build examples/reddit_threads.csv: the ThreadTM two-subreddit vignette corpus.
+"""Build examples/reddit_threads.csv: the TreeFieldTM two-subreddit vignette corpus.
 
 Source: ConvoKit ``reddit-corpus-small`` (Chang et al. 2020), a 100-subreddit
-Reddit sample. We keep two subreddits chosen to make ThreadTM's point honestly:
+Reddit sample. We keep two subreddits chosen to make TreeFieldTM's point honestly:
 
   - askscience    -- technical Q&A; replies genuinely answer their parent, so the
                      reply tree carries topic structure (persistence is identified).

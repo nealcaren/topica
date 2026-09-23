@@ -127,7 +127,7 @@ use scholar::Scholar;
 use semantic_signal_separation::SemanticSignalSeparation;
 use sentence_ideal::IdealPointSentenceTM;
 use tbip::TBIP;
-use thread_tm::ThreadTM;
+use thread_tm::TreeFieldTM;
 use tlda::TensorLDA;
 use topical_ngrams::TopicalNGrams;
 use topics_over_time::TopicsOverTime;
@@ -7353,7 +7353,7 @@ fn infer_theta_batch_per_doc(
 /// Posterior-predictive `E[softmax([η, 0])]` per document (D × K), a Monte-Carlo average over the
 /// full logistic-normal variational posterior `N(eta_mean_d, eta_cov_d)` — the hedged, sample-
 /// averaged θ that a proper held-out predictive should use, rather than the plug-in `softmax(mean η)`
-/// (issue #840, symmetric with `ThreadTM.posterior_doc_topic`, which uses a diagonal ν; STM/CTM retain
+/// (issue #840, symmetric with `TreeFieldTM.posterior_doc_topic`, which uses a diagonal ν; STM/CTM retain
 /// the full ν here). Deterministic given `seed`.
 fn posterior_doc_topic_mc(
     eta_mean: &Array2<f64>,
@@ -7905,7 +7905,7 @@ impl CTM {
 
     /// Posterior-predictive `E[softmax(η)]` per document (D × K): a Monte-Carlo average of `n_samples`
     /// draws over the full logistic-normal variational posterior, symmetric with
-    /// `ThreadTM.posterior_doc_topic`. Unlike the plug-in `doc_topic` (= `softmax(mean η)`) it integrates
+    /// `TreeFieldTM.posterior_doc_topic`. Unlike the plug-in `doc_topic` (= `softmax(mean η)`) it integrates
     /// the posterior covariance ν, so it hedges rather than overcommitting — the θ to score held-out
     /// tokens with when comparing to a sample-averaged model like LDA (#840). Needs the variational
     /// covariance; refit with `keep_eta_cov=True` if it was dropped. Deterministic given `seed`.
@@ -9086,7 +9086,7 @@ impl STM {
 
     /// Posterior-predictive `E[softmax(η)]` per document (D × K): a Monte-Carlo average of `n_samples`
     /// draws over the full logistic-normal variational posterior, symmetric with
-    /// `ThreadTM.posterior_doc_topic`. Unlike the plug-in `doc_topic` (= `softmax(mean η)`) it integrates
+    /// `TreeFieldTM.posterior_doc_topic`. Unlike the plug-in `doc_topic` (= `softmax(mean η)`) it integrates
     /// the posterior covariance ν, so it hedges rather than overcommitting — the θ to score held-out
     /// tokens with when comparing to a sample-averaged model like LDA (#840). Needs the variational
     /// covariance; refit with `keep_eta_cov=True` if it was dropped. Deterministic given `seed`.
@@ -9689,7 +9689,7 @@ fn window_cooccurrence(
     py.allow_threads(move || coh::cooccurrence(&docs, num_relevant, &pairs, window))
 }
 
-/// Minimal ThreadTM fit entry point (experimental) — used to smoke-test the reply-threaded
+/// Minimal TreeFieldTM fit entry point (experimental) — used to smoke-test the reply-threaded
 /// topic model on real corpora before the full model class lands. `docs` are token-id lists,
 /// `parents[d]` is `d`'s parent index (negative marks a root), `groups[d]` is `d`'s covariate
 /// group id in `0..num_groups` (all-zeros + `num_groups=1` = no covariate), `num_types` the
@@ -17275,7 +17275,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<GSDMM>()?;
     m.add_class::<BTM>()?;
     m.add_class::<CSATM>()?;
-    m.add_class::<ThreadTM>()?;
+    m.add_class::<TreeFieldTM>()?;
     m.add_class::<FactorialLDA>()?;
     m.add_class::<PolylingualLDA>()?;
     m.add_class::<DiscLDA>()?;

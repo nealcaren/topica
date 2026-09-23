@@ -78,7 +78,7 @@ from ._topica import (
     GSDMM,
     BTM,
     CSATM,
-    ThreadTM,
+    TreeFieldTM,
     FactorialLDA,
     FactorialLDA as FLDA,
     PolylingualLDA,
@@ -240,6 +240,7 @@ from .embedding_regression import (  # noqa: E402  (conText embedding regression
 )
 from . import keyatm  # noqa: E402  (keyATM-specific workflow helpers)
 from . import threads  # noqa: E402  (thread-context shrinkage over any fitted model, #895)
+from .threads import ThreadTM  # noqa: E402  (threaded topic model: base model + thread shrinkage, #895)
 from . import effects  # noqa: E402  (model-neutral prevalence analysis)
 from . import validation  # noqa: E402  (post-hoc topic diagnostics surface)
 from . import content  # noqa: E402  (content-covariate diagnostics: STM/STS/SAGE)

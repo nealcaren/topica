@@ -289,7 +289,7 @@ def test_ng20_minilm_loads_bunch(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# threads: the threaded ThreadTM vignette (fetch path, Bunch with reply tree)
+# threads: the threaded TreeFieldTM vignette (fetch path, Bunch with reply tree)
 # ---------------------------------------------------------------------------
 
 
@@ -377,7 +377,7 @@ def test_threads_parents_align_and_fit(tmp_path, monkeypatch):
     for i, p in enumerate(b.parents):
         assert p == -1 or p < i  # a parent always comes before its child
     topica.enable_experimental()
-    m = topica.ThreadTM(2, em_iters=10, seed=13).fit(
+    m = topica.TreeFieldTM(2, em_iters=10, seed=13).fit(
         b.documents, parents=b.parents, min_count=1
     )
     assert m.topic_word.shape[0] == 2

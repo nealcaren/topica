@@ -171,7 +171,7 @@ _REGISTRY = {
             "Two-subreddit threaded Reddit corpus (5,042 comments in 171 reply "
             "trees): 'askscience' (technical Q&A, replies answer their parent) and "
             "'pokemontrades' (the deepest trees in the source, but replies "
-            "coordinate trades rather than respond on-topic). The ThreadTM reply-"
+            "coordinate trades rather than respond on-topic). The TreeFieldTM reply-"
             "tree vignette. Columns 'doc_id', 'thread_root', 'parent' (0-based row "
             "index of the comment replied to, -1 for a root), 'subreddit', "
             "'timestamp', raw 'text'. Source: ConvoKit reddit-corpus-small "
@@ -504,7 +504,7 @@ def load_ng20_minilm(*, return_path: bool = False):
 def load_threads(*, return_path: bool = False):
     """Load the two-subreddit threaded Reddit corpus (5,042 comments, 171 trees).
 
-    The :class:`~topica.ThreadTM` reply-tree vignette. Two subreddits, chosen to
+    The :class:`~topica.TreeFieldTM` reply-tree vignette. Two subreddits, chosen to
     make the model's point honestly:
 
     - ``askscience`` — technical Q&A; replies genuinely answer their parent, so
@@ -519,8 +519,8 @@ def load_threads(*, return_path: bool = False):
     turnkey::
 
         b = topica.datasets.load_threads()
-        topica.enable_experimental()  # ThreadTM is experimental
-        model = topica.ThreadTM(8, coupling="parent").fit(
+        topica.enable_experimental()  # TreeFieldTM is experimental
+        model = topica.TreeFieldTM(8, coupling="parent").fit(
             b.documents, parents=b.parents, covariates=b.subreddit
         )
         model.persistence()   # read `reliability` before claiming persistence

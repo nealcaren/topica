@@ -177,3 +177,66 @@ def test_validation_and_gate():
             threads.ThreadSmoother()
     finally:
         topica.enable_experimental()
+
+
+def test_parent_share_stays_inside_the_unit_interval(inherited):
+    sm = inherited[0]
+    lo, hi = sm.parent_share_ci
+    assert 0 < lo <= sm.parent_share <= hi < 1
+    assert isinstance(sm.parent_share_at_bound, bool)
+    assert 0 <= sm.p_no_borrowing <= 1
+    assert sm.draws["parent_share"].shape[0] == sm.settings["n_boot"]
+
+
+def test_refit_bootstrap_pools_calibrations_and_reseeds_the_base():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=120, seed=6)
+    seen = []
+
+    def base(corpus, seed):
+        seen.append(seed)
+        return topica.LDA(K, seed=seed).fit(corpus, iters=300)
+
+    sm = threads.ThreadSmoother().fit(docs, parents, base=base, seed=3, n_boot=100,
+                                      n_refit=2, final=False)
+    assert sm.uncertainty == "refit" and len(sm.replicates) == 3
+    assert len(set(seen)) == 3                      # a new base seed per calibration
+    assert sm.draws["alpha"].shape == (300, 2)      # draws pooled across calibrations
+    assert sm.edge_effect["lo"] <= sm.edge_effect["estimate"] <= sm.edge_effect["hi"]
+
+
+def test_thread_context_excludes_the_parent_by_default():
+    # One thread: root 0 -> reply 1 -> reply 2, plus a sibling 3 of reply 1.
+    theta = np.array([[1.0, 0.0], [0.0, 1.0], [0.5, 0.5], [1.0, 0.0]])
+    lengths = np.array([10.0, 10.0, 10.0, 10.0])
+    parents = [-1, 0, 1, 0]
+    _, root, _ = threads.thread_structure(parents)
+    _, _, ctx = threads._context_mixes(theta, lengths, np.arange(4), parents, root,
+                                       ("parent", "thread"), exclude_parent=True)
+    assert np.allclose(ctx["parent"][2], [0.0, 1.0])
+    assert np.allclose(ctx["thread"][2], [1.0, 0.0])   # docs 0 and 3 only, not parent 1
+    _, _, ctx2 = threads._context_mixes(theta, lengths, np.arange(4), parents, root,
+                                        ("parent", "thread"), exclude_parent=False)
+    assert np.allclose(ctx2["thread"][2], [2 / 3, 1 / 3])   # docs 0, 1 and 3
+
+
+def test_threadtm_model_surface():
+    docs, parents, truth, beta = _simulate(inherit=0.9, n_threads=300, seed=8)
+    m = topica.ThreadTM(K, seed=3).fit(docs, parents, iters=400, n_boot=200)
+    assert m.doc_topic.shape == (len(docs), K)
+    assert m.topic_word.shape == (K, len(m.vocabulary))
+    assert len(m.top_words(5)) == K
+    assert m.alpha["parent"] > 0 and m.edge_effect["lo"] > 0
+    assert 0 < m.parent_share < 1
+    assert "ThreadTM(num_topics=4" in repr(m)
+
+
+def test_threadtm_stm_base_aligns_prevalence_rows():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=60, seed=9)
+    docs[5] = ["zzz_rare_only"]            # emptied by min_cf, so kept rows != input rows
+    X = np.random.default_rng(1).integers(0, 2, (len(docs), 1)).astype(float)
+    m = topica.ThreadTM(K, base="stm", seed=3).fit(
+        docs, parents, prevalence=X, n_boot=50, corpus_kwargs={"min_cf": 2},
+        fit_kwargs={"restarts": 1})
+    assert m.doc_topic.shape == (len(docs), K)
+    with pytest.raises(ValueError):
+        topica.ThreadTM(K, base="stm").fit(docs, parents)
