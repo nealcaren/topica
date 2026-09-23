@@ -773,6 +773,62 @@ def test_reply_completion_scores_logistic_normal_fairly():
     assert res_few.per_token_ll["tree"] != res.per_token_ll["tree"]
 
 
+def test_reply_completion_plugin_theta_ruler():
+    """theta="plugin" (issue #881) scores every model with its doc_topic on the SAME fits:
+    logistic-normal scores move (plug-in softmax(mean eta) instead of E[softmax(eta)]), LDA's
+    does not, and the setting is recorded so a ruler-robustness pair is reproducible."""
+    docs, parents, cov, _ = _threaded_corpus(n_threads=40, depth=5, doc_len=10)
+    kw = dict(num_topics=4, covariates=cov, baselines=("no_tree", "lda", "stm"),
+              em_iters=40, seed=13, n_boot=50)
+    integ = topica.evaluate.reply_completion(docs, parents, **kw)
+    plug = topica.evaluate.reply_completion(docs, parents, theta="plugin", **kw)
+    assert integ.settings["theta"] == "integrated"
+    assert plug.settings["theta"] == "plugin"
+    for name in ("tree", "no_tree", "stm"):
+        assert plug.per_token_ll[name] != integ.per_token_ll[name]
+    assert plug.per_token_ll["lda"] == integ.per_token_ll["lda"]
+    assert set(plug.delta) == set(integ.delta)
+
+
+def test_reply_completion_plugin_theta_matches_doc_topic():
+    """Under theta="plugin" the tree's per-leaf scores are exactly log(doc_topic @ topic_word)
+    over the held-out tokens of the matched fit."""
+    docs, parents, cov, _ = _threaded_corpus(n_threads=20, depth=4, doc_len=10)
+    res = topica.evaluate.reply_completion(
+        docs, parents, num_topics=3, covariates=cov, baselines=("no_tree",),
+        em_iters=30, seed=13, n_boot=1, theta="plugin")
+    # Refit the tree exactly as reply_completion does and recompute by hand.
+    import warnings
+    rng = np.random.default_rng(13)
+    n = len(docs)
+    children, depth, root, is_leaf = topica.evaluate._reply_tree_meta(list(parents))
+    eligible = [d for d in range(n) if parents[d] >= 0 and is_leaf[d] and len(docs[d]) >= 2]
+    train, held = [list(d) for d in docs], {}
+    for d in eligible:
+        toks = list(docs[d]); order = rng.permutation(len(toks))
+        k = min(max(int(round(0.5 * len(toks))), 1), len(toks) - 1)
+        hp = set(order[:k].tolist())
+        held[d] = [toks[i] for i in range(len(toks)) if i in hp]
+        train[d] = [toks[i] for i in range(len(toks)) if i not in hp]
+    m = topica.ThreadTM(3, em_iters=30, seed=13, coupling="parent")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=UserWarning)
+        m.fit(train, parents=list(parents), covariates=cov, min_count=1)
+    th, phi = np.asarray(m.doc_topic), np.asarray(m.topic_word)
+    vocab = {w: i for i, w in enumerate(m.vocabulary)}
+    ll = [np.log(np.clip(th[d] @ phi[:, [vocab[w] for w in held[d] if w in vocab]],
+                         1e-12, None))
+          for d in eligible]
+    manual = float(np.mean(np.concatenate([x for x in ll if x.size])))
+    assert np.isclose(res.per_token_ll["tree"], manual, rtol=0, atol=1e-10)
+
+
+def test_reply_completion_rejects_unknown_theta():
+    docs, parents, cov, _ = _threaded_corpus(n_threads=10, depth=3, doc_len=8)
+    with pytest.raises(ValueError, match="theta"):
+        topica.evaluate.reply_completion(docs, parents, num_topics=2, theta="posterior")
+
+
 def test_inspect_integration():
     """The taught inspect API must work on ThreadTM (regression: it was misdispatched as a
     time-sliced model because topic_word/vocabulary were methods, not properties)."""

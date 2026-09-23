@@ -1078,6 +1078,7 @@ def reply_completion(
     seed=13,
     n_boot=1000,
     predictive_samples=400,
+    theta="integrated",
     keyatm_keywords=None,
     keyatm_weights="information-theory",
     rtm_links="thread",
@@ -1222,7 +1223,22 @@ def reply_completion(
     predictive_samples : int. Monte-Carlo draws used for the posterior-predictive
         ``E[softmax(η)]`` that scores each logistic-normal model (see Notes). The
         default (400) matches the estimate that validated the fix in issue #838; a
-        much smaller value makes the scored likelihoods noisy.
+        much smaller value makes the scored likelihoods noisy. Ignored when
+        ``theta="plugin"``.
+    theta : ``"integrated"`` (default) or ``"plugin"``. The document-topic estimate
+        that scores held-out tokens, applied to every model in the comparison (issue
+        #881). ``"integrated"`` is the estimator-matched posterior-predictive scoring
+        described above: ``E[softmax(η)]`` for the logistic-normal models (ThreadTM
+        fits and ``stm``), each model's own ``doc_topic`` otherwise. ``"plugin"``
+        scores every model with its ``doc_topic``, which for a logistic-normal model
+        is the point estimate ``softmax(mean η)``. The fits are identical under both;
+        only the scoring changes, so running both on the same ``seed`` is a
+        ruler-robustness check: a model contrast that keeps its sign under both
+        rulers is a model property, while one that flips is a property of the
+        scoring choice. The plug-in ruler is the less fair one for comparing a
+        logistic-normal model against LDA (see above), so keep the default for the
+        headline comparison. Only the logistic-normal scores change; ``lda``,
+        ``keyatm``, and ``rtm`` score identically under both settings.
     keyatm_keywords : optional ``{topic_name: [keyword, ...]}`` dictionary for the
         ``keyatm`` baseline (issue #860). The default (``None``) fits keyATM's
         keyword-free ``weightedLDA``, so the baseline runs turnkey like ``lda``;
@@ -1280,6 +1296,11 @@ def reply_completion(
         raise ValueError("min_eval_tokens must be >= 2")
     if not (0.0 < eval_frac <= 1.0):
         raise ValueError("eval_frac must be in (0, 1]")
+    if theta not in ("integrated", "plugin"):
+        raise ValueError(
+            f"unknown theta {theta!r}; use 'integrated' (posterior-predictive "
+            "E[softmax(eta)], the default) or 'plugin' (each model's doc_topic)"
+        )
     baselines = tuple(baselines)
     for b in baselines:
         if b not in _KNOWN_BASELINES:
@@ -1614,7 +1635,10 @@ def reply_completion(
         same footing by scoring the logistic-normal models with the posterior-predictive
         ``E[softmax(η)]`` (a Monte-Carlo average over their own η posterior, which hedges the thin
         leaves the same way); LDA's already-averaged ``doc_topic`` is used unchanged.
+        With ``theta="plugin"`` (issue #881) every model is scored with its ``doc_topic``.
         """
+        if theta == "plugin":
+            return np.asarray(model.doc_topic, dtype=np.float64)
         pdt = getattr(model, "posterior_doc_topic", None)
         if callable(pdt):  # ThreadTM (diagonal ν) exposes it directly
             return np.asarray(
@@ -1632,7 +1656,7 @@ def reply_completion(
     # score held-out tokens under each model's theta * topic_word
     def _score(model, rmap):
         phi = np.asarray(model.topic_word, dtype=np.float64)
-        theta = _predictive_theta(model)
+        theta_hat = _predictive_theta(model)
         vocab = {w: i for i, w in enumerate(model.vocabulary)}
         per_token = {}   # leaf -> list of token log-liks
         oov = 0
@@ -1643,7 +1667,7 @@ def reply_completion(
             if row is None or not ids:
                 per_token[d] = []
                 continue
-            pw = np.clip(theta[row] @ phi[:, ids], 1e-12, None)
+            pw = np.clip(theta_hat[row] @ phi[:, ids], 1e-12, None)
             per_token[d] = np.log(pw).tolist()
         return per_token, oov
 
@@ -1798,6 +1822,7 @@ def reply_completion(
             "n_boot": n_boot,
             "perm_changed_frac": perm_changed_frac,
             "predictive_samples": predictive_samples,
+            "theta": theta,
             "keyatm_keywords": (sorted(keyatm_keywords) if keyatm_keywords else None),
             "keyatm_weights": keyatm_weights if "keyatm" in baselines else None,
             "keyatm_covariate": bool(design_kept is not None) if "keyatm" in baselines else None,
