@@ -728,6 +728,17 @@ res = topica.evaluate.reply_completion(
 res.delta["lda"], res.delta["stm"]   # tree minus the named tool, same CI machinery
 ```
 
+On thin-document reply corpora a single STM start can land in a poor local optimum
+(issue #871), and a weak baseline flatters every tree-minus-STM contrast. When
+`delta["stm"]` backs a claim, we fit the baseline as the best of several starts through
+`stm_kwargs`, which passes options to the STM constructor or `.fit()` by name:
+
+```python
+res = topica.evaluate.reply_completion(
+    docs, parents, num_topics=25, covariates=group,
+    baselines=("no_tree", "stm"), stm_kwargs={"restarts": 5})
+```
+
 Because the logistic-normal and LDA estimators differ, a held-out contrast can depend on
 the scoring choice as well as on the models. `theta="plugin"` rescores the same fits with
 each model's `doc_topic` (the plug-in `softmax(mean η)` for ThreadTM and STM), so running

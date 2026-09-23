@@ -830,6 +830,84 @@ def test_reply_completion_rejects_unknown_theta():
         topica.evaluate.reply_completion(docs, parents, num_topics=2, theta="posterior")
 
 
+def test_reply_completion_stm_kwargs_only_moves_stm_arm():
+    """stm_kwargs (issue #888) changes only the stm arm: a short fit (iters=3) moves its score
+    while the ThreadTM arms stay bit-identical; the options are recorded in settings."""
+    docs, parents = _branching_corpus(seed=1, persistence=0.92)
+    cov = [i % 2 for i in range(len(docs))]
+    kw = dict(num_topics=5, covariates=cov, baselines=("no_tree", "permuted", "stm"),
+              em_iters=40, seed=13, n_boot=50)
+    base = topica.evaluate.reply_completion(docs, parents, **kw)
+    short = topica.evaluate.reply_completion(docs, parents, stm_kwargs={"iters": 3}, **kw)
+    for name in ("tree", "no_tree", "permuted"):
+        assert short.per_token_ll[name] == base.per_token_ll[name]
+    assert short.per_token_ll["stm"] != base.per_token_ll["stm"]
+    assert short.settings["stm_kwargs"] == {"iters": 3}
+    assert base.settings["stm_kwargs"] is None
+
+
+def test_reply_completion_stm_kwargs_restarts_scores_the_returned_model(monkeypatch):
+    """restarts= reaches STM.fit, and the arm is scored with the model .fit() RETURNS (with
+    restarts>1 that is a new best-bound model, not the constructed one)."""
+    import functools
+
+    from topica.stm import STM
+    docs, parents = _branching_corpus(seed=1, persistence=0.92)
+    cov = [i % 2 for i in range(len(docs))]
+    seen = {}
+    real_fit = STM.fit
+
+    @functools.wraps(real_fit)  # keep STM.fit's signature for the kwarg validation
+    def spy(self, *a, **k):
+        out = real_fit(self, *a, **k)
+        seen["restarts"] = k.get("restarts")
+        seen["returned_is_self"] = out is self
+        return out
+
+    monkeypatch.setattr(STM, "fit", spy)
+    res = topica.evaluate.reply_completion(
+        docs, parents, num_topics=5, covariates=cov, baselines=("stm",), em_iters=30,
+        seed=13, n_boot=20, stm_kwargs={"restarts": 3})
+    assert seen["restarts"] == 3
+    assert seen["returned_is_self"] is False  # restarts>1 hands back a new model
+    assert res.settings["stm_kwargs"] == {"restarts": 3}
+    assert np.isfinite(res.per_token_ll["stm"])
+
+
+def test_reply_completion_stm_kwargs_routes_constructor_keys_and_composes_with_plugin():
+    """Constructor keys (sigma_shrink) go to STM(...), fit keys to .fit(); works with
+    theta="plugin" (#887)."""
+    docs, parents = _branching_corpus(seed=1, persistence=0.92)
+    cov = [i % 2 for i in range(len(docs))]
+    res = topica.evaluate.reply_completion(
+        docs, parents, num_topics=5, covariates=cov, baselines=("stm",), em_iters=30,
+        seed=13, n_boot=20, theta="plugin",
+        stm_kwargs={"sigma_shrink": 0.5, "restarts": 2, "iters": 50})
+    assert np.isfinite(res.per_token_ll["stm"])
+    assert res.settings["theta"] == "plugin"
+    assert res.settings["stm_kwargs"] == {"sigma_shrink": 0.5, "restarts": 2, "iters": 50}
+
+
+@pytest.mark.parametrize("bad, match", [
+    ({"seed": 1}, "cannot set"),
+    ({"num_topics": 3}, "cannot set"),
+    ({"prevalence": None}, "cannot set"),
+    ({"restart": 3}, "unknown stm_kwargs"),
+])
+def test_reply_completion_stm_kwargs_rejects_controlled_and_unknown(bad, match):
+    docs, parents, cov, _ = _threaded_corpus(n_threads=10, depth=3, doc_len=8)
+    with pytest.raises(ValueError, match=match):
+        topica.evaluate.reply_completion(docs, parents, num_topics=2, covariates=cov,
+                                         baselines=("stm",), stm_kwargs=bad)
+
+
+def test_reply_completion_stm_kwargs_needs_stm_baseline():
+    docs, parents, cov, _ = _threaded_corpus(n_threads=10, depth=3, doc_len=8)
+    with pytest.raises(ValueError, match="'stm' is not in baselines"):
+        topica.evaluate.reply_completion(docs, parents, num_topics=2, covariates=cov,
+                                         baselines=("no_tree",), stm_kwargs={"restarts": 2})
+
+
 def test_inspect_integration():
     """The taught inspect API must work on ThreadTM (regression: it was misdispatched as a
     time-sliced model because topic_word/vocabulary were methods, not properties)."""

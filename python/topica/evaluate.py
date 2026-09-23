@@ -1061,6 +1061,50 @@ _OFF_SHELF_BASELINES = ("lda", "stm", "keyatm", "rtm")
 _KNOWN_BASELINES = ("no_tree", "permuted", "root", "blend") + _OFF_SHELF_BASELINES
 
 
+_STM_CTOR_KEYS = ("sigma_shrink", "init", "variational")
+# Arguments reply_completion itself sets on the stm baseline so its arm stays matched to the
+# others (same K, seed, corpus, and covariate design).
+_STM_CONTROLLED_KEYS = (
+    "num_topics", "seed", "corpus", "prevalence", "formula", "data", "covariates",
+    "prevalence_names", "content", "content_names", "content_time",
+)
+
+
+def _split_stm_kwargs(stm_kwargs, baselines):
+    """Validate ``reply_completion(stm_kwargs=)`` and route it to (constructor, fit) dicts."""
+    if stm_kwargs is None:
+        return {}, {}
+    if not isinstance(stm_kwargs, dict):
+        raise TypeError(f"stm_kwargs must be a dict, got {type(stm_kwargs).__name__}")
+    if "stm" not in baselines:
+        raise ValueError(
+            "stm_kwargs was passed but 'stm' is not in baselines; add it or drop stm_kwargs"
+        )
+    import inspect
+
+    from .stm import STM
+
+    controlled = sorted(k for k in stm_kwargs if k in _STM_CONTROLLED_KEYS)
+    if controlled:
+        raise ValueError(
+            f"stm_kwargs cannot set {controlled}: reply_completion fixes the stm baseline's "
+            "num_topics, seed, corpus, and prevalence/content design so it stays matched "
+            "to the other arms."
+        )
+    fit_params = set(inspect.signature(STM.fit).parameters) - {"self"}
+    unknown = sorted(
+        k for k in stm_kwargs if k not in _STM_CTOR_KEYS and k not in fit_params
+    )
+    if unknown:
+        raise ValueError(
+            f"unknown stm_kwargs {unknown}; use STM constructor options "
+            f"({', '.join(_STM_CTOR_KEYS)}) or STM.fit arguments such as restarts or iters"
+        )
+    ctor = {k: v for k, v in stm_kwargs.items() if k in _STM_CTOR_KEYS}
+    fit = {k: v for k, v in stm_kwargs.items() if k not in _STM_CTOR_KEYS}
+    return ctor, fit
+
+
 def reply_completion(
     docs,
     parents,
@@ -1079,6 +1123,7 @@ def reply_completion(
     n_boot=1000,
     predictive_samples=400,
     theta="integrated",
+    stm_kwargs=None,
     keyatm_keywords=None,
     keyatm_weights="information-theory",
     rtm_links="thread",
@@ -1239,6 +1284,19 @@ def reply_completion(
         logistic-normal model against LDA (see above), so keep the default for the
         headline comparison. Only the logistic-normal scores change; ``lda``,
         ``keyatm``, and ``rtm`` score identically under both settings.
+    stm_kwargs : optional dict of options for the ``stm`` baseline (issue #888).
+        Keys are routed by name: ``sigma_shrink``, ``init``, and ``variational`` go to
+        the ``STM(...)`` constructor, and any other :meth:`STM.fit` argument (for
+        example ``restarts``, ``iters``, ``gamma_prior``) goes to ``.fit()``. Keys that
+        would break the matched design (``num_topics``, ``seed``, the corpus, and the
+        prevalence and content designs) are rejected, as are unknown keys, before any
+        model is fit. On thin-document reply corpora a single STM start can land in a
+        poor local optimum (issue #871), which flatters every tree-minus-STM contrast;
+        ``stm_kwargs={"restarts": 5}`` keeps the best-bound of five starts and is the
+        recommended setting when ``delta["stm"]`` backs a claim. The default (``None``)
+        fits ``STM(num_topics, seed=seed)`` with its defaults. The options are recorded
+        in ``settings["stm_kwargs"]``. It is an error to pass this without ``"stm"`` in
+        ``baselines``.
     keyatm_keywords : optional ``{topic_name: [keyword, ...]}`` dictionary for the
         ``keyatm`` baseline (issue #860). The default (``None``) fits keyATM's
         keyword-free ``weightedLDA``, so the baseline runs turnkey like ``lda``;
@@ -1296,6 +1354,7 @@ def reply_completion(
         raise ValueError("min_eval_tokens must be >= 2")
     if not (0.0 < eval_frac <= 1.0):
         raise ValueError("eval_frac must be in (0, 1]")
+    stm_ctor_kwargs, stm_fit_kwargs = _split_stm_kwargs(stm_kwargs, baselines)
     if theta not in ("integrated", "plugin"):
         raise ValueError(
             f"unknown theta {theta!r}; use 'integrated' (posterior-predictive "
@@ -1508,9 +1567,11 @@ def reply_completion(
                     "the 'stm' baseline needs at least two covariate groups for a prevalence "
                     "design (got one); drop 'stm' from baselines."
                 )
+            # .fit()'s return value, not the constructed model: with restarts>1 (#888)
+            # STM.fit returns the best-bound restart as a new model.
             models["stm"] = _fit_offshelf(
-                lambda: topica.STM(num_topics, seed=seed).fit(
-                    base_corpus, prevalence=design_kept
+                lambda: topica.STM(num_topics, seed=seed, **stm_ctor_kwargs).fit(
+                    base_corpus, prevalence=design_kept, **stm_fit_kwargs
                 )
             )
             row_map["stm"] = orig_to_row
@@ -1823,6 +1884,7 @@ def reply_completion(
             "perm_changed_frac": perm_changed_frac,
             "predictive_samples": predictive_samples if theta == "integrated" else None,
             "theta": theta,
+            "stm_kwargs": dict(stm_kwargs) if stm_kwargs else None,
             "keyatm_keywords": (sorted(keyatm_keywords) if keyatm_keywords else None),
             "keyatm_weights": keyatm_weights if "keyatm" in baselines else None,
             "keyatm_covariate": bool(design_kept is not None) if "keyatm" in baselines else None,
