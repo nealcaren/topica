@@ -893,6 +893,11 @@ def test_reply_completion_stm_kwargs_routes_constructor_keys_and_composes_with_p
     ({"num_topics": 3}, "cannot set"),
     ({"prevalence": None}, "cannot set"),
     ({"restart": 3}, "unknown stm_kwargs"),
+    ({"beta_init": np.ones((2, 3))}, "cannot set"),
+    ({"content_smooth": 2.0}, "cannot set"),
+    ({"restarts": True}, "int >= 1"),
+    ({"restarts": 0}, "int >= 1"),
+    ({"keep_eta_cov": False}, "keep_eta_cov"),
 ])
 def test_reply_completion_stm_kwargs_rejects_controlled_and_unknown(bad, match):
     docs, parents, cov, _ = _threaded_corpus(n_threads=10, depth=3, doc_len=8)

@@ -1063,14 +1063,17 @@ _KNOWN_BASELINES = ("no_tree", "permuted", "root", "blend") + _OFF_SHELF_BASELIN
 
 _STM_CTOR_KEYS = ("sigma_shrink", "init", "variational")
 # Arguments reply_completion itself sets on the stm baseline so its arm stays matched to the
-# others (same K, seed, corpus, and covariate design).
+# others (same K, seed, corpus, and covariate design). beta_init is here because its shape
+# is the reduced vocabulary built inside reply_completion, which a caller cannot know; the
+# content_* tuning keys are inert without a content design, which the surface does not take.
 _STM_CONTROLLED_KEYS = (
     "num_topics", "seed", "corpus", "prevalence", "formula", "data", "covariates",
-    "prevalence_names", "content", "content_names", "content_time",
+    "prevalence_names", "content", "content_names", "content_time", "content_smooth",
+    "content_prior_var", "content_prior", "beta_init",
 )
 
 
-def _split_stm_kwargs(stm_kwargs, baselines):
+def _split_stm_kwargs(stm_kwargs, baselines, theta):
     """Validate ``reply_completion(stm_kwargs=)`` and route it to (constructor, fit) dicts."""
     if stm_kwargs is None:
         return {}, {}
@@ -1099,6 +1102,15 @@ def _split_stm_kwargs(stm_kwargs, baselines):
         raise ValueError(
             f"unknown stm_kwargs {unknown}; use STM constructor options "
             f"({', '.join(_STM_CTOR_KEYS)}) or STM.fit arguments such as restarts or iters"
+        )
+    # Fail before any fit on values that would otherwise raise only after the tree fits.
+    restarts = stm_kwargs.get("restarts", 1)
+    if isinstance(restarts, bool) or not isinstance(restarts, (int, np.integer)) or restarts < 1:
+        raise ValueError(f"stm_kwargs['restarts'] must be an int >= 1, got {restarts!r}")
+    if theta == "integrated" and stm_kwargs.get("keep_eta_cov", True) is False:
+        raise ValueError(
+            "stm_kwargs={'keep_eta_cov': False} drops the variational covariance that "
+            "theta='integrated' scoring samples from; keep it, or pass theta='plugin'."
         )
     ctor = {k: v for k, v in stm_kwargs.items() if k in _STM_CTOR_KEYS}
     fit = {k: v for k, v in stm_kwargs.items() if k not in _STM_CTOR_KEYS}
@@ -1288,9 +1300,11 @@ def reply_completion(
         Keys are routed by name: ``sigma_shrink``, ``init``, and ``variational`` go to
         the ``STM(...)`` constructor, and any other :meth:`STM.fit` argument (for
         example ``restarts``, ``iters``, ``gamma_prior``) goes to ``.fit()``. Keys that
-        would break the matched design (``num_topics``, ``seed``, the corpus, and the
-        prevalence and content designs) are rejected, as are unknown keys, before any
-        model is fit. On thin-document reply corpora a single STM start can land in a
+        would break the matched design (``num_topics``, ``seed``, the corpus,
+        ``beta_init``, and the prevalence and content designs) are rejected before any
+        model is fit, as are unknown keys, an invalid ``restarts``, and
+        ``keep_eta_cov=False`` under ``theta="integrated"`` (that scoring samples from
+        the covariance it drops). On thin-document reply corpora a single STM start can land in a
         poor local optimum (issue #871), which flatters every tree-minus-STM contrast;
         ``stm_kwargs={"restarts": 5}`` keeps the best-bound of five starts and is the
         recommended setting when ``delta["stm"]`` backs a claim. The default (``None``)
@@ -1354,12 +1368,12 @@ def reply_completion(
         raise ValueError("min_eval_tokens must be >= 2")
     if not (0.0 < eval_frac <= 1.0):
         raise ValueError("eval_frac must be in (0, 1]")
-    stm_ctor_kwargs, stm_fit_kwargs = _split_stm_kwargs(stm_kwargs, baselines)
     if theta not in ("integrated", "plugin"):
         raise ValueError(
             f"unknown theta {theta!r}; use 'integrated' (posterior-predictive "
             "E[softmax(eta)], the default) or 'plugin' (each model's doc_topic)"
         )
+    stm_ctor_kwargs, stm_fit_kwargs = _split_stm_kwargs(stm_kwargs, baselines, theta)
     baselines = tuple(baselines)
     for b in baselines:
         if b not in _KNOWN_BASELINES:
