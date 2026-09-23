@@ -406,6 +406,10 @@ from .inspect import _bind_topic_table_method  # noqa: E402  (issue #758)
 # function. Runs after every model class is imported above (including the Python-side
 # TopicGPT / AnchorLDA), binding each by its registry name.
 _bind_topic_table_method(globals().get(_name) for _name in REGISTRY)
+from .fitsummary import _bind_fit_summary  # noqa: E402  (issue #806)
+# Give every fitted model a fit-stats `.summary()` and make `print(model)` the fit
+# block, the topic-model analogue of an OLS table (repr stays the one-line form).
+_bind_fit_summary(globals().get(_name) for _name in REGISTRY)
 from .preprocess import split_documents  # noqa: E402
 from .stopwords import (  # noqa: E402
     ENGLISH_STOPWORDS,
