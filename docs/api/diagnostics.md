@@ -116,6 +116,10 @@ tracks recovery, where coherence can mislead.
 
 ::: topica.evaluate.align_topics
 
+::: topica.evaluate.topic_groups
+
+::: topica.evaluate.TopicGroups
+
 ::: topica.evaluate.topic_stability
 
 ::: topica.ensemble

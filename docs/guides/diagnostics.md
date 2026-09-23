@@ -375,6 +375,34 @@ to each fit, correlated-topic families (STM/CTM) — whose off-diagonal cosines 
 are no longer mislabelled as near-total splits/merges, and `align_topics(tw, tw)` returns
 K matches with zero splits/merges for any model (issue #642).
 
+### Topic groups across many runs
+
+`align_topics` compares two runs. To see which topics a whole set of runs reproduces,
+`topica.evaluate.topic_groups` groups every run's topics at once and returns the
+groups-by-runs grid of TopicCheck (Chuang et al. 2015): one row per topic group, one
+column per run, and the run's topic in each cell. An empty cell means that run has no
+topic in the group. A group never holds two topics from the same run, so a run that
+splits one theme into two topics contributes one of them and leaves the other in a
+separate group.
+
+```python
+runs = [topica.LDA(20, seed=s).fit(corpus) for s in range(10)]
+groups = topica.evaluate.topic_groups(runs, threshold=0.5)
+
+print(groups)             # groups ranked by how many runs reproduce them
+groups.assignments()      # groups x runs grid of topic indices (<NA> = absent)
+groups.to_frame()         # solidity, prevalence weight, top words, members
+groups.cut(0.8)           # the same grouping at a stricter similarity cut
+```
+
+*Solidity* is the share of runs that contributed a topic to the group. A group with
+solidity 1 appears in every run; a group with solidity `1/m` is a topic no other run
+reproduced. `threshold` is the average-linkage similarity at which groups stop merging
+(cosine by default, or `metric="js"`). Raising it gives tighter and more numerous groups,
+and `cut` moves along the same tree without re-clustering, which makes it cheap to
+sweep from the rock-solid groups down to the fringe ones. The runs must share a
+vocabulary (fit them on the same `Corpus`) but may use different `K`.
+
 ## Topic structure and document outliers
 
 Three post-hoc, no-refit diagnostics that read a fitted model's `topic_word` and
