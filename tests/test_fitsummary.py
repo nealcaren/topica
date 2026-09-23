@@ -39,15 +39,19 @@ def test_lda_is_wired_at_import(fitted):
     assert isinstance(fitted.summary(), FitSummary)
 
 
-def test_unfitted_repr():
-    assert repr(LDA(num_topics=3)) == "LDA (unfitted)"
+def test_unfitted_print_is_the_compact_repr():
+    m = LDA(num_topics=3)
+    assert str(m) == repr(m)
+    assert "fitted=false" in repr(m)
 
 
-def test_fitted_repr_is_the_fit_block(fitted):
-    text = repr(fitted)
+def test_print_is_the_fit_block_and_repr_stays_one_line(fitted):
+    text = str(fitted)
     assert text.startswith("LDA")
-    assert "log_likelihood (in-sample)" in text
+    assert "log-likelihood (in-sample)" in text
     assert "topics" in text and "documents" in text
+    # repr is the native constructor form, so lists of models stay readable
+    assert "\n" not in repr(fitted) and "fitted=true" in repr(fitted)
 
 
 # --- tier boundaries --------------------------------------------------------
@@ -154,3 +158,48 @@ def test_to_markdown_is_paper_ready(fitted):
     md = fitted.summary().to_markdown()
     assert "| statistic | value |" in md
     assert "LDA fit summary" in md
+
+
+# --- roster-wide rollout -------------------------------------------------------
+
+
+def test_every_registered_model_has_summary():
+    for name in topica.REGISTRY:
+        cls = getattr(topica, name, None)
+        if cls is None:
+            continue
+        assert callable(getattr(cls, "summary", None)), name
+        assert callable(getattr(cls, "_repr_html_", None)), name
+
+
+@pytest.mark.parametrize("build, label", [
+    (lambda: topica.CTM(3), "variational bound"),
+    (lambda: topica.NMF(3), "reconstruction error"),
+    (lambda: topica.HDP(), "log-likelihood per token"),
+    (lambda: topica.CorEx(3), "total correlation"),
+    (lambda: topica.LSA(3), "objective"),
+])
+def test_summary_across_families(toy_corpus, build, label):
+    """Each family reports its own objective under its own label; a model with no
+    iterative trace (LSA) shows n/a instead of raising."""
+    m = build()
+    fitted_model = m.fit(toy_corpus) or m
+    s = fitted_model.summary()
+    assert s.fitted
+    assert s.objective_label == label
+    assert s.num_docs == len(toy_corpus.documents())
+    if label == "objective":
+        assert s.objective is None
+    else:
+        assert np.isfinite(s.objective)
+    assert f"{label} (in-sample)" in str(fitted_model)
+    assert "<table" in fitted_model._repr_html_()
+
+
+def test_models_without_fit_history_or_converged_still_summarize(toy_corpus):
+    """BTM exposes neither fit_history nor converged; the summary shows n/a."""
+    m = topica.BTM(3)
+    fitted_model = m.fit(toy_corpus) or m
+    s = fitted_model.summary()
+    assert s.fitted and s.converged is None and s.objective is None
+    assert s.num_topics == 3

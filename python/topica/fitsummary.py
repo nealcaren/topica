@@ -1,22 +1,25 @@
 """Per-model fit-stats summary (issue #806): the topic-model analogue of an OLS
-table that always prints R2/N/F. A fitted model's ``repr`` shows the cheap stored
-scalars (converged, iterations, the family objective, K/D/V), so ``print(m)`` or a
-bare notebook eval gives the block by default. ``model.summary(texts=...)`` adds the
+table that always prints R2/N/F. Printing a fitted model (``print(m)``, or a bare
+notebook eval via ``_repr_html_``) shows the cheap stored scalars (converged,
+iterations, the family objective, K/D/V); ``repr(m)`` stays the compact one-line
+constructor form so lists of models and debuggers stay readable. ``model.summary(texts=...)`` adds the
 model-agnostic quality tier (coherence, exclusivity), which needs a reference corpus
 and so is never computed by ``repr``. ``model.summary(heldout=...)`` adds the
 held-out fit numbers (perplexity, or held-out log-likelihood for a ``make_heldout``
 split), which need documents the model was not trained on.
 
 The family objective in the fit tier is the *in-sample* training objective (the last
-``fit_history`` entry), a convergence witness, not a quality score — labeled as such
+``fit_history`` entry), a convergence witness, not a quality score, and labeled as such
 so no one reads it as held-out fit. Held-out perplexity is deliberately kept out of
 the free ``repr`` and the ``texts=`` path: computed on the training corpus it is
 misleading, and even held-out it correlates negatively with topic interpretability
 (Chang et al. 2009), so it is a diagnostic, never the number to optimize.
 
-Spike status: wired for ``LDA`` first to prove the shape before rolling the binding
-out to the full roster. The objective map and the builder are written generically so
-the rollout is adding entries, not rewriting logic.
+Every model in :data:`topica.REGISTRY` gets the binding. Families differ in what
+they optimize, so the objective is one field whose label names what the model's own
+``fit_history`` records (log-likelihood, ELBO, reconstruction error, ...); a model not
+in the label table falls back to the neutral label "objective", and a model with no
+iterative trace (LSA, BERTopic, ...) shows ``n/a``.
 """
 
 from __future__ import annotations
@@ -25,38 +28,62 @@ from dataclasses import dataclass
 
 import numpy as np
 
-# Which native objective each model family reports. Exactly one of
-# log_likelihood / elbo / reconstruction_error is filled for an iterative model;
-# the rest render as n/a. Seeded with LDA for the spike; the rollout extends this.
-_OBJECTIVE_KIND = {
-    "LDA": "log_likelihood",
+# What each model's ``fit_history`` second column records, in the words of that
+# model's own documentation. These are in-sample training objectives: convergence
+# witnesses, comparable only within one model, never across families. A model absent
+# from this table gets the neutral "objective" label rather than a guessed one.
+_LL = "log-likelihood"
+_OBJECTIVE_LABEL = {
+    # collapsed Gibbs: joint log-likelihood of the training tokens
+    "LDA": _LL, "PT": _LL, "KeyATM": _LL, "SeededLDA": _LL, "FactorialLDA": _LL,
+    "AuthorTopic": _LL, "MGLDA": _LL, "TopicsOverTime": _LL, "Wordfish": _LL,
+    # per-token averages
+    "HDP": "log-likelihood per token", "GSDMM": "log-likelihood per token",
+    "GaussianLDA": "log-likelihood per token",
+    # variational / amortized inference
+    "OnlineLDA": "ELBO", "CTM": "variational bound", "STM": "variational bound",
+    "ETM": "variational bound", "ProdLDA": "ELBO", "DETM": "ELBO",
+    # factorization and other objectives
+    "NMF": "reconstruction error", "CorEx": "total correlation",
+    "FASTopic": "Sinkhorn loss (negated)",
+    # traces that are convergence measures, not objectives
+    "SemanticSignalSeparation": "convergence measure",
+    "TensorLDA": "convergence measure",
 }
 
-# How each family reaches its fit: "gibbs" collapsed samplers run a fixed number of
-# sweeps and do not early-stop by default (so their ``converged`` flag is off unless a
-# tolerance was set and tripped, and a bare "no" reads as failure when it is not);
-# "em" variational/EM models genuinely converge. Seeded with LDA for the spike.
-_SAMPLER_KIND = {
-    "LDA": "gibbs",
-}
 
-
-def _objective_kind(model) -> str:
-    return _OBJECTIVE_KIND.get(type(model).__name__, "none")
+def _objective_label(model) -> str:
+    return _OBJECTIVE_LABEL.get(type(model).__name__, "objective")
 
 
 def _sampler_kind(model) -> str:
-    return _SAMPLER_KIND.get(type(model).__name__, "none")
+    """The registry's inference route ("gibbs", "variational", ...). Collapsed Gibbs
+    samplers run a fixed number of sweeps and do not early-stop by default, so their
+    ``converged`` flag is off unless a tolerance was set and tripped."""
+    from .registry import REGISTRY
+
+    info = REGISTRY.get(type(model).__name__)
+    return info.inference if info is not None else "none"
+
+
+def _get(model, name):
+    """An attribute, or ``None`` when the model does not have it or cannot compute it
+    (many are properties that raise on an unfitted or structurally different model)."""
+    try:
+        value = getattr(model, name)
+    except Exception:
+        return None
+    return None if callable(value) else value
 
 
 def _is_fitted(model) -> bool:
-    """A fitted model exposes its convergence trace; probing an unfitted one raises
-    (there is no public ``fitted`` flag on the native classes)."""
-    try:
-        model.fit_history
+    """Native classes carry no public ``fitted`` flag, but their result matrices raise
+    until ``fit`` has run, so a model is fitted once one of them can be read. (An empty
+    ``fit_history`` is not evidence either way: some classes return ``[]`` before
+    fitting, and non-iterative models return ``[]`` after.)"""
+    if any(_get(model, a) is not None for a in ("topic_word", "doc_topic")):
         return True
-    except Exception:
-        return False
+    return bool(_get(model, "fit_history"))
 
 
 def _fmt(value) -> str:
@@ -84,15 +111,16 @@ class FitSummary:
 
     Field legend (each renders ``n/a`` when it does not apply to the family):
 
-    - ``log_likelihood`` / ``elbo`` / ``reconstruction_error``: the *in-sample*
-      training objective at the last iteration — a convergence witness, not a quality
-      score, and not comparable across families.
+    - ``objective`` (labeled by ``objective_label``, for example ``log-likelihood``,
+      ``ELBO``, or ``reconstruction error``): the *in-sample* training objective at the
+      last recorded iteration, a convergence witness rather than a quality score, and
+      not comparable across families.
     - ``perplexity``: held-out document-completion perplexity; lower is better. Only
       from ``summary(heldout=...)``.
     - ``heldout_loglik``: mean per-document held-out log-likelihood from a
       :func:`topica.make_heldout` split (R stm's ``eval.heldout``); higher (less
       negative) is better.
-    - ``effective_topics``: exp-entropy of topic prevalence, in ``[1, K]`` — how many
+    - ``effective_topics``: exp-entropy of topic prevalence, in ``[1, K]``: how many
       topics actually carry mass (near ``K`` = balanced, near ``1`` = one topic
       dominates).
     - ``diversity``: fraction of distinct words across the pooled top-n lists, in
@@ -117,10 +145,8 @@ class FitSummary:
     converged: bool | None = None
     sampler: str = "none"
     iterations: int | None = None
-    objective_kind: str = "none"
-    log_likelihood: float | None = None
-    elbo: float | None = None
-    reconstruction_error: float | None = None
+    objective: float | None = None
+    objective_label: str = "objective"
     # held-out fit (needs documents the model was not trained on, so only with heldout=)
     perplexity: float | None = None
     heldout_loglik: float | None = None
@@ -154,9 +180,7 @@ class FitSummary:
         return [
             ("converged", converged),
             ("iterations", self.iterations),
-            ("log_likelihood (in-sample)", self.log_likelihood),
-            ("elbo (in-sample)", self.elbo),
-            ("reconstruction_error", self.reconstruction_error),
+            (f"{self.objective_label} (in-sample)", self.objective),
             ("perplexity (held-out, document-completion)", self.perplexity),
             ("heldout_loglik (mean per-doc)", self.heldout_loglik),
         ]
@@ -230,9 +254,9 @@ class FitSummary:
 def _topic_word(model):
     """The ``(K, V)`` topic-word matrix as an array, or ``None`` if the model does
     not expose one as a plain attribute (e.g. time-sliced models where it is a
-    callable) — those skip the corpus-free health tier rather than guessing a slice."""
-    tw = getattr(model, "topic_word", None)
-    if tw is None or callable(tw):
+    callable); those skip the corpus-free health tier rather than guessing a slice."""
+    tw = _get(model, "topic_word")
+    if tw is None:
         return None
     arr = np.asarray(tw, dtype=np.float64)
     return arr if arr.ndim == 2 else None
@@ -301,22 +325,23 @@ def _significance_health(model):
 def _build_summary(model, *, texts=None, heldout=None, assume_unseen=False, n=10) -> FitSummary:
     name = type(model).__name__
     if not _is_fitted(model):
-        return FitSummary(model=name, fitted=False,
-                          num_topics=getattr(model, "num_topics", None))
+        return FitSummary(model=name, fitted=False, num_topics=_get(model, "num_topics"))
 
-    vocab = getattr(model, "vocabulary", None)
+    vocab = _get(model, "vocabulary")
     vocab_size = len(vocab) if vocab is not None else None
-    doc_topic = getattr(model, "doc_topic", None)
-    num_docs = int(doc_topic.shape[0]) if getattr(doc_topic, "shape", None) else None
+    doc_topic = _get(model, "doc_topic")
+    if not (getattr(doc_topic, "ndim", 0) == 2):
+        doc_topic = None
+    num_docs = int(doc_topic.shape[0]) if doc_topic is not None else None
+    num_topics = _get(model, "num_topics")
+    if not isinstance(num_topics, (int, np.integer)):
+        num_topics = None
 
-    history = list(model.fit_history)
+    history = _get(model, "fit_history")
+    history = list(history) if history else []
     iterations = int(history[-1][0]) if history else None
-    objective_value = float(history[-1][1]) if history else None
-    kind = _objective_kind(model)
-
-    log_likelihood = objective_value if kind == "log_likelihood" else None
-    elbo = objective_value if kind == "elbo" else None
-    reconstruction_error = objective_value if kind == "reconstruction_error" else None
+    objective = float(history[-1][1]) if history else None
+    converged = _get(model, "converged")
 
     # Topic-health tier: cheap and corpus-free, from the phi/theta already in memory.
     effective_topics, diversity, topic_redundancy = _topic_health(
@@ -367,16 +392,14 @@ def _build_summary(model, *, texts=None, heldout=None, assume_unseen=False, n=10
     return FitSummary(
         model=name,
         fitted=True,
-        num_topics=getattr(model, "num_topics", None),
+        num_topics=num_topics,
         num_docs=num_docs,
         vocab_size=vocab_size,
-        converged=bool(model.converged),
+        converged=bool(converged) if converged is not None else None,
         sampler=_sampler_kind(model),
         iterations=iterations,
-        objective_kind=kind,
-        log_likelihood=log_likelihood,
-        elbo=elbo,
-        reconstruction_error=reconstruction_error,
+        objective=objective,
+        objective_label=_objective_label(model),
         perplexity=perplexity,
         heldout_loglik=heldout_loglik,
         effective_topics=effective_topics,
@@ -397,14 +420,17 @@ def summary(model, texts=None, *, heldout=None, assume_unseen=False, n=10) -> Fi
     - ``heldout=`` for the held-out fit tier. A :func:`topica.make_heldout` split is
       safe by construction and yields held-out log-likelihood. Raw documents cannot be
       verified as unseen from here, so they raise unless you affirm them with
-      ``assume_unseen=True`` (then you get document-completion perplexity) — this is the
+      ``assume_unseen=True`` (then you get document-completion perplexity). This is the
       guard that stops a training corpus being reported as held-out. Never pass the
       training corpus.
     """
     return _build_summary(model, texts=texts, heldout=heldout, assume_unseen=assume_unseen, n=n)
 
 
-def _model_repr(model) -> str:
+def _model_str(model) -> str:
+    """``print(model)``: the fit block once fitted; the compact repr before that."""
+    if not _is_fitted(model):
+        return repr(model)
     return str(_build_summary(model))
 
 
@@ -413,15 +439,18 @@ def _model_repr_html(model) -> str:
 
 
 def _bind_fit_summary(classes) -> None:
-    """Attach ``summary`` / ``__repr__`` / ``_repr_html_`` onto each model class.
-    Mirrors ``inspect._bind_topic_table_method``: the native classes are heap types,
-    so Python-side assignment updates the repr slot without a Rust change."""
+    """Attach ``summary`` / ``__str__`` / ``_repr_html_`` onto each model class.
+    ``__repr__`` is left as the native one-line constructor form. Mirrors
+    ``inspect._bind_topic_table_method``: the native classes are heap types, so
+    Python-side assignment works without a Rust change. A class that already defines
+    its own ``summary`` keeps it."""
     for cls in classes:
         if cls is None:
             continue
         try:
-            cls.summary = summary
-            cls.__repr__ = _model_repr
+            if "summary" not in vars(cls):
+                cls.summary = summary
+            cls.__str__ = _model_str
             cls._repr_html_ = _model_repr_html
         except (TypeError, AttributeError):
             pass

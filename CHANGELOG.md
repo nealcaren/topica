@@ -6,6 +6,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Added
+
+- **Every fitted model reports a fit-statistics block** (#806), the topic-model analogue
+  of a regression table. `print(model)` and notebook display show shape (topics,
+  effective topics, documents, vocabulary), convergence and iterations, the in-sample
+  training objective under the model's own name (log-likelihood, ELBO, reconstruction
+  error, ...), and corpus-free topic health (diversity, redundancy, significance, weak
+  topics). `model.summary(texts=)` adds coherence and exclusivity; `summary(heldout=)`
+  adds held-out fit from a `make_heldout` split, and refuses raw documents unless
+  `assume_unseen=True`. Statistics that do not apply read `n/a`. `repr(model)` is
+  unchanged.
+
 ### Changed
 
 - **Spectral initialization floors anchor-word candidates at 0.3% of documents** (#874).
