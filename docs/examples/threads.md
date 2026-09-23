@@ -17,6 +17,11 @@ just as important, when it does not.
     `askscience` (technical Q&A) and `pokemontrades` (trade coordination).
     `ThreadTM` is experimental, so call `topica.enable_experimental()` first.
 
+!!! tip "Thread context over a standard topic model"
+    [`topica.threads.ThreadSmoother`](../guides/threads.md) takes a different route: it keeps
+    LDA or STM as the base and borrows topic mass from each reply's parent and thread, with
+    pseudo-counts estimated on held-out replies and a parent-permutation placebo.
+
 ## 1. Load a threaded corpus
 
 Threaded data cannot go through [`from_dataframe`](../api/keywords.md): a flat text

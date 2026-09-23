@@ -8,6 +8,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`topica.threads`: thread-context shrinkage over any fitted topic model** (#895,
+  experimental). `ThreadSmoother` keeps LDA, STM, CTM or any model with `doc_topic` and
+  `topic_word` as the base and smooths each document's topic mix toward its parent's and its
+  thread's, with Dirichlet pseudo-counts (so short replies borrow more) estimated by held-out
+  log likelihood on validation threads and reported on test threads. It reports the
+  pseudo-counts with thread-bootstrap intervals, the parent share `a_p / (a_p + a_t)`, and a
+  placebo-netted edge effect against parents permuted within (thread, depth), which preserves
+  child counts. Helpers `strip_quotes`, `strip_copied_runs`, `shuffle_parents` and
+  `thread_structure`. Validated by planted recovery.
 - **`topica.evaluate.topic_groups(runs)`: a TopicCheck-style groups-by-runs table** (#803).
   It groups the topics of N runs at once (average-linkage clustering with TopicCheck's
   up-to-one constraint, so a group holds at most one topic per run) and returns the
