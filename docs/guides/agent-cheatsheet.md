@@ -107,7 +107,7 @@ OnlineLDA(num_topics, *, alpha_sum=None, beta=0.01, tau=1.0, kappa=0.7, batch_si
 
 CTM(num_topics, *, sigma_shrink=0.0, seed=13, init='spectral', variational='laplace')
     Correlated topic model: a logistic-normal prior that lets topics co-occur.
-    .fit(data, *, iters=500, convergence_tol=1e-05, inference='batch', batch_size=256, tau=64.0, kappa=0.7, beta_init=None, em_tol=None, keep_eta_cov=True, num_threads=None, spectral_projection_threshold=Ellipsis, progress=None)
+    .fit(data, *, iters=500, convergence_tol=1e-05, inference='batch', batch_size=256, tau=64.0, kappa=0.7, beta_init=None, em_tol=None, keep_eta_cov=True, num_threads=None, spectral_projection_threshold=Ellipsis, spectral_anchor_min_doc_frac=Ellipsis, progress=None)
 
 ProdLDA(num_topics, *, alpha=1.0, hidden_size=100, dropout=0.2, batch_size=200, lr=0.002, convergence_tol=0.0, seed=13, prior=Ellipsis, contrastive=False, contrastive_weight=0.5, contrastive_temp=0.5, em_tol=None)
     Product-of-experts LDA (AVITM) for sharper, more coherent topics; hand-coded VAE.
@@ -149,7 +149,7 @@ TopicalNGrams(num_topics, *, alpha_sum=50.0, beta=0.01, gamma=0.01, delta1=1.0, 
 
 STM(num_topics, *, sigma_shrink=0.0, seed=13, init='spectral', variational='laplace')
     Structural topic model: relate topic prevalence and content to covariates.
-    .fit(corpus, prevalence=None, *, formula=None, data=None, prevalence_names=None, content=None, content_names=None, content_time=None, content_smooth=1.0, content_prior_var=0.5, content_prior='l2', iters=500, convergence_tol=1e-05, gamma_prior='pooled', gamma_enet=1.0, beta_init=None, em_tol=None, covariates=None, keep_eta_cov=True, num_threads=None, spectral_projection_threshold=10000, restarts=1, progress=None)
+    .fit(corpus, prevalence=None, *, formula=None, data=None, prevalence_names=None, content=None, content_names=None, content_time=None, content_smooth=1.0, content_prior_var=0.5, content_prior='l2', iters=500, convergence_tol=1e-05, gamma_prior='pooled', gamma_enet=1.0, beta_init=None, em_tol=None, covariates=None, keep_eta_cov=True, num_threads=None, spectral_projection_threshold=10000, spectral_anchor_min_doc_frac=0.003, restarts=1, progress=None)
 
 STS(num_topics, *, seed=13, init='spectral')
     Structural topic-and-sentiment model over document metadata.

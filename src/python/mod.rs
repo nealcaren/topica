@@ -7582,12 +7582,17 @@ impl CTM {
     /// deterministic random projection. The default (10000) matches R `stm`, which
     /// stays exact up to that size; lower it to force the cheaper approximate path
     /// on smaller vocabularies. It only affects `init="spectral"` runs.
+    /// `spectral_anchor_min_doc_frac` (default 0.003) restricts anchor words to
+    /// those appearing in at least that fraction of documents, which keeps the
+    /// spectral init from anchoring on near-singleton words in large corpora
+    /// (issue #874); `0.0` reproduces R `stm`'s unfloored anchors.
     /// `progress` is an optional `(iteration, total, info)` callback for a live
     /// progress bar (see `topica.progress`); omitted, a bar shows in an interactive terminal.
     #[pyo3(signature = (data, *, iters=500, convergence_tol=1e-5, inference="batch",
                         batch_size=256, tau=64.0, kappa=0.7, beta_init=None, em_tol=None,
                         keep_eta_cov=true, num_threads=None,
                         spectral_projection_threshold=spectral::DEFAULT_PROJ_THRESHOLD,
+                        spectral_anchor_min_doc_frac=spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
                         progress=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
@@ -7605,8 +7610,16 @@ impl CTM {
         keep_eta_cov: bool,
         num_threads: Option<usize>,
         spectral_projection_threshold: usize,
+        spectral_anchor_min_doc_frac: f64,
         progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
+        if !(spectral_anchor_min_doc_frac.is_finite()
+            && (0.0..1.0).contains(&spectral_anchor_min_doc_frac))
+        {
+            return Err(PyValueError::new_err(format!(
+                "spectral_anchor_min_doc_frac must be in [0, 1), got {spectral_anchor_min_doc_frac}"
+            )));
+        }
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
             warnings.call_method1(
@@ -7688,6 +7701,7 @@ impl CTM {
                         keep_eta_cov,
                         diagonal,
                         spectral_projection_threshold,
+                        spectral_anchor_min_doc_frac,
                         &mut rng,
                     )
                 } else {
@@ -7709,6 +7723,7 @@ impl CTM {
                         keep_eta_cov,
                         diagonal,
                         spectral_projection_threshold,
+                        spectral_anchor_min_doc_frac,
                         &mut on_progress,
                         &mut rng,
                     )
@@ -8525,6 +8540,10 @@ impl STM {
     /// exact init for any vocabulary at or below 10000 types. Lower it to force the
     /// cheaper approximate path on smaller vocabularies (trading fidelity for
     /// speed/memory). It has no effect when the constructor sets `init="random"`.
+    /// `spectral_anchor_min_doc_frac` (default 0.003) restricts anchor words to
+    /// those appearing in at least that fraction of documents, which keeps the
+    /// spectral init from anchoring on near-singleton words in large corpora
+    /// (issue #874); `0.0` reproduces R `stm`'s unfloored anchors.
     /// `progress` is an optional `(iteration, total, info)` callback for a live
     /// progress bar (see `topica.progress`); omitted, a bar shows in an interactive terminal.
     #[pyo3(signature = (data, prevalence=None, *, prevalence_names=None,
@@ -8534,6 +8553,7 @@ impl STM {
                         gamma_prior="pooled", gamma_enet=1.0, beta_init=None, em_tol=None,
                         covariates=None, keep_eta_cov=true, num_threads=None,
                         spectral_projection_threshold=spectral::DEFAULT_PROJ_THRESHOLD,
+                        spectral_anchor_min_doc_frac=spectral::DEFAULT_ANCHOR_MIN_DOC_FRAC,
                         progress=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
@@ -8558,8 +8578,16 @@ impl STM {
         keep_eta_cov: bool,
         num_threads: Option<usize>,
         spectral_projection_threshold: usize,
+        spectral_anchor_min_doc_frac: f64,
         progress: Option<PyObject>,
     ) -> PyResult<Py<Self>> {
+        if !(spectral_anchor_min_doc_frac.is_finite()
+            && (0.0..1.0).contains(&spectral_anchor_min_doc_frac))
+        {
+            return Err(PyValueError::new_err(format!(
+                "spectral_anchor_min_doc_frac must be in [0, 1), got {spectral_anchor_min_doc_frac}"
+            )));
+        }
         let convergence_tol = if let Some(old_val) = em_tol {
             let warnings = py.import_bound("warnings")?;
             warnings.call_method1(
@@ -8857,6 +8885,7 @@ impl STM {
                     keep_eta_cov,
                     diagonal,
                     spectral_projection_threshold,
+                    spectral_anchor_min_doc_frac,
                     &mut on_progress,
                     &mut rng,
                 )

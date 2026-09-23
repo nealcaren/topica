@@ -2591,6 +2591,7 @@ class STM(_STM):
         keep_eta_cov=True,
         num_threads=None,
         spectral_projection_threshold=10000,
+        spectral_anchor_min_doc_frac=0.003,
         restarts=1,
         progress=None,
     ):
@@ -2611,6 +2612,13 @@ class STM(_STM):
         data : pandas.DataFrame, optional
             One row per document, holding the columns ``formula`` references.
             Required when ``formula`` is given, ignored otherwise.
+        spectral_anchor_min_doc_frac : float, default 0.003
+            Floor on spectral anchor words: a word can anchor a topic only if it
+            appears in at least this fraction of documents (issue #874). Without it,
+            large thin-document corpora anchor on near-singleton words and the
+            spectral init lands in a poor optimum. The default leaves the anchors
+            unchanged on the gadarian and Poliblog parity corpora; ``0.0``
+            reproduces R ``stm``'s unfloored anchors exactly.
         restarts : int, default 1
             Number of independently-seeded EM restarts. With ``restarts=1`` (the
             default) a single fit runs from the configured init. With ``restarts=N``
@@ -2659,6 +2667,7 @@ class STM(_STM):
             keep_eta_cov=keep_eta_cov,
             num_threads=num_threads,
             spectral_projection_threshold=spectral_projection_threshold,
+            spectral_anchor_min_doc_frac=spectral_anchor_min_doc_frac,
         )
 
         if isinstance(restarts, bool) or not isinstance(restarts, (int, np.integer)):
