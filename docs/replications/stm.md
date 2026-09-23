@@ -103,8 +103,8 @@ topica departs from `stm` in one place: which words may serve as anchors. R `stm
 `fastAnchor` considers every word, and farthest-point selection favors words whose
 co-occurrence rows have large norms. A word that appears in only a handful of documents
 has exactly that kind of noisy, large row. On a large corpus of short documents (the
-ChangeMyView reply corpus, about 46,000 documents and 14,400 types) every anchor `stm`
-selects is a word that appears in about five documents, and the *converged* recovery
+ChangeMyView reply corpus, about 46,000 documents and 14,400 types) the median anchor
+`stm` selects is a word that appears in five documents, and the *converged* recovery
 built on those anchors starts EM in a poor basin: R `stm` itself lands at −6.356
 held-out nats per token with `control = list(recoverEG = FALSE)`, against −6.151 with
 its default recovery (issue #874). The default escapes only because its
@@ -112,10 +112,12 @@ exponentiated gradient stops long before converging, which leaves each word's to
 weights near their uniform starting point.
 
 topica therefore restricts anchor candidates to words that appear in at least 0.3% of
-documents (`STM.fit(spectral_anchor_min_doc_frac=0.003)`, the candidate threshold of
-Arora et al. 2013). On the ChangeMyView corpus this removes the collapse on every
-held-out mask we tested and matches R's default (−6.151 vs −6.151 on the reference
-mask) while keeping topica's converged, reproducible recovery. On the gadarian and
+documents (`STM.fit(spectral_anchor_min_doc_frac=0.003)`, a document-frequency
+candidate threshold in the spirit of Arora et al. 2013). On the ChangeMyView corpus this
+removes the collapse on every held-out mask we tested, on both the default (projected)
+and the exact co-occurrence path. On the default path it matches R's default (−6.151 vs
+−6.151 on the reference mask; the exact path reaches −6.159) while keeping topica's
+converged, reproducible recovery. On the gadarian and
 Poliblog parity corpora the floor excludes none of the anchors `stm` selects, so the
 initialization, and every parity number on this page, is unchanged; below about 333
 documents the floor is a single document and has no effect at all. Pass

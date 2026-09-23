@@ -38,7 +38,8 @@ const PROJ_DIM: usize = 1024;
 /// big, thin-document corpus are near-singleton words and the converged recovery
 /// builds a poor init around them (R `stm` has no floor either; its default
 /// recovery hides the problem only because it never converges, see #871). This is
-/// the candidate threshold of Arora et al. (2013). At 0.003 it leaves the anchors,
+/// a document-frequency candidate threshold in the spirit of Arora et al. (2013),
+/// expressed as a fraction so it scales with the corpus. At 0.003 it leaves the anchors,
 /// and so the init, unchanged on the gadarian and Poliblog parity corpora; pass
 /// `0.0` for `stm`'s unfloored candidate set.
 pub const DEFAULT_ANCHOR_MIN_DOC_FRAC: f64 = 0.003;
@@ -432,6 +433,9 @@ pub fn spectral_init_with_options(
     } else {
         0.0
     };
+    // D counts every document, including the length-0/1 ones the co-occurrence step
+    // skips; `doc_freq` counts over all documents too, so the floor and the
+    // frequencies it is compared against share one denominator.
     let min_docs = (frac * docs.len() as f64).ceil() as usize;
     let anchors = match fast_anchor_words(&qbar, &df, k, min_docs) {
         Some(a) => a,
