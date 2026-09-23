@@ -6,8 +6,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.61.0] - 2026-09-23
+
 ### Added
 
+- **`STM.fit(restarts=N)`: multi-start EM that keeps the best variational bound** (#871,
+  #873). Restart 0 uses the configured init and the rest use fresh random seeds. On some
+  corpora (observed on thin threaded reply documents) a single start can land in a
+  catastrophic local optimum with the worst bound; best-of-N avoided it in our tests (CMV
+  mask 7: −6.354 → −6.189 per held-out token). With `restarts>1`, `fit` returns a new
+  model, so use the return value.
+- **`topica.stm.beta_from_reference(beta, ref_vocab, target)`** (#873) aligns an external
+  (for example R `stm`) topic-word matrix to topica's vocabulary for
+  `STM.fit(beta_init=...)`, to reproduce a specific reference fit. It rejects log-scale,
+  non-finite, all-zero-row, and duplicate-vocabulary input.
 - **`reply_completion(theta=)` selects the held-out scoring ruler** (#881). The default,
   `"integrated"`, keeps the estimator-matched posterior-predictive `E[softmax(η)]` for the
   logistic-normal models (#838); `"plugin"` scores every model with its `doc_topic`
