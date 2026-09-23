@@ -728,6 +728,20 @@ res = topica.evaluate.reply_completion(
 res.delta["lda"], res.delta["stm"]   # tree minus the named tool, same CI machinery
 ```
 
+Because the logistic-normal and LDA estimators differ, a held-out contrast can depend on
+the scoring choice as well as on the models. `theta="plugin"` rescores the same fits with
+each model's `doc_topic` (the plug-in `softmax(mean η)` for ThreadTM and STM), so running
+both rulers on one seed is a robustness check: a contrast that keeps its sign under both is
+a model property, while one that flips is a property of the scoring choice. We keep the
+estimator-matched default for the headline number and report the plug-in as the check:
+
+```python
+kw = dict(num_topics=25, covariates=group, baselines=("no_tree", "stm"), seed=13)
+integrated = topica.evaluate.reply_completion(docs, parents, **kw)
+plugin = topica.evaluate.reply_completion(docs, parents, theta="plugin", **kw)
+integrated.delta["stm"]["estimate"], plugin.delta["stm"]["estimate"]
+```
+
 Two more off-the-shelf comparators cover the tools a reviewer reaches for after LDA and
 STM (issue #860). `"keyatm"` is keyATM, on the same supervision axis as STM: with a
 covariate of at least two groups it is fit as the **covariate** keyATM on the same

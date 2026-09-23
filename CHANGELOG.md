@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Added
+
+- **`reply_completion(theta=)` selects the held-out scoring ruler** (#881). The default,
+  `"integrated"`, keeps the estimator-matched posterior-predictive `E[softmax(η)]` for the
+  logistic-normal models (#838); `"plugin"` scores every model with its `doc_topic`
+  (`softmax(mean η)` for ThreadTM/STM). The fits are identical under both, so running the
+  pair on one seed shows whether a model contrast is a model property or a property of the
+  scoring choice. The choice is recorded in `settings["theta"]`.
+
 ## [0.60.0] - 2026-09-16
 
 ### Fixed
