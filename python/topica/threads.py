@@ -198,14 +198,32 @@ def _context_mixes(theta, lengths, kept, parents, root, contexts, exclude_parent
     return full_theta, n, out
 
 
+def _placebo_contexts(theta, lengths, kept, parents, root, contexts, exclude_parent,
+                      n_shuffle, seed):
+    """Context mixes under ``n_shuffle`` shuffled trees, one dict per draw.
+
+    Every context is built from the shuffled tree, so the placebo differs from the true tree
+    only in which comment is each reply's parent. With non-overlapping contexts the true parent
+    therefore moves into the placebo's thread mix and the stand-in parent leaves it."""
+    out = []
+    for s in range(n_shuffle):
+        sp = shuffle_parents(parents, rng=np.random.default_rng(seed * 1000 + s))
+        out.append(_context_mixes(theta, lengths, kept, sp, root, contexts,
+                                  exclude_parent=exclude_parent)[2])
+    return out
+
+
 def _call_base(base, corpus, seed):
-    """Call a base factory as ``base(corpus, seed)`` when it takes a seed, else ``base(corpus)``."""
+    """Call a base factory as ``base(corpus, seed=seed)`` when it has a parameter named
+    ``seed`` (or ``**kwargs``), else ``base(corpus)``."""
     import inspect
     try:
-        n_params = len(inspect.signature(base).parameters)
+        params = inspect.signature(base).parameters
     except (TypeError, ValueError):
-        n_params = 1
-    return base(corpus, seed) if n_params >= 2 else base(corpus)
+        return base(corpus)
+    takes_seed = "seed" in params or any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+    return base(corpus, seed=seed) if takes_seed else base(corpus)
 
 
 def _gate():
@@ -357,11 +375,9 @@ class ThreadSmoother:
 
         _, n_doc, ctx = _context_mixes(theta, lengths, kept, parents, root, self.contexts,
                                        exclude_parent=self.thread_excludes_parent)
-        shuf_mix = []
-        for s in range(n_shuffle):
-            sp = shuffle_parents(parents, rng=np.random.default_rng(seed * 1000 + s))
-            shuf_mix.append(_context_mixes(theta, lengths, kept, sp, root, ("parent",))[2]
-                            ["parent"])
+        shuf_ctx = (_placebo_contexts(theta, lengths, kept, parents, root, self.contexts,
+                                      self.thread_excludes_parent, n_shuffle, seed)
+                    if "parent" in self.contexts else [])
         row = np.full(len(docs), -1)
         row[kept] = np.arange(len(kept))
 
@@ -374,7 +390,7 @@ class ThreadSmoother:
                 continue
             if any(np.isnan(ctx[c][i, 0]) for c in self.contexts):
                 continue
-            if "parent" in self.contexts and any(np.isnan(m_[i, 0]) for m_ in shuf_mix):
+            if any(np.isnan(sc[c][i, 0]) for sc in shuf_ctx for c in self.contexts):
                 continue
             leaves.append((i, ids))
         if not leaves:
@@ -382,28 +398,28 @@ class ThreadSmoother:
         roots = np.array(sorted({root[i] for i, _ in leaves}))
         if len(roots) < 4:
             raise ValueError("need at least four threads with evaluable leaves")
-        val_roots = set(rng.choice(roots, size=max(1, int(round(val_frac * len(roots)))),
-                                   replace=False).tolist())
+        n_val = min(max(1, int(round(val_frac * len(roots)))), len(roots) - 1)
+        val_roots = set(rng.choice(roots, size=n_val, replace=False).tolist())
 
         # Flat per-token arrays.
         tpos = {r: j for j, r in enumerate(roots)}
         pL, n_tok, tj, grp = [], [], [], []
         P = {c: [] for c in self.contexts}
-        P_shuf = []
+        P_shuf = {c: [] for c in self.contexts} if shuf_ctx else {}
         for i, ids in leaves:
             r = row[i]
             pL.append(theta[r] @ beta[:, ids])
             for c in self.contexts:
                 P[c].append(ctx[c][i] @ beta[:, ids])
-            if "parent" in self.contexts:
-                P_shuf.append(np.mean([m_[i] @ beta[:, ids] for m_ in shuf_mix], 0))
+            for c in P_shuf:
+                P_shuf[c].append(np.mean([sc[c][i] @ beta[:, ids] for sc in shuf_ctx], 0))
             n_tok.append(np.full(ids.size, n_doc[i]))
             tj.append(np.full(ids.size, tpos[root[i]]))
             grp.extend([None if groups is None else groups[i]] * ids.size)
         pL = np.concatenate(pL)
         P = {c: np.concatenate(v) for c, v in P.items()}
-        if P_shuf:
-            P["_shuffled"] = np.concatenate(P_shuf)
+        for c, v in P_shuf.items():
+            P["_shuffled_" + c] = np.concatenate(v)
         n_tok = np.concatenate(n_tok)
         tj = np.concatenate(tj)
         grp = np.array(grp, dtype=object)
@@ -484,10 +500,11 @@ class ThreadSmoother:
         tok_gain = token_ll(a_star, self.contexts, everything) - np.log(pL)
         out["by_length"] = {"cuts": [float(c_) for c_ in cuts],
                             "gain": [float(tok_gain[~val_tok & (ter == t_)].mean())
+                                     if (~val_tok & (ter == t_)).any() else float("nan")
                                      for t_ in range(3)]}
 
         if "parent" in self.contexts:
-            keys_s = tuple("_shuffled" if c == "parent" else c for c in self.contexts)
+            keys_s = tuple("_shuffled_" + c for c in self.contexts)
             tab_s, _, _ = tables(keys_s, everything)
             g_s = int(np.argmax(tab_s[:, val_idx].sum(1)))
             a_s = refine_point(grid[g_s], keys_s, everything)
@@ -552,6 +569,7 @@ class ThreadSmoother:
 
         docs = [list(d) for d in docs]
         parents = [int(p) for p in parents]
+        groups = None if groups is None else list(groups)   # positional, not by label
         if len(docs) != len(parents):
             raise ValueError("docs and parents must have the same length")
         if groups is not None and len(groups) != len(docs):
@@ -648,6 +666,7 @@ class ThreadSmoother:
         """
         if self.alpha is None:
             raise RuntimeError("call fit() before transform()")
+        groups = None if groups is None else list(groups)
         parents = [int(p) for p in parents]
         _, root, _ = thread_structure(parents)
         theta = _doc_topic(model, self.theta_source)
@@ -720,7 +739,9 @@ class ThreadTM:
     Attributes (after :meth:`fit`)
     ------------------------------
     topic_word, vocabulary : the base model's topics and vocabulary.
-    doc_topic : ``(D, K)`` smoothed topic mixes, one row per input document.
+    doc_topic : smoothed topic mixes, one row per document the corpus kept (rows follow
+        ``corpus.kept_indices``).
+    doc_topic_all : ``(D, K)`` smoothed topic mixes, one row per input document.
     base_doc_topic : the unsmoothed base mixes, one row per document the corpus kept.
     alpha, alpha_ci, parent_share, parent_share_ci, parent_share_at_bound, p_no_borrowing,
     edge_effect, completion, alpha_by_group, draws, replicates : see :class:`ThreadSmoother`.
@@ -824,6 +845,15 @@ class ThreadTM:
 
     @property
     def doc_topic(self) -> np.ndarray:
+        """Smoothed topic mixes, one row per document the corpus kept (rows follow
+        ``corpus.kept_indices``, like every topica model)."""
+        self._need()
+        return self.smoother.theta_tilde[np.asarray(self.corpus.kept_indices)]
+
+    @property
+    def doc_topic_all(self) -> np.ndarray:
+        """Smoothed topic mixes, one row per *input* document, including documents the
+        vocabulary emptied (they get their pure context mix; NaN if they have none)."""
         self._need()
         return self.smoother.theta_tilde
 

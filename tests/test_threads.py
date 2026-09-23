@@ -222,7 +222,8 @@ def test_thread_context_excludes_the_parent_by_default():
 def test_threadtm_model_surface():
     docs, parents, truth, beta = _simulate(inherit=0.9, n_threads=300, seed=8)
     m = topica.ThreadTM(K, seed=3).fit(docs, parents, iters=400, n_boot=200)
-    assert m.doc_topic.shape == (len(docs), K)
+    assert m.doc_topic.shape == (len(m.corpus.kept_indices), K)
+    assert m.doc_topic_all.shape == (len(docs), K)
     assert m.topic_word.shape == (K, len(m.vocabulary))
     assert len(m.top_words(5)) == K
     assert m.alpha["parent"] > 0 and m.edge_effect["lo"] > 0
@@ -237,6 +238,101 @@ def test_threadtm_stm_base_aligns_prevalence_rows():
     m = topica.ThreadTM(K, base="stm", seed=3).fit(
         docs, parents, prevalence=X, n_boot=50, corpus_kwargs={"min_cf": 2},
         fit_kwargs={"restarts": 1})
-    assert m.doc_topic.shape == (len(docs), K)
+    kept = np.asarray(m.corpus.kept_indices)
+    assert 5 not in kept and m.doc_topic.shape == (len(kept), K)   # rows follow kept_indices
+    assert m.doc_topic_all.shape == (len(docs), K)
+    assert np.allclose(m.doc_topic, m.doc_topic_all[kept])
     with pytest.raises(ValueError):
         topica.ThreadTM(K, base="stm").fit(docs, parents)
+
+
+def _simulate_thread_level(n_threads=300, seed=0):
+    """Every reply draws its topics near its THREAD's mix, not its parent's: the parent is no
+    more informative than any other comment in the thread."""
+    rng = np.random.default_rng(seed)
+    beta = rng.dirichlet(np.full(V, 0.05), K)
+    docs, parents = [], []
+
+    def emit(theta, length):
+        z = rng.choice(K, size=length, p=theta)
+        return [f"w{rng.choice(V, p=beta[k])}" for k in z]
+
+    for _ in range(n_threads):
+        th_thread = rng.dirichlet(np.full(K, 0.2))
+        members = [len(docs)]
+        docs.append(emit(rng.dirichlet(80 * th_thread + 0.05), 60)), parents.append(-1)
+        for _ in range(rng.integers(4, 11)):
+            p = int(rng.choice(members))
+            members.append(len(docs))
+            docs.append(emit(rng.dirichlet(80 * th_thread + 0.05), int(rng.integers(5, 13))))
+            parents.append(p)
+    return docs, parents
+
+
+def test_placebo_contexts_come_from_the_shuffled_tree():
+    # Regression (PR #896 review): the placebo must build BOTH contexts from the shuffled tree,
+    # so it differs from the true tree only in which comment is the parent. The pre-fix code
+    # kept the true tree's thread mix, which leaves the true parent out of the placebo entirely.
+    rng = np.random.default_rng(0)
+    parents = [-1] + [0] * 6 + [1 + (i % 6) for i in range(12)]   # root, 6 depth-1, 12 depth-2
+    n = len(parents)
+    theta = rng.dirichlet(np.ones(K), n)
+    lengths = np.full(n, 10.0)
+    _, root, _ = threads.thread_structure(parents)
+    for draw_i, ctx in enumerate(threads._placebo_contexts(
+            theta, lengths, np.arange(n), parents, root, ("parent", "thread"), True, 3, 5)):
+        sp = threads.shuffle_parents(parents, rng=np.random.default_rng(5 * 1000 + draw_i))
+        for d in range(7, n):
+            true_p, stand_in = parents[d], sp[d]
+            others = [j for j in range(n) if j not in (d, stand_in)]
+            expect = theta[others].mean(0)                     # equal lengths: plain mean
+            assert np.allclose(ctx["parent"][d], theta[stand_in])
+            assert np.allclose(ctx["thread"][d], expect)       # includes true_p when moved
+            if stand_in != true_p:
+                assert true_p in others
+
+
+def test_no_edge_effect_when_the_parent_adds_nothing_beyond_the_thread():
+    # Replies track their thread, not their parent: the placebo-netted edge effect must not
+    # manufacture a parent effect. (A behavioral check; the construction is pinned above.)
+    docs, parents = _simulate_thread_level(seed=11)
+    sm = threads.ThreadSmoother().fit(docs, parents, base=_lda, seed=3, n_boot=300, final=False)
+    assert sm.completion["lo"] > 0                          # the thread context does help
+    assert sm.edge_effect["lo"] <= 0 <= sm.edge_effect["hi"], sm.edge_effect
+
+
+def test_large_val_frac_still_leaves_test_threads():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=6, seed=12)
+    sm = threads.ThreadSmoother().fit(docs, parents, base=_lda, seed=3, n_boot=20,
+                                      val_frac=0.95, final=False)
+    assert sm.settings["n_val_threads"] < sm.settings["n_eval_threads"]
+
+
+def test_seed_is_passed_only_to_a_parameter_named_seed():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=40, seed=13)
+    seen = {}
+
+    def no_seed(corpus, k=K):              # a second parameter that is NOT a seed
+        seen["k"] = k
+        return topica.LDA(k, seed=1).fit(corpus, iters=100)
+
+    threads.ThreadSmoother().fit(docs, parents, base=no_seed, seed=99, n_boot=10, final=False)
+    assert seen["k"] == K
+
+    def with_seed(corpus, *, seed):
+        seen["seed"] = seed
+        return topica.LDA(K, seed=seed).fit(corpus, iters=100)
+
+    threads.ThreadSmoother().fit(docs, parents, base=with_seed, seed=99, n_boot=10, final=False)
+    assert seen["seed"] == 99
+
+
+def test_groups_are_read_by_position_not_label():
+    pd = pytest.importorskip("pandas")
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=80, seed=14)
+    labels = ["a" if i % 2 else "b" for i in range(len(docs))]
+    series = pd.Series(labels, index=np.arange(len(docs))[::-1] + 1000)   # non-default index
+    kw = dict(base=_lda, seed=3, n_boot=20, final=False)
+    a = threads.ThreadSmoother(contexts=("parent",)).fit(docs, parents, groups=labels, **kw)
+    b = threads.ThreadSmoother(contexts=("parent",)).fit(docs, parents, groups=series, **kw)
+    assert a.alpha_by_group == b.alpha_by_group
