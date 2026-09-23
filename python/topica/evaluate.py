@@ -1110,8 +1110,8 @@ def reply_completion(
     ``log(sum_k theta[d, k] * topic_word[k, w])`` under that model's fitted
     ``theta`` and ``topic_word``, and average per token. To keep the estimator
     fair across models (issue #838), a logistic-normal model (ThreadTM and the STM
-    baseline) is scored with the posterior-predictive ``E[softmax(η)]`` (a
-    Monte-Carlo average of ``predictive_samples`` draws from its own η posterior),
+    baseline) is scored by default (``theta="integrated"``) with the
+    posterior-predictive ``E[softmax(η)]`` (a Monte-Carlo average of ``predictive_samples`` draws from its own η posterior),
     not the plug-in ``softmax(mean η)`` that ``doc_topic`` returns. The plug-in is
     an overconfident point estimate that ignores the posterior variance ν, so it is
     sharpest on exactly the thin leaves that are the eval targets, whereas LDA's
@@ -1821,7 +1821,7 @@ def reply_completion(
             "seed": seed,
             "n_boot": n_boot,
             "perm_changed_frac": perm_changed_frac,
-            "predictive_samples": predictive_samples,
+            "predictive_samples": predictive_samples if theta == "integrated" else None,
             "theta": theta,
             "keyatm_keywords": (sorted(keyatm_keywords) if keyatm_keywords else None),
             "keyatm_weights": keyatm_weights if "keyatm" in baselines else None,

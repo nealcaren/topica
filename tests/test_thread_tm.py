@@ -784,6 +784,7 @@ def test_reply_completion_plugin_theta_ruler():
     plug = topica.evaluate.reply_completion(docs, parents, theta="plugin", **kw)
     assert integ.settings["theta"] == "integrated"
     assert plug.settings["theta"] == "plugin"
+    assert plug.settings["predictive_samples"] is None  # ignored under the plug-in
     for name in ("tree", "no_tree", "stm"):
         assert plug.per_token_ll[name] != integ.per_token_ll[name]
     assert plug.per_token_ll["lda"] == integ.per_token_ll["lda"]
