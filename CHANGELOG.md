@@ -14,6 +14,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   (`softmax(mean η)` for ThreadTM/STM). The fits are identical under both, so running the
   pair on one seed shows whether a model contrast is a model property or a property of the
   scoring choice. The choice is recorded in `settings["theta"]`.
+- **`reply_completion(stm_kwargs=)` passes options to the `stm` baseline** (#888), routed
+  by name to `STM(...)` (`sigma_shrink`, `init`, `variational`) or `.fit()` (`restarts`,
+  `iters`, ...). Keys that would unmatch the arm (`num_topics`, `seed`, the corpus and
+  covariate designs) and unknown keys raise before any fit. `stm_kwargs={"restarts": 5}`
+  guards the baseline against the single-start local optima of thin-document corpora
+  (#871). Recorded in `settings["stm_kwargs"]`.
 
 ## [0.60.0] - 2026-09-16
 
