@@ -2410,8 +2410,9 @@ def beta_from_reference(beta, ref_vocab, target, *, floor=1e-8):
     seed :meth:`STM.fit` via ``beta_init=`` for exact replication of another fit.
 
     topica's spectral init and R ``stm``'s converge to *different, equally valid*
-    topic solutions (R's default anchor recovery is a non-converging, machine-order
-    dependent iteration — not a portably reproducible target; see issue #871). To
+    topic solutions (R's default anchor recovery is a non-converging iteration that
+    depends on floating-point order, so it is not a portably reproducible target;
+    see issue #871). To
     reproduce a *specific* R ``stm`` fit's basin, take its topic-word matrix and
     inject it as the initialization:
 
@@ -2432,10 +2433,13 @@ def beta_from_reference(beta, ref_vocab, target, *, floor=1e-8):
     Parameters
     ----------
     beta : array-like, shape (K, V_ref) or (V_ref, K)
-        The reference topic-word matrix (rows = topics). Transposed input is
-        detected and fixed from ``ref_vocab``'s length.
+        The reference topic-word matrix on the probability scale (rows = topics),
+        for example R's ``exp(fit$beta$logbeta[[1]])``. Transposed input is
+        detected and fixed from ``ref_vocab``'s length, except when ``K`` equals
+        ``V_ref``, where the matrix is taken as ``(K, V_ref)``.
     ref_vocab : sequence[str]
-        The reference model's vocabulary, in the column order of ``beta``.
+        The reference model's vocabulary, in the column order of ``beta``. Must
+        not contain duplicates.
     target : Corpus, fitted model with ``.vocabulary``, or sequence[str]
         Supplies topica's target vocabulary and its order.
     floor : float, default 1e-8
@@ -2455,6 +2459,15 @@ def beta_from_reference(beta, ref_vocab, target, *, floor=1e-8):
     ref_vocab = list(ref_vocab)
     if beta.ndim != 2:
         raise ValueError("beta must be 2-D (K x V_ref)")
+    if not np.all(np.isfinite(beta)):
+        raise ValueError("beta contains NaN or infinite values")
+    if np.any(beta < 0):
+        raise ValueError(
+            "beta has negative entries; it must be on the probability scale. "
+            "If it came from R stm's fit$beta$logbeta, pass exp() of it."
+        )
+    if len(set(ref_vocab)) != len(ref_vocab):
+        raise ValueError("ref_vocab contains duplicate words")
     if beta.shape[1] != len(ref_vocab):
         if beta.shape[0] == len(ref_vocab):
             beta = beta.T  # given as (V_ref, K); topics must be rows
@@ -2464,6 +2477,8 @@ def beta_from_reference(beta, ref_vocab, target, *, floor=1e-8):
                 "words; one axis must match ref_vocab."
             )
     k = beta.shape[0]
+    if np.any(beta.sum(axis=1) <= 0):
+        raise ValueError("beta has an all-zero topic row")
 
     if hasattr(target, "vocabulary"):
         target_vocab = list(target.vocabulary)
@@ -2599,12 +2614,11 @@ class STM(_STM):
         restarts : int, default 1
             Number of independently-seeded EM restarts. With ``restarts=1`` (the
             default) a single fit runs from the configured init. With ``restarts=N``
-            the model is fit ``N`` times — restart 0 from the configured init
-            (spectral by default), the rest from fresh random seeds — and the fit
-            with the best variational bound is returned. At large vocabularies the
-            logistic-normal EM has catastrophic local optima that any single init
-            can land in; those carry the worst bound, so best-of-N is a robust,
-            deterministic guard (#871). ``restarts>1`` returns the best model, so
+            the model is fit ``N`` times (restart 0 from the configured init,
+            spectral by default, and the rest from fresh random seeds) and the fit
+            with the best variational bound is returned. On some corpora a single
+            init can land in a catastrophic local optimum; those optima carry the
+            worst bound, so keeping the best of ``N`` avoids them (#871). ``restarts>1`` returns the best model, so
             capture the return value (``model = STM(K).fit(corpus, restarts=8)``);
             it is incompatible with a fixed ``beta_init``.
         """
@@ -2647,13 +2661,16 @@ class STM(_STM):
             spectral_projection_threshold=spectral_projection_threshold,
         )
 
-        if restarts is not None and int(restarts) > 1:
-            # Multi-start EM: the logistic-normal EM has catastrophic local optima
-            # at large vocabularies that ANY single init (spectral or random) can
-            # fall into; those bad basins carry the worst variational bound, so
-            # keeping the best-bound restart reliably avoids them (#871). Restart 0
-            # uses the configured init (spectral by default); the rest use fresh
-            # random seeds. Returns the best-bound model — use the return value.
+        if isinstance(restarts, bool) or not isinstance(restarts, (int, np.integer)):
+            raise TypeError(f"restarts must be an int >= 1, got {restarts!r}")
+        if restarts < 1:
+            raise ValueError(f"restarts must be >= 1, got {restarts}")
+        if restarts > 1:
+            # Multi-start EM (#871): on some corpora any single init (spectral or
+            # random) can fall into a catastrophic basin, and those basins carry
+            # the worst variational bound, so we keep the best-bound restart.
+            # Restart 0 uses the configured init; the rest use fresh random seeds.
+            # Returns the best-bound model, so callers must use the return value.
             if beta_init is not None:
                 raise ValueError(
                     "restarts>1 is for the default spectral/random init path; a "
@@ -2664,7 +2681,7 @@ class STM(_STM):
             # init at construction), so each restart is a fresh, reseeded model.
             base = dict(self.settings)
             best, best_bound = None, float("-inf")
-            for i in range(int(restarts)):
+            for i in range(restarts):
                 args = dict(base)
                 args["seed"] = base["seed"] + i
                 if i > 0:

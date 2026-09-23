@@ -705,6 +705,31 @@ def test_beta_from_reference_warns_on_low_overlap():
         topica.stm.beta_from_reference(beta, vocab[:2], corpus)
 
 
+def test_beta_from_reference_rejects_bad_input():
+    """Log-scale, non-finite, zero-row, and duplicate-vocab inputs raise instead of
+    silently flattening to a uniform init (#873 review)."""
+    import topica
+    vocab = ["a", "b", "c"]
+    good = np.array([[0.2, 0.3, 0.5], [0.6, 0.2, 0.2]])
+    with pytest.raises(ValueError, match="exp"):
+        topica.stm.beta_from_reference(np.log(good), vocab, vocab)
+    with pytest.raises(ValueError, match="NaN"):
+        topica.stm.beta_from_reference(np.where(good > 0.5, np.nan, good), vocab, vocab)
+    with pytest.raises(ValueError, match="all-zero"):
+        topica.stm.beta_from_reference(np.array([[0.0, 0.0, 0.0], [0.6, 0.2, 0.2]]), vocab, vocab)
+    with pytest.raises(ValueError, match="duplicate"):
+        topica.stm.beta_from_reference(good, ["a", "a", "b"], vocab)
+
+
+@pytest.mark.parametrize("bad", [0, -1, None, 2.7, "3", True])
+def test_stm_restarts_validates(bad):
+    import topica
+    rng = np.random.default_rng(0)
+    docs, x = _make_synthetic_corpus(rng, n_per_class=20)
+    with pytest.raises((TypeError, ValueError), match="restarts"):
+        topica.STM(num_topics=2).fit(docs, prevalence=x.reshape(-1, 1), iters=2, restarts=bad)
+
+
 def test_content_kappa_reconstructs_content_beta():
     """SAGE kappa decomposition (issue #237): m + kappa_topic + kappa_cov +
     kappa_interaction, softmax over words, reproduces the per-group topic-word."""

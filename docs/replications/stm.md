@@ -93,23 +93,26 @@ R `stm`'s **default** recovery is a different object: `recoverL2(recoverEG = TRU
 a fixed-step exponentiated gradient that runs a set number of iterations *without
 converging*. Its output is sensitive to floating-point order (a 1e-9 perturbation of
 the co-occurrence matrix moves it substantially), so it is **not a portably
-reproducible target** — R, and any reimplementation, land in different basins from
+reproducible target**: R, and any reimplementation, land in different basins from
 identical inputs (issue #871). topica's converged recovery and R's default are two
 different, equally valid starting points; neither reproduces the other bit-for-bit.
 
 Two practical consequences:
 
-- **Reliability — use restarts.** At large vocabularies the logistic-normal EM has
-  catastrophic local optima (much worse held-out completion, and the *worst*
-  variational bound) that any single initialization — spectral or random — can fall
-  into. `STM.fit(..., restarts=N)` fits `N` independently-seeded starts and returns
-  the one with the best bound, a deterministic guard that avoids those basins.
+- **Reliability: use restarts.** On some corpora a single initialization (spectral
+  or random) can land in a catastrophic local optimum, with much worse held-out
+  completion and the *worst* variational bound. We observed this on thin, threaded
+  reply documents at a vocabulary of about 14,000 (issue #871); congressional press
+  releases at a similar vocabulary and the Poliblog corpus were stable.
+  `STM.fit(..., restarts=N)` fits `N` independently seeded starts and returns the one
+  with the best bound. Because the bad basins carry the worst bound, best-of-N
+  avoided them in our tests.
 
   ```python
   model = topica.STM(20).fit(corpus, prevalence=X, restarts=8)  # keeps best-bound fit
   ```
 
-- **Exact replication — inject the reference β.** To reproduce a *specific* R `stm`
+- **Exact replication: inject the reference β.** To reproduce a *specific* R `stm`
   run, start EM from that run's topic-word matrix via `beta_init=`.
   `topica.stm.beta_from_reference` aligns R's `exp(fit$beta$logbeta[[1]])` to
   topica's vocabulary:

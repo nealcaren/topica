@@ -76,8 +76,9 @@ valid topic solutions, and R's default recovery is not a portably reproducible
 target (see the [STM replication notes](../replications/stm.md#initialization-what-is-and-isnt-a-reproducible-target)).
 To reproduce a *specific* R `stm` run, inject its topic-word matrix as the
 initialization via `STM.fit(beta_init=...)`; this helper aligns the reference β to
-topica's vocabulary. For robustness against catastrophic local optima without a
-reference, use `STM.fit(restarts=N)` (best-of-N by variational bound).
+topica's vocabulary. On corpora where a single initialization can land in a poor
+local optimum, `STM.fit(restarts=N)` keeps the best of `N` starts by variational
+bound.
 
 ::: topica.stm.beta_from_reference
 
