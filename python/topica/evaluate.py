@@ -1107,7 +1107,7 @@ def _split_stm_kwargs(stm_kwargs, baselines, theta):
     restarts = stm_kwargs.get("restarts", 1)
     if isinstance(restarts, bool) or not isinstance(restarts, (int, np.integer)) or restarts < 1:
         raise ValueError(f"stm_kwargs['restarts'] must be an int >= 1, got {restarts!r}")
-    if theta == "integrated" and stm_kwargs.get("keep_eta_cov", True) is False:
+    if theta == "integrated" and not bool(stm_kwargs.get("keep_eta_cov", True)):
         raise ValueError(
             "stm_kwargs={'keep_eta_cov': False} drops the variational covariance that "
             "theta='integrated' scoring samples from; keep it, or pass theta='plugin'."
