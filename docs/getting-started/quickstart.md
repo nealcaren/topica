@@ -75,6 +75,22 @@ table = topica.inspect.topic_table(model)
 examples = topica.inspect.find_thoughts(model, topic=0, n=3)
 ```
 
+`topic_word` and `doc_topic` are attributes holding the fitted matrices, not methods,
+so write `model.doc_topic`, not `model.doc_topic()`.
+
+## Relating topics to metadata
+
+The structural topic model (STM) takes an R-style formula over the metadata columns
+that `from_dataframe` kept aligned with the documents:
+
+```python
+stm = topica.STM(num_topics=5, seed=13).fit(corpus, formula="~ treatment", data=corpus.metadata)
+effects = topica.effects.estimate_effect(stm, formula="~ treatment", data=corpus.metadata)
+```
+
+Splines (`s(day)`), interactions (`a * b`), and factors work as in R. The
+[covariates guide](../guides/covariates.md) covers the full workflow.
+
 !!! note "Stemmed words in the output?"
     topica's `tokenize` lowercases and splits but does **not** stem, so your own
     text keeps its surface forms. Some bundled corpora (such as `load_poliblog`)
