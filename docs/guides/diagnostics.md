@@ -11,14 +11,14 @@ analysis publishable, see [Validate the topics](../publishing/validation.md).
 
 Every fitted model reports a standard block of fit statistics, the topic-model
 analogue of the table a regression prints with N and R². Print the model (or let a
-notebook display it) to see it; `model.summary()` returns the same block as a
+notebook display it) to see it; `model.fit_summary()` returns the same block as a
 `FitSummary` object:
 
 ```python
 model = topica.LDA(num_topics=20, seed=13).fit(corpus)
 print(model)                                   # the fit block
-model.summary(texts=corpus)                    # + coherence and exclusivity
-model.summary().to_markdown()                  # a paper-ready table
+model.fit_summary(texts=corpus)                # + coherence and exclusivity
+model.fit_summary().to_markdown()              # a paper-ready table
 ```
 
 The block has four parts:
@@ -32,16 +32,15 @@ The block has four parts:
 - **Topic health:** corpus-free checks computed from the fitted matrices: word
   diversity across topics, topic redundancy, topic significance, and the count of
   near-background topics.
-- **Quality and held-out fit (on request):** `summary(texts=corpus)` adds mean
-  coherence and exclusivity. `summary(heldout=ho)` with a
+- **Quality and held-out fit (on request):** `fit_summary(texts=corpus)` adds mean
+  coherence and exclusivity. `fit_summary(heldout=ho)` with a
   `topica.evaluate.make_heldout` split adds held-out log-likelihood. Raw documents are
   accepted only with `assume_unseen=True`, because the summary cannot check that the
   model never saw them, and passing the training corpus would report training fit
   under a held-out label.
 
 A statistic that does not apply to a model reads `n/a`. `repr(model)` stays the
-one-line constructor form, so a list of models prints compactly. (The top-level
-`topica.summary(model)` is a different helper that prints top words per topic.)
+one-line constructor form, so a list of models prints compactly.
 
 ## Quality metrics
 

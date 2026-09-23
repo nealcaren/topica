@@ -2,9 +2,9 @@
 table that always prints R2/N/F. Printing a fitted model (``print(m)``, or a bare
 notebook eval via ``_repr_html_``) shows the cheap stored scalars (converged,
 iterations, the family objective, K/D/V); ``repr(m)`` stays the compact one-line
-constructor form so lists of models and debuggers stay readable. ``model.summary(texts=...)`` adds the
+constructor form so lists of models and debuggers stay readable. ``model.fit_summary(texts=...)`` adds the
 model-agnostic quality tier (coherence, exclusivity), which needs a reference corpus
-and so is never computed by ``repr``. ``model.summary(heldout=...)`` adds the
+and so is never computed by ``repr``. ``model.fit_summary(heldout=...)`` adds the
 held-out fit numbers (perplexity, or held-out log-likelihood for a ``make_heldout``
 split), which need documents the model was not trained on.
 
@@ -122,7 +122,7 @@ class FitSummary:
     """One per-model header of fit statistics. Two tiers: family-internal *fit
     diagnostics* (comparable only within a family) and model-agnostic *quality*
     metrics (the cross-family analogue of R2), the latter populated only when
-    ``summary(texts=...)`` is given a reference corpus.
+    ``fit_summary(texts=...)`` is given a reference corpus.
 
     Field legend (each renders ``n/a`` when it does not apply to the family):
 
@@ -131,7 +131,7 @@ class FitSummary:
       last recorded iteration, a convergence witness rather than a quality score, and
       not comparable across families.
     - ``perplexity``: held-out document-completion perplexity; lower is better. Only
-      from ``summary(heldout=...)``.
+      from ``fit_summary(heldout=...)``.
     - ``heldout_loglik``: mean per-document held-out log-likelihood from a
       :func:`topica.make_heldout` split (R stm's ``eval.heldout``); higher (less
       negative) is better.
@@ -148,7 +148,7 @@ class FitSummary:
     - ``weak_topics``: count of near-background topics flagged by a relative threshold
       on the per-topic significance scores; lower is better.
     - ``coherence`` / ``exclusivity``: the quality tier (mean over topics), from
-      ``summary(texts=corpus)``; higher is better.
+      ``fit_summary(texts=corpus)``; higher is better.
     """
 
     model: str
@@ -236,7 +236,7 @@ class FitSummary:
             for label, value in self._quality_rows():
                 lines.append(f"  {label:<{width}}  {_fmt(value)}")
         elif self.has_topics:
-            lines.append("  (call .summary(texts=corpus) for coherence and exclusivity)")
+            lines.append("  (call .fit_summary(texts=corpus) for coherence and exclusivity)")
         return "\n".join(lines)
 
     __repr__ = __str__
@@ -376,7 +376,7 @@ def _build_summary(model, *, texts=None, heldout=None, assume_unseen=False, n=10
     if texts is not None and _topic_word(model) is None:
         raise ValueError(
             f"{name} has no flat topic-word matrix, so coherence and exclusivity do not "
-            "apply; call summary() without texts="
+            "apply; call fit_summary() without texts="
         )
     if texts is not None:
         # Quality tier proper: coherence and exclusivity need the reference corpus.
@@ -405,14 +405,14 @@ def _build_summary(model, *, texts=None, heldout=None, assume_unseen=False, n=10
             perplexity = float(evaluate.perplexity(model, heldout))
         else:
             raise ValueError(
-                "summary() will not label a number 'held-out' unless the documents are "
+                "fit_summary() will not label a number 'held-out' unless the documents are "
                 "verifiably unseen, and it cannot check that for you. Two safe options:\n"
                 "  - within-corpus split (recommended):\n"
                 "        ho = topica.make_heldout(corpus)\n"
                 "        model.fit(ho.documents)\n"
-                "        model.summary(heldout=ho)\n"
+                "        model.fit_summary(heldout=ho)\n"
                 "  - a genuinely external test set the model was NOT trained on:\n"
-                "        model.summary(heldout=test_docs, assume_unseen=True)\n"
+                "        model.fit_summary(heldout=test_docs, assume_unseen=True)\n"
                 "Passing the training corpus here would report training-data perplexity "
                 "as if it were held-out."
             )
@@ -441,7 +441,7 @@ def _build_summary(model, *, texts=None, heldout=None, assume_unseen=False, n=10
     )
 
 
-def summary(model, texts=None, *, heldout=None, assume_unseen=False, n=10) -> FitSummary:
+def fit_summary(model, texts=None, *, heldout=None, assume_unseen=False, n=10) -> FitSummary:
     """The fit-stats header for a model. Three optional tiers over the free repr:
 
     - no argument: the cheap stored scalars and corpus-free topic health.
@@ -468,17 +468,17 @@ def _model_repr_html(model) -> str:
 
 
 def _bind_fit_summary(classes) -> None:
-    """Attach ``summary`` / ``__str__`` / ``_repr_html_`` onto each model class.
+    """Attach ``fit_summary`` / ``__str__`` / ``_repr_html_`` onto each model class.
     ``__repr__`` is left as the native one-line constructor form. Mirrors
     ``inspect._bind_topic_table_method``: the native classes are heap types, so
     Python-side assignment works without a Rust change. A class that already defines
-    its own ``summary`` keeps it."""
+    its own ``fit_summary`` keeps it."""
     for cls in classes:
         if cls is None:
             continue
         try:
-            if "summary" not in vars(cls):
-                cls.summary = summary
+            if "fit_summary" not in vars(cls):
+                cls.fit_summary = fit_summary
             cls.__str__ = _model_str
             cls._repr_html_ = _model_repr_html
         except (TypeError, AttributeError):

@@ -13,7 +13,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   effective topics, documents, vocabulary), convergence and iterations, the in-sample
   training objective under the model's own name (log-likelihood, ELBO, reconstruction
   error, ...), and corpus-free topic health (diversity, redundancy, significance, weak
-  topics). `model.summary(texts=)` adds coherence and exclusivity; `summary(heldout=)`
+  topics). `model.fit_summary(texts=)` adds coherence and exclusivity; `fit_summary(heldout=)`
   adds held-out fit from a `make_heldout` split, and refuses raw documents unless
   `assume_unseen=True`. Statistics that do not apply read `n/a`. `repr(model)` is
   unchanged.
