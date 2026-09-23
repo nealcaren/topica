@@ -69,6 +69,19 @@ dropping any out-of-vocabulary tokens.
 
 ::: topica.design.align_corpus
 
+## Reproducing a reference (R `stm`) fit
+
+topica's spectral init and R `stm`'s default init converge to different, equally
+valid topic solutions, and R's default recovery is not a portably reproducible
+target (see the [STM replication notes](../replications/stm.md#initialization-what-is-and-isnt-a-reproducible-target)).
+To reproduce a *specific* R `stm` run, inject its topic-word matrix as the
+initialization via `STM.fit(beta_init=...)`; this helper aligns the reference β to
+topica's vocabulary. On corpora where a single initialization can land in a poor
+local optimum, `STM.fit(restarts=N)` keeps the best of `N` starts by variational
+bound.
+
+::: topica.stm.beta_from_reference
+
 ## Model selection at fixed K
 
 Run multiple initializations at a fixed K and compare candidates on the
