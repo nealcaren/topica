@@ -426,8 +426,9 @@ class ThreadSmoother:
         reported number comes from test threads, as in the pooled fit. A context a document
         lacks (a top-level reply has no original post) drops its pseudo-count rather than
         passing it to the others. Bootstrap draws re-choose the share and re-optimize the other
-        parameters on resampled validation threads; the held-out gains are evaluated at the
-        point estimate and resampled over test threads. Use it when only some
+        parameters on resampled validation threads (re-fitting the three best-profiling shares
+        per draw, an approximation to re-fitting all of them); the held-out gains are
+        evaluated at the point estimate and resampled over test threads. Use it when only some
         replies take up their context: the pooled pseudo-count then borrows little or nothing
         even though some replies inherit. ``groups`` is not supported yet.
 
@@ -452,9 +453,9 @@ class ThreadSmoother:
         in-vocabulary tokens. A short reply carries little evidence, so its weight stays near
         the prior ``rho``; long replies are the ones the data classify. ``inherit_rate`` is
         their mean over replies (no interval; report ``rho`` and ``rho_ci`` as the estimate).
-    strength_at_bound : ``True`` when the total pseudo-count is at the top of its range
-        (1000): inheriting replies take their context nearly wholesale, and a larger value
-        would fit about as well. A warning is issued.
+    strength_at_bound : ``True`` when a pseudo-count is at the top of its search range (the
+        switch's total at 1000; a pooled pseudo-count at the refinement cap): larger values
+        fit about as well, so its size is not identified beyond that. A warning is issued.
     op_effect : (``"op"`` in ``contexts``) held-out gain of the true original post over a
         random other comment of the same thread in its slot, nats per token:
         ``{"estimate", "lo", "hi"}``. Both arms leave the root and that comment out of the
@@ -629,8 +630,6 @@ class ThreadSmoother:
         # normalized predictive, not a ratio of averages.
         P = {pre + c: [] for pre, c, _ in sources}
         avail = {key: [] for key in P}
-        P_draw = {pre + c: [[] for _ in mixes] for pre, c, mixes in sources if pre}
-        A_draw = {key: [[] for _ in v] for key, v in P_draw.items()}
         for i, ids in leaves:
             r = row[i]
             pL.append(theta[r] @ beta[:, ids])
@@ -639,22 +638,26 @@ class ThreadSmoother:
                 P[pre + c].append(np.mean([h @ beta[:, ids] for h in have], 0) if have
                                   else np.zeros(ids.size))
                 avail[pre + c].append(np.full(ids.size, len(have) / len(mixes)))
-                if pre:
-                    for d_, m in enumerate(mixes):
-                        ok = not np.isnan(m[c][i, 0])
-                        P_draw[pre + c][d_].append(m[c][i] @ beta[:, ids] if ok
-                                                   else np.zeros(ids.size))
-                        A_draw[pre + c][d_].append(np.full(ids.size, float(ok)))
             n_tok.append(np.full(ids.size, n_doc[i]))
             tj.append(np.full(ids.size, tpos[root[i]]))
             grp.extend([None if groups is None else groups[i]] * ids.size)
         pL = np.concatenate(pL)
         P = {c: np.concatenate(v) for c, v in P.items()}
         avail = {c: np.concatenate(v) for c, v in avail.items()}
-        P_draw = {c: np.array([np.concatenate(d_) for d_ in v]) for c, v in P_draw.items()}
-        A_draw = {c: np.array([np.concatenate(d_) for d_ in v]) for c, v in A_draw.items()}
-        # A key set whose availability differs across draws needs the per-draw path.
-        fractional = {c: bool(((avail[c] > 0) & (avail[c] < 1)).any()) for c in P_draw}
+        # A placebo key whose availability differs across draws needs each draw's predictive
+        # (pooled fit only; the switch builds its own per-draw tables). Built only then.
+        P_draw, A_draw = {}, {}
+        for pre, c, mixes in sources:
+            key = pre + c
+            if not pre or self.switch or not ((avail[key] > 0) & (avail[key] < 1)).any():
+                continue
+            P_draw[key] = np.array([np.concatenate(
+                [m[c][i] @ beta[:, ids] if not np.isnan(m[c][i, 0]) else np.zeros(ids.size)
+                 for i, ids in leaves]) for m in mixes])
+            A_draw[key] = np.array([np.concatenate(
+                [np.full(ids.size, float(not np.isnan(m[c][i, 0]))) for i, ids in leaves])
+                for m in mixes])
+        fractional = {key: True for key in P_draw}
         n_tok = np.concatenate(n_tok)
         tj = np.concatenate(tj)
         grp = np.array(grp, dtype=object)
@@ -931,7 +934,10 @@ class ThreadSmoother:
         boot_test = test_idx[brng.integers(0, len(test_idx), (n_boot, len(test_idx)))]
         # Bootstrap re-selection: on each resampled validation set, the three shares that
         # profile best are each re-optimized in (A, a_new, rho), warm-started at their
-        # full-sample optima, and the best re-optimized share wins. (The held-out gains below
+        # full-sample optima, and the best re-optimized share wins. Re-optimizing every share
+        # would be exact but costs the lattice size (25 or 49) per draw instead of three; a
+        # share outside the top three at the full-sample optima rarely wins after re-fitting,
+        # and then by little. (The held-out gains below
         # are evaluated at the point estimate and resampled over test threads, as in the
         # pooled fit.)
         boot_x, boot_j = [], []
@@ -1173,10 +1179,14 @@ class ThreadSmoother:
         # The optimizer's own ceiling: the likelihood grid under the switch; the refinement cap
         # (or, without refinement, the largest grid strength) in the pooled fit. Zero
         # borrowing is never "at the bound".
-        total = sum(self.alpha.values())
-        cap = (CONC_GRID[-1] if self.switch
-               else MAX_PSEUDOCOUNT if self.settings["refine"] else self.strength_grid[-1])
-        self.strength_at_bound = bool(total > 0 and total >= cap * 0.999)
+        a = np.array(list(self.alpha.values()))
+        if self.switch:                     # the total A is the searched parameter
+            at = self._unpack(main["switch_x"])[0] >= CONC_GRID[-1] * 0.999
+        elif self.settings["refine"]:       # refinement caps each pseudo-count
+            at = bool((a >= MAX_PSEUDOCOUNT * 0.999).any())
+        else:                               # the grid searches the total
+            at = a.sum() >= self.strength_grid[-1] * 0.999
+        self.strength_at_bound = bool(a.sum() > 0 and at)
         if st["n_eval_leaves"] < 200 or st["n_test_tokens"] < 2000:
             warnings.warn(
                 f"ThreadSmoother calibrated on {st['n_eval_leaves']} evaluation leaves and "
@@ -1185,9 +1195,9 @@ class ThreadSmoother:
                 "communities of short comments.", UserWarning, stacklevel=3)
         if self.strength_at_bound:
             warnings.warn(
-                "the total pseudo-count is at the top of its range: inheriting replies take "
-                "their context nearly wholesale, and the size of the pseudo-count is not "
-                "identified beyond that (see strength_at_bound).", UserWarning, stacklevel=3)
+                "a pseudo-count is at the top of its search range: larger values fit about as "
+                "well, so its size is not identified beyond that (see strength_at_bound).",
+                UserWarning, stacklevel=3)
 
     # -- application -------------------------------------------------------------------
 

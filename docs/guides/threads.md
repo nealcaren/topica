@@ -136,8 +136,8 @@ and `completion`, `edge_effect` and `op_effect` are reported on test threads, as
 fit. Bootstrap draws re-choose the parameters on resampled validation threads; the held-out
 gains are evaluated at the point estimate and resampled over test threads, so their intervals
 are conditional on the calibration (use `n_refit` to widen them for masking and base-fit
-variation). A pseudo-count at the top of its range (1000) means inheriting replies take their
-context nearly wholesale. `alpha` and
+variation). Each bootstrap draw re-fits the three best-profiling context shares, an
+approximation to re-fitting all of them. `alpha` and
 `parent_share` describe the inherit component: among replies that inherit, how much comes from
 the parent. The mean of `inherit_weights` over replies estimates the share that inherit at all.
 
@@ -149,7 +149,7 @@ the parent. The mean of `inherit_weights` over replies estimates the share that 
 | `alpha`, `parent_share` | Among replies that inherit, how much of the borrowing comes from the parent (versus the thread or the original post)? A parent share of 0.98 with `rho` of 0.55 means about half the replies inherit, and those that do take up their parent. |
 | `inherit_weights` | Which replies inherit? A ranking, NaN for roots and empty replies. A short reply carries little evidence, so its weight stays near `rho`; only longer replies are classified with confidence. |
 | `inherit_rate` | The mean of `inherit_weights` over replies. It leans toward `rho` in communities of short comments and has no interval. |
-| `strength_at_bound` | The total pseudo-count is at the top of its range (1000): inheriting replies take their context nearly wholesale. |
+| `strength_at_bound` | A pseudo-count is at the top of its search range: larger values fit about as well, so its size is not identified beyond that. With the switch, inheriting replies then lean heavily on their context, more so the shorter they are. |
 
 The context shares are searched on a coarse lattice, so equal pseudo-counts across contexts
 (for example a parent share of exactly 1/3 with three contexts) usually mean "not
