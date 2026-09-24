@@ -366,11 +366,10 @@ def test_switch_recovers_the_edge_effect_at_half_inheritance():
     assert min(sm.completion["by_length"]["gain"]) > 0
     replies = np.array(parents) >= 0
     w = sm.inherit_weights[replies]
-    assert w.shape[1] == 3 and np.allclose(w.sum(1), 1.0)
-    assert abs(w[:, :2].sum(1).mean() - 0.5) < 0.15      # tracks the planted rate
-    assert set(sm.rho) == {"parent", "thread", "new"}
-    assert np.isclose(sum(sm.rho.values()), 1.0)
-    assert all(lo <= sm.rho[k] <= hi for k, (lo, hi) in sm.rho_ci.items())
+    assert w.shape == (replies.sum(),) and ((w >= 0) & (w <= 1)).all()
+    assert abs(w.mean() - 0.5) < 0.15                    # tracks the planted rate
+    assert sm.rho_ci[0] <= sm.rho <= sm.rho_ci[1]
+    assert 0 < sm.parent_share < 1
     th = sm.theta_tilde[~np.isnan(sm.theta_tilde[:, 0])]
     assert np.allclose(th.sum(1), 1.0) and (th >= 0).all()
 
@@ -380,14 +379,14 @@ def test_switch_finds_no_edge_effect_without_inheritance():
     sm = threads.ThreadSmoother(switch=True).fit(docs, parents, base=_lda, seed=3, n_boot=100,
                                                  final=False)
     assert sm.edge_effect["lo"] <= 0 <= sm.edge_effect["hi"], sm.edge_effect
-    assert sm.rho["new"] > 0.8
+    assert sm.rho < 0.2
 
 
 def test_switch_weights_rise_with_inheritance(inherited):
     docs, parents, *_ = inherited[1:3]
     sm = threads.ThreadSmoother(switch=True).fit(docs, parents, base=_lda, seed=3, n_boot=50)
     w = sm.inherit_weights[np.array(parents) >= 0]
-    assert w[:, :2].sum(1).mean() > 0.75                  # planted rate 0.9
+    assert w.mean() > 0.75                                # planted rate 0.9
 
 
 def test_switch_rejects_groups():
@@ -395,3 +394,95 @@ def test_switch_rejects_groups():
     with pytest.raises(ValueError, match="groups"):
         threads.ThreadSmoother(switch=True).fit(docs, parents, base=_lda,
                                                 groups=[0] * len(docs))
+
+
+# ------------------------------------------------ the original post as a context (#900)
+
+
+def _simulate_op(n_threads=300, seed=0):
+    """Replies at every depth draw their topics near the thread ROOT (the original post), not
+    near their parent. Most replies answer another reply, so parent and OP differ."""
+    rng = np.random.default_rng(seed)
+    beta = rng.dirichlet(np.full(V, 0.05), K)
+    docs, parents = [], []
+
+    def emit(theta, length):
+        z = rng.choice(K, size=length, p=theta)
+        return [f"w{rng.choice(V, p=beta[k])}" for k in z]
+
+    for _ in range(n_threads):
+        root = len(docs)
+        th_root = rng.dirichlet(np.full(K, 0.2))
+        docs.append(emit(th_root, 60)), parents.append(-1)
+        members = [root]
+        for _ in range(rng.integers(6, 13)):
+            p = int(rng.choice(members[1:] if len(members) > 2 and rng.random() < 0.7
+                               else members))
+            th = (rng.dirichlet(80 * th_root + 0.05) if rng.random() < 0.9
+                  else rng.dirichlet(np.full(K, 0.2)))
+            members.append(len(docs))
+            docs.append(emit(th, int(rng.integers(5, 13)))), parents.append(p)
+    return docs, parents
+
+
+def test_op_context_is_the_root_for_deep_replies_and_leaves_the_thread_mix():
+    # root 0 -> 1 -> 2, and 0 -> 3
+    theta = np.array([[1.0, 0.0], [0.0, 1.0], [0.5, 0.5], [0.2, 0.8]])
+    parents = [-1, 0, 1, 0]
+    _, root, _ = threads.thread_structure(parents)
+    _, _, ctx = threads._context_mixes(theta, np.full(4, 10.0), np.arange(4), parents, root,
+                                       ("parent", "op", "thread"), exclude_parent=True)
+    assert np.isnan(ctx["op"][1, 0]) and np.isnan(ctx["op"][3, 0])   # parent is the root
+    assert np.allclose(ctx["op"][2], [1.0, 0.0])
+    assert np.allclose(ctx["thread"][2], [0.2, 0.8])                  # not 0 (root) or 1
+
+
+def test_op_placebo_swaps_in_a_same_thread_comment_and_keeps_the_root_out():
+    # root 0 -> 1 -> 2, and 0 -> 3, 0 -> 4. Reply 2's stand-in OP must be 3 or 4.
+    theta = np.array([[1.0, 0.0], [0.0, 1.0], [0.5, 0.5], [0.2, 0.8], [0.6, 0.4]])
+    parents = [-1, 0, 1, 0, 0]
+    _, root, _ = threads.thread_structure(parents)
+    for draw in threads._op_placebo_contexts(theta, np.full(5, 10.0), np.arange(5), parents,
+                                             root, ("parent", "op", "thread"), True, 4, 5):
+        stand_in = 3 if np.allclose(draw["op"][2], theta[3]) else 4
+        assert np.allclose(draw["op"][2], theta[stand_in])
+        other = 7 - stand_in                                    # the remaining one of 3, 4
+        assert np.allclose(draw["thread"][2], theta[other])     # neither root nor stand-in
+        assert np.allclose(draw["parent"][2], theta[1])                    # parent unchanged
+
+
+@pytest.mark.parametrize("switch", [False, True])
+def test_op_context_is_recovered_when_replies_answer_the_original_post(switch):
+    docs, parents = _simulate_op(seed=16)
+    sm = threads.ThreadSmoother(contexts=("parent", "op", "thread"), switch=switch).fit(
+        docs, parents, base=_lda, seed=3, n_boot=100, final=False)
+    assert sm.alpha["op"] > sm.alpha["parent"], sm.alpha      # a_p not inflated
+    assert sm.op_effect["lo"] > 0, sm.op_effect
+    assert sm.edge_effect["lo"] <= 0 <= sm.edge_effect["hi"], sm.edge_effect
+
+
+def test_op_context_finds_no_op_effect_when_replies_ignore_the_original_post():
+    # Replies share a thread topic that the original post does not carry (the root is drawn
+    # fresh), so the OP should add nothing beyond a same-thread comment standing in for it.
+    # (When the OP itself carries the thread's topic, replies following the thread and replies
+    # answering the OP generate the same data; a positive op_effect is then expected.)
+    rng = np.random.default_rng(18)
+    beta = rng.dirichlet(np.full(V, 0.05), K)
+    docs, parents = [], []
+
+    def emit(theta, length):
+        z = rng.choice(K, size=length, p=theta)
+        return [f"w{rng.choice(V, p=beta[k])}" for k in z]
+
+    for _ in range(300):
+        th_thread = rng.dirichlet(np.full(K, 0.2))
+        members = [len(docs)]
+        docs.append(emit(rng.dirichlet(np.full(K, 0.2)), 60)), parents.append(-1)
+        for _ in range(rng.integers(6, 13)):
+            p = int(rng.choice(members))
+            members.append(len(docs))
+            docs.append(emit(rng.dirichlet(80 * th_thread + 0.05), int(rng.integers(5, 13))))
+            parents.append(p)
+    sm = threads.ThreadSmoother(contexts=("parent", "op", "thread")).fit(
+        docs, parents, base=_lda, seed=3, n_boot=100, final=False)
+    assert sm.op_effect["lo"] <= 0 <= sm.op_effect["hi"], sm.op_effect

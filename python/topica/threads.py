@@ -33,9 +33,13 @@ only some replies take up their parent's topics and the rest turn to sharply dif
 borrowing costs the second group about as much as it helps the first, and the fit can return
 zero even though some replies do inherit. A zero pseudo-count therefore means "borrowing does
 not help on average", not "no reply follows its parent". ``ThreadSmoother(switch=True)`` handles
-that case with a per-reply inherit-or-innovate switch: a mixture prior with one component per
-context plus an innovate component centered on the corpus mean mix, whose posterior weights
-come from each reply's own tokens.
+that case with a per-reply inherit-or-innovate switch: a two-component mixture prior, the
+shrinkage above or an innovate component centered on the corpus mean mix, whose posterior
+weights come from each reply's own tokens.
+
+``contexts=("parent", "op", "thread")`` adds the original post (the thread root) as a third,
+non-overlapping context with its own pseudo-count and a placebo that swaps in another thread's
+root (:attr:`ThreadSmoother.op_effect`).
 
 Experimental: an original construction validated by planted recovery. Enable with
 :func:`topica.enable_experimental`.
@@ -56,7 +60,11 @@ __all__ = ["ThreadTM", "ThreadSmoother", "strip_quotes", "strip_copied_runs", "s
            "thread_structure"]
 
 CONTEXTS = ("parent", "thread")
+ALL_CONTEXTS = ("parent", "op", "thread")
+OP_SHARE_STEPS = 13
+SWITCH_SHARE_STEPS = (25, 7)     # inherit-share lattice: two contexts, three (per axis)
 DEFAULT_STRENGTH_GRID = np.geomspace(0.1, 1000.0, 40)
+MAX_PSEUDOCOUNT = 1e4
 
 _QUOTE_LINE = re.compile(r"^\s*(>|&gt;)")
 _ITALIC = re.compile(r"<i>.*?</i>", re.S)
@@ -162,11 +170,18 @@ def _doc_topic(model, how: str) -> np.ndarray:
     return np.asarray(model.doc_topic, float)
 
 
-def _context_mixes(theta, lengths, kept, parents, root, contexts, exclude_parent=False):
+def _context_mixes(theta, lengths, kept, parents, root, contexts, exclude_parent=False,
+                   op_source=None):
     """Per-original-document context topic mixes (NaN rows where unavailable).
 
     The thread mix always excludes the document itself; with ``exclude_parent`` it also
-    excludes the document's parent, so the parent and thread contexts do not overlap."""
+    excludes the document's parent, so the parent and thread contexts do not overlap. The
+    ``"op"`` context is the thread root's mix, available only to replies at depth 2 or deeper
+    (for a top-level reply the root is the parent); when it is requested the thread mix also
+    excludes the root, so the three contexts do not overlap. ``op_source`` (the OP placebo)
+    names another document to stand in for each reply's root; the thread mix then excludes
+    the stand-in as well as the root."""
+    op_source = root if op_source is None else op_source
     n_docs = len(parents)
     k = theta.shape[1]
     row = np.full(n_docs, -1)
@@ -182,6 +197,12 @@ def _context_mixes(theta, lengths, kept, parents, root, contexts, exclude_parent
             if p >= 0 and row[p] >= 0:
                 par[d] = full_theta[p]
         out["parent"] = par
+    if "op" in contexts:
+        op = np.full((n_docs, k), np.nan)
+        for d, p in enumerate(parents):
+            if p >= 0 and parents[p] >= 0 and row[op_source[d]] >= 0:
+                op[d] = full_theta[op_source[d]]
+        out["op"] = op
     if "thread" in contexts:
         wsum = defaultdict(lambda: np.zeros(k))
         nsum = defaultdict(float)
@@ -190,9 +211,11 @@ def _context_mixes(theta, lengths, kept, parents, root, contexts, exclude_parent
             nsum[root[d]] += n[d]
         thr = np.full((n_docs, k), np.nan)
         for d in range(n_docs):
-            drop = [d]
+            drop = {d}
             if exclude_parent and parents[d] >= 0:
-                drop.append(parents[d])
+                drop.add(parents[d])
+            if "op" in contexts:
+                drop.update((int(root[d]), int(op_source[d])))
             own = sum((n[j] * full_theta[j] for j in drop if row[j] >= 0), np.zeros(k))
             rest = nsum[root[d]] - sum(n[j] for j in drop)
             if rest > 0:
@@ -213,12 +236,42 @@ def _placebo_contexts(theta, lengths, kept, parents, root, contexts, exclude_par
             for sp in _shuffled_trees(parents, n_shuffle, seed)]
 
 
+def _op_placebo_contexts(theta, lengths, kept, parents, root, contexts, exclude_parent,
+                         n_shuffle, seed):
+    """Context mixes with a placebo original post, one dict per draw.
+
+    For each reply at depth 2 or deeper, a random other comment of the same thread (not the
+    reply, its parent or the root) stands in for the root and leaves the thread mix; the root
+    stays out of every context. The placebo therefore asks whether the original post predicts a
+    reply better than a random same-thread comment in the same slot. (The root does not rejoin
+    the thread mix: that mix is token-weighted, and a long original post would dominate it.) A
+    reply with no such comment keeps its true root."""
+    parents = [int(p) for p in parents]
+    kept_set = set(np.asarray(kept, int).tolist())
+    members = defaultdict(list)
+    for d in range(len(parents)):
+        if d in kept_set and parents[d] >= 0:
+            members[int(root[d])].append(d)
+    out = []
+    for s in range(n_shuffle):
+        rng = np.random.default_rng(seed * 1000 + 500 + s)
+        src = np.array(root, int)
+        for d, p in enumerate(parents):
+            if p < 0 or parents[p] < 0:
+                continue
+            cand = [j for j in members[int(root[d])] if j != d and j != p]
+            if cand:
+                src[d] = cand[int(rng.integers(len(cand)))]
+        out.append(_context_mixes(theta, lengths, kept, parents, root, contexts,
+                                  exclude_parent=exclude_parent, op_source=src)[2])
+    return out
+
+
 def _shuffled_trees(parents, n_shuffle, seed):
     return [shuffle_parents(parents, rng=np.random.default_rng(seed * 1000 + s))
             for s in range(n_shuffle)]
 
 
-NEW = "new"
 CONC_GRID = np.geomspace(0.01, 1000.0, 21)
 
 
@@ -265,23 +318,6 @@ def _interp_cols(table, x, grid):
     j = int(np.clip(np.searchsorted(lg, lx) - 1, 0, len(grid) - 2))
     f = (lx - lg[j]) / (lg[j + 1] - lg[j])
     return table[:, j] * (1 - f) + table[:, j + 1] * f
-
-
-def _switch_weights(lml, log_a, log_rho, comps):
-    """Posterior component weights ``(D, len(comps))`` from per-document log marginal
-    likelihood tables ``lml[c]`` (NaN = component unavailable), the concentrations
-    ``exp(log_a[c])`` and prior log weights ``log_rho``."""
-    cols = []
-    for j, c in enumerate(comps):
-        v = _interp_cols(lml[c], np.exp(log_a[c]), CONC_GRID) + log_rho[j]
-        cols.append(np.where(np.isnan(v), -np.inf, v))
-    s = np.column_stack(cols)
-    top = s.max(1, keepdims=True)
-    top[~np.isfinite(top)] = 0.0
-    e = np.exp(s - top)
-    tot = e.sum(1, keepdims=True)
-    with np.errstate(invalid="ignore"):
-        return e / tot
 
 
 def _coord_search(f, x0, lo, hi, step=1.0, min_step=0.02, max_rounds=60):
@@ -337,11 +373,15 @@ class ThreadSmoother:
 
     Parameters
     ----------
-    contexts : which reply contexts to borrow from: any of ``"parent"`` and ``"thread"``.
+    contexts : which reply contexts to borrow from: any of ``"parent"``, ``"op"`` and
+        ``"thread"`` (default ``("parent", "thread")``). ``"op"`` is the thread root's mix,
+        available to replies at depth 2 or deeper (a top-level reply's parent is the root, so
+        it does not borrow from ``"op"``); with it, the thread mix also excludes the root.
+        Three contexts are searched on a coarser share lattice (13 logit steps per axis).
     theta : the base topic mix. ``"auto"`` uses ``posterior_doc_topic()`` when the base model
         has it (the logistic-normal models) and ``doc_topic`` otherwise; ``"doc_topic"`` and
         ``"posterior"`` force one.
-    strength_grid : candidate total pseudo-counts ``s = a_p + a_t``. Defaults to 0 plus 40
+    strength_grid : candidate total pseudo-counts ``s = sum(a)``. Defaults to 0 plus 40
         log-spaced values from 0.1 to 1000.
     thread_excludes_parent : when both contexts are used, leave the parent out of the thread
         mix (the default), so ``a_p`` and ``a_t`` weight separate sources: the parent, and
@@ -353,40 +393,45 @@ class ThreadSmoother:
         interval stays inside (0, 1); this acts as a very weak prior against the boundary.
         Default 97 (steps of 0.125 on the logit scale, about 0.03 in share near 0.5).
     switch : per-reply inherit-or-innovate switch (#897). Each document's topic mix gets a
-        mixture prior with one Dirichlet component per context (centered on that context, with
-        pseudo-count ``a_c``) and an innovate component centered on the corpus mean mix. The
-        posterior component weights ``w_d`` come from the marginal likelihood of the
-        document's own tokens under each component, with the topics held fixed (a sequential
-        Dirichlet-multinomial, so the document's fitted mix never scores its own words), and
+        two-component mixture prior: *inherit*, a Dirichlet centered on the share-weighted
+        context mix with the context pseudo-counts ``a_c`` (the pooled shrinkage), or *new*,
+        centered on the corpus mean mix. The posterior inherit probability ``w_d`` comes from
+        the marginal likelihood of the document's own tokens under each component, with the
+        topics held fixed (a sequential Dirichlet-multinomial, so the document's fitted mix
+        never scores its own words), and
 
-            theta_tilde_d = sum_c w_dc (n_d theta_d + a_c theta_c) / (n_d + a_c)
-                            + w_d,new theta_d.
+            theta_tilde_d = w_d (n_d theta_d + sum_c a_c theta_c) / (n_d + sum_c a_c)
+                            + (1 - w_d) theta_d.
 
-        The pseudo-counts, the innovate concentration and the prior weights ``rho`` are chosen
-        by held-out log likelihood on validation threads, as in the pooled fit. Use it when
-        only some replies take up their context: the pooled pseudo-count then borrows little
-        or nothing even though some replies inherit. ``groups`` is not supported yet.
+        The context shares are profiled over a coarse logit lattice (25 values for two
+        contexts, 7 per axis for three); the total pseudo-count, the innovate concentration
+        and the prior inherit weight ``rho`` are optimized on validation threads, and every
+        reported number comes from test threads, as in the pooled fit. Use it when only some
+        replies take up their context: the pooled pseudo-count then borrows little or nothing
+        even though some replies inherit. ``groups`` is not supported yet.
 
     Attributes (after :meth:`fit`)
     ------------------------------
     alpha : dict ``{context: pseudo-count}``, the validation-optimal point estimate (grid
         search, then continuous refinement).
     alpha_ci : dict ``{context: (lo, hi)}`` 95% bootstrap interval.
-    parent_share, parent_share_ci : ``a_p / (a_p + a_t)`` and its 95% percentile interval
-        (both contexts), estimated on the logit-spaced share grid. ``parent_share_at_bound``
+    parent_share, parent_share_ci : ``a_p / sum(a)`` and its 95% percentile interval
+        (two or more contexts including the parent), estimated on the logit-spaced share grid. ``parent_share_at_bound``
         is ``True`` when the estimate is the outermost grid value, meaning the data cannot
         distinguish the smaller pseudo-count from zero. ``p_no_borrowing`` is the share of
         bootstrap draws that chose no borrowing at all (share undefined); those draws are
         excluded from the interval and counted here.
     alpha_by_group : per-group pseudo-counts when ``groups`` is given to :meth:`fit`.
-    rho, rho_ci : (``switch=True``) prior component weights ``{context..., "new": ...}`` and
-        their 95% bootstrap intervals. With the switch, ``parent_share`` is
-        ``rho_parent / (rho_parent + rho_thread)``, the share of inheriting replies that take
-        up their parent rather than the rest of the thread, and ``p_no_borrowing`` is the share
-        of bootstrap draws with ``rho_new >= 0.99``.
-    inherit_weights : (``switch=True``) ``(D, C + 1)`` posterior component weights per input
-        document from the latest :meth:`transform`, columns ordered ``contexts + ("new",)``.
-        Their mean over replies estimates the share of replies that inherit.
+    rho, rho_ci : (``switch=True``) prior probability that a reply inherits, and its 95%
+        bootstrap interval. ``alpha`` and ``parent_share`` then describe the inherit
+        component: among replies that inherit, how much comes from each context.
+        ``p_no_borrowing`` is the share of bootstrap draws with ``rho < 0.01``.
+    inherit_weights : (``switch=True``) ``(D,)`` posterior inherit probability per input
+        document from the latest :meth:`transform`. Its mean over replies estimates the share
+        of replies that inherit.
+    op_effect : (``"op"`` in ``contexts``) held-out gain of the true original post over one
+        placebo in which a random other comment of the same thread stands in for the root and
+        the root rejoins the thread mix, nats per token: ``{"estimate", "lo", "hi"}``.
     completion : held-out gain over the base on test threads, nats per token:
         ``{"estimate", "lo", "hi", "by_length"}``.
     edge_effect : held-out gain of the true tree over the shuffled-parent placebo on test
@@ -408,9 +453,9 @@ class ThreadSmoother:
                  thread_excludes_parent: bool = True, switch: bool = False) -> None:
         _gate()
         contexts = tuple(contexts)
-        bad = set(contexts) - set(CONTEXTS)
+        bad = set(contexts) - set(ALL_CONTEXTS)
         if not contexts or bad or len(set(contexts)) != len(contexts):
-            raise ValueError(f"contexts must be a non-empty subset of {CONTEXTS}")
+            raise ValueError(f"contexts must be a non-empty subset of {ALL_CONTEXTS}")
         if theta not in ("auto", "doc_topic", "posterior"):
             raise ValueError("theta must be 'auto', 'doc_topic' or 'posterior'")
         grid = np.asarray(DEFAULT_STRENGTH_GRID if strength_grid is None else strength_grid,
@@ -433,25 +478,35 @@ class ThreadSmoother:
     def _grid(self):
         """Candidate pseudo-count vectors, ordered as ``self.contexts``.
 
-        Two contexts are searched on (strength s, parent share pi) so the share is resolved
+        Several contexts are searched on (strength s, shares) so the shares are resolved
         directly; one context on strength alone. s = 0 appears once (no borrowing)."""
         pts = [np.zeros(len(self.contexts))]
         if len(self.contexts) == 1:
-            pts += [np.array([s]) for s in self.strength_grid[1:]]
-        else:
-            jp = self.contexts.index("parent")
-            for s in self.strength_grid[1:]:
-                for pi in self._share_values():
-                    a = np.empty(2)
-                    a[jp], a[1 - jp] = s * pi, s * (1 - pi)
-                    pts.append(a)
-        return pts
+            return pts + [np.array([s]) for s in self.strength_grid[1:]]
+        return pts + [s * sh for s in self.strength_grid[1:] for sh in self._share_vectors()]
 
-    def _share_values(self):
-        return 1.0 / (1.0 + np.exp(-np.linspace(-6.0, 6.0, self.share_steps)))
+    def _share_vectors(self, steps=None):
+        """Share vectors over the contexts, a lattice on the logit scale from -6 to +6 against
+        the last context: ``share_steps`` points for two contexts, ``OP_SHARE_STEPS`` per axis
+        for three. No share is ever exactly 0 or 1."""
+        c = len(self.contexts)
+        if steps is None:
+            steps = self.share_steps if c == 2 else OP_SHARE_STEPS
+        axes = [np.linspace(-6.0, 6.0, steps)] * (c - 1)
+        lat = np.array(list(product(*axes)))
+        logits = np.column_stack([lat, np.zeros(len(lat))])
+        e = np.exp(logits - logits.max(1, keepdims=True))
+        return e / e.sum(1, keepdims=True)
+
+    def _share_ends(self):
+        """Smallest and largest parent share on the grid."""
+        v = self._share_vectors()[:, self.contexts.index("parent")]
+        return np.array([v.min(), v.max()])
 
     def _share(self, a):
-        if set(self.contexts) != set(CONTEXTS):
+        """``a_parent / sum(a)`` (or of prior weights under the switch); None without a
+        parent context or with a single context."""
+        if "parent" not in self.contexts or len(self.contexts) == 1:
             return None
         s = a.sum()
         return float(a[self.contexts.index("parent")] / s) if s > 0 else np.nan
@@ -495,19 +550,24 @@ class ThreadSmoother:
         shuf_ctx = (_placebo_contexts(theta, lengths, kept, parents, root, self.contexts,
                                       self.thread_excludes_parent, n_shuffle, seed)
                     if "parent" in self.contexts else [])
+        op_ctx = (_op_placebo_contexts(theta, lengths, kept, parents, root, self.contexts,
+                                       self.thread_excludes_parent, n_shuffle, seed)
+                  if "op" in self.contexts else [])
         row = np.full(len(docs), -1)
         row[kept] = np.arange(len(kept))
 
         # Common scored support: the leaf, every requested context and every placebo context
-        # exist; at least one in-vocabulary held token.
+        # exist; at least one in-vocabulary held token. The original post is the exception: a
+        # top-level reply has none (its parent is the root) and simply does not borrow from it.
+        need = [c for c in self.contexts if c != "op"]
         leaves = []
         for i, toks in held.items():
             ids = np.array([vidx[w] for w in toks if w in vidx], int)
             if ids.size == 0 or row[i] < 0:
                 continue
-            if any(np.isnan(ctx[c][i, 0]) for c in self.contexts):
+            if any(np.isnan(ctx[c][i, 0]) for c in need):
                 continue
-            if any(np.isnan(sc[c][i, 0]) for sc in shuf_ctx for c in self.contexts):
+            if any(np.isnan(sc[c][i, 0]) for sc in shuf_ctx + op_ctx for c in need):
                 continue
             leaves.append((i, ids))
         if not leaves:
@@ -521,22 +581,27 @@ class ThreadSmoother:
         # Flat per-token arrays.
         tpos = {r: j for j, r in enumerate(roots)}
         pL, n_tok, tj, grp = [], [], [], []
-        P = {c: [] for c in self.contexts}
-        P_shuf = {c: [] for c in self.contexts} if shuf_ctx else {}
+        # Per-token context predictives (0 where the context is missing) and availability.
+        # Placebo keys are prefixed; each averages the predictive over its draws.
+        sources = [("", c, [ctx]) for c in self.contexts]
+        sources += [("_shuffled_", c, shuf_ctx) for c in self.contexts if shuf_ctx]
+        sources += [("_opshuf_", c, op_ctx) for c in self.contexts if op_ctx]
+        P = {pre + c: [] for pre, c, _ in sources}
+        avail = {key: [] for key in P}
         for i, ids in leaves:
             r = row[i]
             pL.append(theta[r] @ beta[:, ids])
-            for c in self.contexts:
-                P[c].append(ctx[c][i] @ beta[:, ids])
-            for c in P_shuf:
-                P_shuf[c].append(np.mean([sc[c][i] @ beta[:, ids] for sc in shuf_ctx], 0))
+            for pre, c, mixes in sources:
+                ok = not np.isnan(mixes[0][c][i, 0])
+                P[pre + c].append(np.mean([m[c][i] @ beta[:, ids] for m in mixes], 0) if ok
+                                  else np.zeros(ids.size))
+                avail[pre + c].append(np.full(ids.size, float(ok)))
             n_tok.append(np.full(ids.size, n_doc[i]))
             tj.append(np.full(ids.size, tpos[root[i]]))
             grp.extend([None if groups is None else groups[i]] * ids.size)
         pL = np.concatenate(pL)
         P = {c: np.concatenate(v) for c, v in P.items()}
-        for c, v in P_shuf.items():
-            P["_shuffled_" + c] = np.concatenate(v)
+        avail = {c: np.concatenate(v) for c, v in avail.items()}
         n_tok = np.concatenate(n_tok)
         tj = np.concatenate(tj)
         grp = np.array(grp, dtype=object)
@@ -550,20 +615,22 @@ class ThreadSmoother:
         if self.switch:
             obs = [np.array([vidx[w] for w in train_docs[i] if w in vidx], int)
                    for i, _ in leaves]
-            out = self._calibrate_switch(leaves, obs, theta, beta, ctx, shuf_ctx, pL, n_tok,
-                                         tj, val_idx, test_idx, n_boot, seed)
+            out = self._calibrate_switch(leaves, obs, theta, beta, ctx, shuf_ctx, op_ctx, pL,
+                                         n_tok, tj, val_idx, test_idx, n_boot, seed)
             out["settings"], out["model"] = settings, model
             return out
 
         grid = self._grid()
 
         def token_ll(a, keys, mask):
-            nn, pl = n_tok[mask], pL[mask]
-            denom = nn + a.sum()
-            mix = nn / denom * pl
+            sl = (lambda x: x) if mask.all() else (lambda x: x[mask])
+            nn = sl(n_tok)
+            num, denom = nn * sl(pL), nn.copy()
             for a_c, c in zip(a, keys):
-                mix = mix + a_c / denom * P[c][mask]
-            return np.log(mix)
+                if a_c > 0:          # a missing context (avail 0) contributes nothing
+                    w = a_c * sl(avail[c])
+                    num, denom = num + w * sl(P[c]), denom + w
+            return np.log(num / denom)
 
         def tables(keys, mask):
             """Per-thread log-likelihood sums for every grid point, on tokens in ``mask``."""
@@ -591,6 +658,8 @@ class ThreadSmoother:
                     for f in (np.exp(step), np.exp(-step)):
                         cand = a.copy()
                         cand[j] = cand[j] * f if cand[j] > 0 else (0.1 if f > 1 else 0.0)
+                        if cand[j] > MAX_PSEUDOCOUNT:    # the objective is flat out there
+                            continue
                         v = val_obj(cand, keys, mask)
                         if v > best + 1e-12:
                             a, best, improved = cand, v, True
@@ -642,6 +711,16 @@ class ThreadSmoother:
             out["draws_edge"] = edge_t[boot_test].sum(1) / tok_t[boot_test].sum(1)
             out["placebo_alpha"] = a_s
 
+        if "op" in self.contexts and op_ctx:
+            keys_o = tuple("_opshuf_" + c for c in self.contexts)
+            tab_o, _, _ = tables(keys_o, everything)
+            a_o = refine_point(grid[int(np.argmax(tab_o[:, val_idx].sum(1)))], keys_o,
+                               everything)
+            op_t = ll_star - np.bincount(tj, token_ll(a_o, keys_o, everything), n_threads)
+            out["op_effect"] = rate(op_t, test_idx)
+            out["draws_op"] = op_t[boot_test].sum(1) / tok_t[boot_test].sum(1)
+            out["op_placebo_alpha"] = a_o
+
         if groups is not None:
             out["alpha_by_group"] = {}
             for g_lab in sorted(set(grp.tolist()), key=str):
@@ -659,148 +738,152 @@ class ThreadSmoother:
 
     # -- the inherit-or-innovate switch (#897) ---------------------------------------------
 
-    def _components(self):
-        return self.contexts + (NEW,)
+    def _switch_shares(self):
+        """Candidate context shares for the inherit component (a coarse logit lattice)."""
+        steps = {1: 1, 2: SWITCH_SHARE_STEPS[0], 3: SWITCH_SHARE_STEPS[1]}[len(self.contexts)]
+        if len(self.contexts) == 1:
+            return np.ones((1, 1))
+        return self._share_vectors(steps)
 
-    def _unpack(self, x):
-        """Parameter vector -> (log concentration per component, log prior weights).
-
-        ``x`` holds ``log a_c`` for each context, ``log a_new`` (the innovate component's
-        concentration around the corpus mean mix), then one logit per context against the
-        innovate component (whose logit is fixed at 0)."""
-        c = len(self.contexts)
-        comps = self._components()
-        # Bounded to the marginal-likelihood grid and to prior weights within about
-        # (3e-4, 1 - 3e-4): beyond that the objective is flat and the search would drift.
+    @staticmethod
+    def _unpack(x):
+        """Parameter vector ``(log A, log a_new, logit rho)`` -> bounded values: the inherit
+        concentration ``A``, the innovate concentration ``a_new`` (both kept on the
+        marginal-likelihood grid, where the objective is defined) and the prior inherit weight
+        ``rho`` (kept within about (3e-4, 1 - 3e-4), beyond which the objective is flat)."""
         lo, hi = np.log(CONC_GRID[0]), np.log(CONC_GRID[-1])
-        log_a = {k: float(np.clip(x[j], lo, hi)) for j, k in enumerate(comps)}
-        logits = np.concatenate([np.clip(x[c + 1:], -8.0, 8.0), [0.0]])
-        return log_a, logits - np.logaddexp.reduce(logits)
+        return (float(np.exp(np.clip(x[0], lo, hi))), float(np.exp(np.clip(x[1], lo, hi))),
+                float(1.0 / (1.0 + np.exp(-np.clip(x[2], -8.0, 8.0)))))
 
-    def _calibrate_switch(self, leaves, obs, theta, beta, ctx, shuf_ctx, pL, n_tok, tj,
-                          val_idx, test_idx, n_boot, seed):
-        """Fit the switch: per-reply posterior weights over (contexts..., new) from the
-        marginal likelihood of the reply's observed tokens; parameters chosen by held-out
-        log likelihood on validation threads, reported on test threads."""
-        comps = self._components()
+    @staticmethod
+    def _inherit_prob(lml_inh, lml_new, A, a_new, rho):
+        """Posterior probability that each document inherits, from its log marginal
+        likelihood tables (NaN = no context to inherit from)."""
+        li = _interp_cols(lml_inh, A, CONC_GRID) + np.log(rho)
+        ln = _interp_cols(lml_new, a_new, CONC_GRID) + np.log1p(-rho)
+        with np.errstate(invalid="ignore"):
+            w = 1.0 / (1.0 + np.exp(np.clip(ln - li, -700, 700)))
+        return np.where(np.isnan(li), 0.0, w)
+
+    def _calibrate_switch(self, leaves, obs, theta, beta, ctx, shuf_ctx, op_ctx, pL, n_tok,
+                          tj, val_idx, test_idx, n_boot, seed):
+        """Fit the switch: a two-component mixture prior per reply, *inherit* (the pooled
+        multi-context shrinkage, centered on the share-weighted context mix with concentration
+        A) or *new* (centered on the corpus mean mix). The inherit probability of each reply
+        comes from the marginal likelihood of its observed tokens. The context shares are
+        profiled over a coarse lattice (per-thread tables at each share's optimum, so the
+        thread bootstrap re-chooses the share cheaply); A, a_new and rho are optimized per
+        share on validation threads."""
+        C = len(self.contexts)
+        shares = self._switch_shares()
         leaf_rows = [i for i, _ in leaves]
         tl = np.concatenate([np.full(ids.size, j) for j, (_, ids) in enumerate(leaves)])
         n_threads = int(tj.max()) + 1
-        mean_theta = theta.mean(0)
-
-        def context_set(cx):
-            """Per-token context predictives and per-leaf log-ML tables for one tree."""
-            P, lml = {}, {}
-            for c in self.contexts:
-                m = cx[c][leaf_rows]
-                P[c] = np.concatenate([m[j] @ beta[:, ids] for j, (_, ids) in enumerate(leaves)])
-                lml[c] = _sequential_log_ml(obs, m, CONC_GRID, beta)
-            lml[NEW] = _sequential_log_ml(obs, np.tile(mean_theta, (len(leaves), 1)),
-                                          CONC_GRID, beta)
-            return P, lml
-
-        true_set = context_set(ctx)
-        shuf_sets = [context_set(sc) for sc in shuf_ctx]
-        if shuf_sets:   # the innovate component does not depend on the tree
-            for s in shuf_sets:
-                s[1][NEW] = true_set[1][NEW]
-
-        def view(cset, m):
-            """A context set restricted to the tokens in mask ``m``."""
-            P, lml = cset
-            return {"P": {c: P[c][m] for c in P}, "lml": lml, "tl": tl[m], "pL": pL[m],
-                    "n": n_tok[m], "tj": tj[m]}
-
-        def token_ll(x, v):
-            log_a, log_rho = self._unpack(x)
-            w = _switch_weights(v["lml"], log_a, log_rho, comps)[v["tl"]]
-            pl, nn = v["pL"], v["n"]
-            mix = w[:, -1] * pl
-            for j, c in enumerate(self.contexts):
-                a = np.exp(log_a[c])
-                mix = mix + w[:, j] * (nn * pl + a * v["P"][c]) / (nn + a)
-            return np.log(mix)
-
-        def thread_ll(x, views):
-            return np.mean([np.bincount(v["tj"], token_ll(x, v), n_threads) for v in views], 0)
-
-        # Selection uses validation tokens only; reporting uses every token.
-        everything = np.ones(pL.size, bool)
-        on_val = np.isin(tj, val_idx)
-        true_all, true_val = view(true_set, everything), view(true_set, on_val)
-        shuf_all = [view(s_, everything) for s_ in shuf_sets]
-        shuf_val = [view(s_, on_val) for s_ in shuf_sets]
-
         tok_t = np.bincount(tj, None, n_threads)
+        on_val = np.isin(tj, val_idx)
+        lml_new = _sequential_log_ml(obs, np.tile(theta.mean(0), (len(leaves), 1)),
+                                     CONC_GRID, beta)
 
-        c = len(self.contexts)
-        lo = np.concatenate([np.full(c + 1, np.log(CONC_GRID[0])), np.full(c, -8.0)])
-        hi = np.concatenate([np.full(c + 1, np.log(CONC_GRID[-1])), np.full(c, 8.0)])
+        def share_tables(cx):
+            """For one tree: per share vector, the per-token inherit predictive and the
+            per-leaf log-ML table of the inherit component."""
+            mix = np.stack([cx[c][leaf_rows] for c in self.contexts], 1)       # (L, C, K)
+            av = ~np.isnan(mix[:, :, 0])                                       # (L, C)
+            mix = np.nan_to_num(mix)
+            Ptok = np.stack([np.concatenate([mix[j, c] @ beta[:, ids]
+                                             for j, (_, ids) in enumerate(leaves)])
+                             for c in range(C)], 1)                            # (T, C)
+            out = []
+            for s in shares:
+                wts = av * s                                                   # (L, C)
+                tot = wts.sum(1, keepdims=True)
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    wts = wts / tot                                            # NaN if none
+                center = np.einsum("lc,lck->lk", wts, mix)
+                p_inh = np.nan_to_num((Ptok * wts[tl]).sum(1))
+                out.append((p_inh, _sequential_log_ml(obs, center, CONC_GRID, beta)))
+            return out
 
-        def optimize(sets, weights, starts):
-            def f(x):
-                return thread_ll(x, sets) @ weights / (tok_t @ weights)
-            best = max((_coord_search(f, s0, lo, hi) for s0 in starts), key=lambda r: r[1])
-            return best[0]
+        def token_ll(x, p_inh, lml, m):
+            A, a_new, rho = self._unpack(x)
+            w = self._inherit_prob(lml, lml_new, A, a_new, rho)[tl[m]]
+            nn, pl = n_tok[m], pL[m]
+            return np.log(w * (nn * pl + A * p_inh[m]) / (nn + A) + (1 - w) * pl)
 
-        val_w = np.zeros(n_threads)
-        val_w[val_idx] = 1.0
-        starts = [np.concatenate([np.full(c, la), [0.0], np.zeros(c)])
-                  for la in (0.0, np.log(10.0), np.log(100.0))]
-        x_star = optimize([true_val], val_w, starts)
-        ll_star = thread_ll(x_star, [true_all])
+        def thread_ll(x, tabs_j, m):
+            """Per-thread log likelihood, averaged over placebo draws."""
+            return np.mean([np.bincount(tj[m], token_ll(x, p, lml, m), n_threads)
+                            for p, lml in tabs_j], 0)
+
+        lo = np.array([np.log(CONC_GRID[0])] * 2 + [-8.0])
+        hi = np.array([np.log(CONC_GRID[-1])] * 2 + [8.0])
+        starts = [np.array([la, 0.0, 0.0]) for la in (0.0, np.log(10.0), np.log(100.0))]
+
+        def profile(tab_sets, warm=None):
+            """Optimize (A, a_new, rho) on validation threads for every share; return the
+            parameters and the per-thread log likelihood table (all threads)."""
+            xs, tab = [], np.empty((len(shares), n_threads))
+            for j in range(len(shares)):
+                tabs_j = [t[j] for t in tab_sets]
+
+                def f(x):
+                    return thread_ll(x, tabs_j, on_val)[val_idx].sum() / tok_t[val_idx].sum()
+                s0 = starts if warm is None else [warm[j]]
+                x = max((_coord_search(f, x0, lo, hi) for x0 in s0), key=lambda r: r[1])[0]
+                xs.append(x)
+                tab[j] = thread_ll(x, tabs_j, np.ones(tj.size, bool))
+            return xs, tab
+
+        true_tabs = share_tables(ctx)
+        xs, tab = profile([true_tabs])
+        j_star = int(np.argmax(tab[:, val_idx].sum(1)))
+        x_star = xs[j_star]
         base_t = np.bincount(tj, np.log(pL), n_threads)
+        ll_star = tab[j_star]
         gain_t = ll_star - base_t
 
         brng = np.random.default_rng(seed + 1)
         boot_val = val_idx[brng.integers(0, len(val_idx), (n_boot, len(val_idx)))]
         boot_test = test_idx[brng.integers(0, len(test_idx), (n_boot, len(test_idx)))]
+        boot_j = np.array([int(np.argmax(tab[:, b].sum(1))) for b in boot_val])
 
         def rate(num, idx):
             return num[idx].sum() / tok_t[idx].sum()
 
-        # Re-selection on resampled validation threads, warm-started at the point estimate.
-        draws_x = []
-        for b in boot_val:
-            wb = np.bincount(b, None, n_threads)
-            f = (lambda x, wb=wb: thread_ll(x, [true_val]) @ wb / (tok_t @ wb))
-            draws_x.append(_coord_search(f, x_star, lo, hi, step=0.25, min_step=0.05)[0])
-        draws_x = np.array(draws_x)
+        def alpha_of(j, x):
+            return self._unpack(x)[0] * shares[j]
 
-        def alpha_of(x):
-            log_a, _ = self._unpack(x)
-            return np.array([np.exp(log_a[k]) for k in self.contexts])
-
-        def rho_of(x):
-            return np.exp(self._unpack(x)[1])
-
-        out = {"alpha": alpha_of(x_star), "rho": rho_of(x_star),
-               "new_concentration": float(np.exp(x_star[c])), "switch_x": x_star,
+        out = {"alpha": alpha_of(j_star, x_star), "switch_x": x_star,
+               "switch_share": shares[j_star],
+               "rho": self._unpack(x_star)[2],
+               "new_concentration": self._unpack(x_star)[1],
                "completion": rate(gain_t, test_idx),
-               "draws_alpha": np.array([alpha_of(x) for x in draws_x]),
-               "draws_rho": np.array([rho_of(x) for x in draws_x]),
+               "draws_alpha": np.array([alpha_of(j, xs[j]) for j in boot_j]),
+               "draws_rho": np.array([self._unpack(xs[j])[2] for j in boot_j]),
                "draws_completion": gain_t[boot_test].sum(1) / tok_t[boot_test].sum(1)}
 
-        val_tok = np.isin(tj, val_idx)
-        cuts = np.quantile(n_tok[val_tok], [1 / 3, 2 / 3])
+        cuts = np.quantile(n_tok[on_val], [1 / 3, 2 / 3])
         ter = np.digitize(n_tok, cuts, right=True)
-        tok_gain = token_ll(x_star, true_all) - np.log(pL)
+        everything = np.ones(tj.size, bool)
+        tok_gain = token_ll(x_star, *true_tabs[j_star], everything) - np.log(pL)
         out["by_length"] = {"cuts": [float(c_) for c_ in cuts],
-                            "gain": [float(tok_gain[~val_tok & (ter == t_)].mean())
-                                     if (~val_tok & (ter == t_)).any() else float("nan")
+                            "gain": [float(tok_gain[~on_val & (ter == t_)].mean())
+                                     if (~on_val & (ter == t_)).any() else float("nan")
                                      for t_ in range(3)]}
-        w_leaf = _switch_weights(true_set[1], *self._unpack(x_star), comps)
-        test_leaf = np.isin(np.array([tj[tl == j][0] for j in range(len(leaves))]), test_idx)
-        out["leaf_weights"] = {k: float(w_leaf[test_leaf, j].mean())
-                               for j, k in enumerate(comps)}
 
-        if shuf_sets:
-            x_s = optimize(shuf_val, val_w, [x_star] + starts)
-            edge_t = ll_star - thread_ll(x_s, shuf_all)
-            out["edge_effect"] = rate(edge_t, test_idx)
-            out["draws_edge"] = edge_t[boot_test].sum(1) / tok_t[boot_test].sum(1)
-            out["placebo_alpha"] = alpha_of(x_s)
-            out["placebo_rho"] = rho_of(x_s)
+        # Placebos: the same profile fit on shuffled trees / swapped original posts.
+        for name, mixes in (("edge", shuf_ctx), ("op", op_ctx)):
+            if not mixes:
+                continue
+            p_xs, p_tab = profile([share_tables(m) for m in mixes], warm=xs)
+            p_j = int(np.argmax(p_tab[:, val_idx].sum(1)))
+            eff_t = ll_star - p_tab[p_j]
+            key = "edge_effect" if name == "edge" else "op_effect"
+            out[key] = rate(eff_t, test_idx)
+            out["draws_edge" if name == "edge" else "draws_op"] = \
+                eff_t[boot_test].sum(1) / tok_t[boot_test].sum(1)
+            out["placebo_alpha" if name == "edge" else "op_placebo_alpha"] = \
+                alpha_of(p_j, p_xs[p_j])
         return out
 
     # -- calibration --------------------------------------------------------------------
@@ -875,36 +958,30 @@ class ThreadSmoother:
 
         self.rho = self.rho_ci = self.inherit_weights = None
         if self.switch:
-            comps = self._components()
-            r_draws = np.vstack([r_["draws_rho"] for r_ in runs])
-            self.draws["rho"] = r_draws
-            self.rho = {k: float(v) for k, v in zip(comps, main["rho"])}
-            self.rho_ci = {k: pct(r_draws[:, j]) for j, k in enumerate(comps)}
+            self.draws["rho"] = np.concatenate([r_["draws_rho"] for r_ in runs])
+            self.rho = float(main["rho"])
+            self.rho_ci = pct(self.draws["rho"])
+            self.new_concentration = float(main["new_concentration"])
             self._switch_x = main["switch_x"]
+            self._switch_share = main["switch_share"]
 
-        if self.switch:
-            # The switch's parent share is between the prior weights of the two contexts: the
-            # share of inheriting replies that take up their parent rather than the thread.
-            share = self._share(main["rho"][:-1])
-            share_src = self.draws["rho"][:, :-1]
-            no_borrow = np.mean(self.draws["rho"][:, -1] >= 0.99)
-        else:
-            share = self._share(main["alpha"])
-            share_src = a_draws
-            no_borrow = None
+        # Under the switch the pseudo-counts are those of the inherit component, so the parent
+        # share keeps its meaning: among replies that inherit, how much comes from the parent.
+        share = self._share(main["alpha"])
+        no_borrow = (np.mean(self.draws["rho"] < 0.01) if self.switch else None)
         if share is None:
             self.parent_share = self.parent_share_ci = self.parent_share_at_bound = None
             self.p_no_borrowing = float(np.mean(a_draws.sum(1) == 0) if no_borrow is None
                                         else no_borrow)
         else:
-            sd = np.array([self._share(a) for a in share_src])
+            sd = np.array([self._share(a) for a in a_draws])
             self.p_no_borrowing = float(np.mean(np.isnan(sd)) if no_borrow is None
                                         else no_borrow)
             self.draws["parent_share"] = sd
             sd = sd[~np.isnan(sd)]
             self.parent_share = share
             self.parent_share_ci = pct(sd) if sd.size else (np.nan, np.nan)
-            ends = self._share_values()[[0, -1]]
+            ends = self._share_ends()
             # Refinement can move a pseudo-count past the grid; clip the share back to the
             # grid's range so the logit-scale bound holds for the point estimate too.
             self.parent_share = float(np.clip(share, ends[0], ends[1]))
@@ -919,25 +996,30 @@ class ThreadSmoother:
             self.edge_effect = {"estimate": float(main["edge_effect"]), "lo": lo, "hi": hi,
                                 "placebo_alpha": {c: float(a) for c, a in
                                                   zip(self.contexts, main["placebo_alpha"])}}
-            if self.switch:
-                self.edge_effect["placebo_rho"] = {
-                    k: float(v) for k, v in zip(self._components(), main["placebo_rho"])}
         else:
             self.edge_effect = None
+        self.op_effect = None
+        if "op_effect" in main:
+            self.draws["op_effect"] = np.concatenate([r_["draws_op"] for r_ in runs])
+            lo, hi = pct(self.draws["op_effect"])
+            self.op_effect = {"estimate": float(main["op_effect"]), "lo": lo, "hi": hi,
+                              "placebo_alpha": {c: float(a) for c, a in
+                                                zip(self.contexts, main["op_placebo_alpha"])}}
         self.alpha_by_group = ({g: {c: float(a) for c, a in zip(self.contexts, v)}
                                 for g, v in main["alpha_by_group"].items()}
                                if groups is not None else None)
         self.replicates = None
         if n_refit:
             self.replicates = [{"alpha": {c: float(a) for c, a in zip(self.contexts, r_["alpha"])},
-                                "parent_share": self._share(r_["rho"][:-1] if self.switch
-                                                            else r_["alpha"]),
+                                "parent_share": self._share(r_["alpha"]),
                                 "completion": float(r_["completion"]),
                                 "edge_effect": (float(r_["edge_effect"]) if "edge_effect" in r_
-                                                else None)} for r_ in runs]
+                                                else None),
+                                "op_effect": (float(r_["op_effect"]) if "op_effect" in r_
+                                              else None)} for r_ in runs]
             if self.switch:
                 for rep_, r_ in zip(self.replicates, runs):
-                    rep_["rho"] = {k: float(v) for k, v in zip(self._components(), r_["rho"])}
+                    rep_["rho"] = float(r_["rho"])
 
         self.settings = {
             "contexts": self.contexts, "theta": self.theta_source, "seed": seed,
@@ -993,30 +1075,31 @@ class ThreadSmoother:
         return out
 
     def _transform_switch(self, model, corpus, theta, full_theta, n, ctx):
-        """Switch smoothing: each document's weights over (contexts..., new) come from the
-        marginal likelihood of its tokens; the smoothed mix is the weighted combination of the
-        per-context shrinkages and the document's own mix. Sets ``inherit_weights``."""
-        comps = self._components()
+        """Switch smoothing: each document's inherit probability comes from the marginal
+        likelihood of its tokens; the smoothed mix is that probability times the pooled
+        shrinkage plus the rest times the document's own mix. Sets ``inherit_weights``."""
         beta = np.asarray(model.topic_word, float)
         vidx = {w: j for j, w in enumerate(corpus.vocabulary)}
         ids = [np.zeros(0, int)] * len(n)
         for r, toks in zip(np.asarray(corpus.kept_indices, int), corpus.documents()):
             ids[r] = np.array([vidx[w] for w in toks if w in vidx], int)
-        lml = {c: _sequential_log_ml(ids, ctx[c], CONC_GRID, beta) for c in self.contexts}
-        lml[NEW] = _sequential_log_ml(ids, np.tile(theta.mean(0), (len(n), 1)), CONC_GRID,
-                                      beta)
-        log_a, log_rho = self._unpack(self._switch_x)
-        w = _switch_weights(lml, log_a, log_rho, comps)
+        A, a_new, rho = self._unpack(self._switch_x)
+        mix = np.stack([ctx[c] for c in self.contexts], 1)                     # (D, C, K)
+        wts = ~np.isnan(mix[:, :, 0]) * self._switch_share
+        with np.errstate(invalid="ignore", divide="ignore"):
+            wts = wts / wts.sum(1, keepdims=True)
+        center = np.einsum("dc,dck->dk", wts, np.nan_to_num(mix))              # NaN if none
+        lml_inh = _sequential_log_ml(ids, center, CONC_GRID, beta)
+        lml_new = _sequential_log_ml(ids, np.tile(theta.mean(0), (len(n), 1)), CONC_GRID,
+                                     beta)
+        w = self._inherit_prob(lml_inh, lml_new, A, a_new, rho)[:, None]
         own = np.where(np.isnan(full_theta), 0.0, full_theta)
-        out = w[:, [-1]] * own
-        for j, c in enumerate(self.contexts):
-            a = np.exp(log_a[c])
-            cx = np.where(np.isnan(ctx[c]), 0.0, ctx[c])
-            out = out + w[:, [j]] * (n[:, None] * own + a * cx) / (n[:, None] + a)
-        # A document with no tokens and no context has nothing to report.
+        shrunk = (n[:, None] * own + A * np.nan_to_num(center)) / (n[:, None] + A)
+        out = w * shrunk + (1 - w) * own
+        # A document with neither tokens nor context has nothing to report.
         with np.errstate(invalid="ignore"):
             out = out / out.sum(1, keepdims=True)
-        self.inherit_weights = w
+        self.inherit_weights = w[:, 0]
         return out
 
     def summary(self) -> dict:
@@ -1029,6 +1112,7 @@ class ThreadSmoother:
                 "p_no_borrowing": self.p_no_borrowing, "uncertainty": self.uncertainty,
                 "replicates": self.replicates,
                 "completion": self.completion, "edge_effect": self.edge_effect,
+                "op_effect": self.op_effect,
                 "alpha_by_group": self.alpha_by_group, "rho": self.rho, "rho_ci": self.rho_ci,
                 "settings": self.settings}
 
@@ -1213,7 +1297,7 @@ class ThreadTM:
         if name in ("alpha", "alpha_ci", "parent_share", "parent_share_ci",
                     "parent_share_at_bound", "p_no_borrowing", "edge_effect", "completion",
                     "alpha_by_group", "draws", "replicates", "uncertainty", "rho", "rho_ci",
-                    "inherit_weights"):
+                    "inherit_weights", "op_effect"):
             if not self.__dict__.get("_fitted"):
                 raise AttributeError(f"{name} is available after fit()")
             return getattr(self.__dict__["smoother"], name)

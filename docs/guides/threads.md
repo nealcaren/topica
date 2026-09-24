@@ -84,43 +84,64 @@ between two corpora.
 ## When only some replies inherit: `switch=True`
 
 One pseudo-count per context borrows the same amount for every reply of a given length. When
-some replies take up their parent's topics and others turn to different ones, that single
+some replies take up their context's topics and others turn to different ones, that single
 weight helps the first group and hurts the second, and it can settle near zero even though
-many replies inherit. `switch=True` lets each reply's own words decide how much it borrows:
+many replies inherit. `switch=True` lets each reply's own words decide whether it borrows:
 
 ```python
 model = topica.ThreadTM(20, seed=13, switch=True).fit(docs, parents, iters=1000)
-model.rho               # prior weights: {"parent": ..., "thread": ..., "new": ...}
-model.inherit_weights   # (D, 3) per-reply posterior weights, same column order
+model.rho               # prior probability that a reply inherits, with rho_ci
+model.inherit_weights   # (D,) posterior inherit probability per document
 ```
 
-Each reply's topic mix gets a mixture prior with three components: one centered on its parent,
-one on the rest of its thread, and an innovate component centered on the corpus mean mix. The
-weights $(w_{\mathrm{par}}, w_{\mathrm{thr}}, w_{\mathrm{new}})$ are the posterior
-probabilities of the three components given the reply's observed tokens, and
+Each reply's topic mix gets a two-component mixture prior. The *inherit* component is the
+pooled shrinkage above: a Dirichlet centered on the context mix, weighted by the pseudo-counts.
+The *new* component is centered on the corpus mean mix. The reply's inherit probability $w_d$
+is the posterior probability of the inherit component given its observed tokens, and
 
 $$
-\tilde\theta_d = w_{\mathrm{par}}\,\frac{n_d\theta_d + a_p\theta_{\mathrm{par}(d)}}{n_d + a_p}
-  + w_{\mathrm{thr}}\,\frac{n_d\theta_d + a_t\theta_{\mathrm{thr}(d)}}{n_d + a_t}
-  + w_{\mathrm{new}}\,\theta_d .
+\tilde\theta_d = w_d\,\frac{n_d\theta_d + a_p\theta_{\mathrm{par}(d)} + a_t\theta_{\mathrm{thr}(d)}}
+                            {n_d + a_p + a_t} + (1 - w_d)\,\theta_d .
 $$
 
 The component probabilities use the Dirichlet-multinomial marginal likelihood of the reply's
 tokens with the topics held fixed, computed token by token, so the reply's own fitted
 $\theta_d$ never scores the words it was fit to. (A likelihood ratio built from $\theta_d$
-would always favor "innovate".) The pseudo-counts and the prior weights $\rho$ are chosen by
-held-out log likelihood on validation threads, and `completion` and `edge_effect` are reported
-on test threads, exactly as in the pooled fit.
+would always favor "new".) The pseudo-counts, the innovate concentration and $\rho$ are chosen
+by held-out log likelihood on validation threads, and `completion`, `edge_effect` and
+`op_effect` are reported on test threads, exactly as in the pooled fit. `alpha` and
+`parent_share` describe the inherit component: among replies that inherit, how much comes from
+the parent. The mean of `inherit_weights` over replies estimates the share that inherit at all.
 
-Under the switch, `parent_share` is $\rho_{\mathrm{par}} / (\rho_{\mathrm{par}} +
-\rho_{\mathrm{thr}})$: among replies that inherit, the share that take up their parent rather
-than the rest of the thread. The mean of `inherit_weights[:, :2].sum(1)` over replies estimates
-the share of replies that inherit at all. On the planted simulator in `tests/test_threads.py`
-it is 0.44 when half the replies inherit and 0.90 when nine in ten do; the pooled fit borrows
-nothing at 50%, while the switch recovers a positive edge effect.
+On the planted simulator in `tests/test_threads.py`, the pooled fit borrows nothing when half
+the replies inherit, while the switch recovers a positive edge effect and a mean inherit
+weight near one half. We use one inherit component over all contexts rather than one component
+per context: when each reply must pick a single context, a long, precisely estimated original
+post outcompetes a short, noisy parent even for replies that answer the parent, and the placebo
+contrasts stop separating who a reply answers.
 
-The switch costs more than the pooled fit (roughly three to five times on a
-few-thousand-comment community) and does not yet support `groups=`.
+The switch costs roughly two to four times the pooled fit and does not yet support `groups=`.
+
+## The original post as a context
+
+`contexts=("parent", "op", "thread")` separates the original post (the thread root) from the
+rest of the thread, with its own pseudo-count $a_o$:
+
+$$
+\tilde\theta_d = \frac{n_d\theta_d + a_p\theta_{\mathrm{par}(d)} + a_o\theta_{\mathrm{op}(d)}
+  + a_t\theta_{\mathrm{thr}(d)}}{n_d + a_p + a_o + a_t}
+$$
+
+The thread mix then excludes the parent and the root. A top-level reply's parent *is* the root,
+so it borrows from the parent only. `op_effect` is the held-out gain over a placebo in which a
+random other comment of the same thread takes the original post's slot (the root stays out of
+every context), so it asks whether the original post predicts replies better than any
+same-thread comment would. It works with `switch=True` as well.
+
+Read a positive `op_effect` with care. When the original post itself carries the thread's
+topic, "replies follow the thread" and "replies answer the original post" produce the same
+data, and a long post is simply the most precise estimate of that topic. The OP effect is
+cleanly interpretable when the original post and the discussion can diverge.
 
 ## Strip quotes first
 
