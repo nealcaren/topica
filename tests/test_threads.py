@@ -789,12 +789,67 @@ def test_pooled_predictive_pairs_each_draw_with_its_denominator():
 
 
 def test_near_zero_negative_similarity_gives_no_semantic_context():
-    # float32 used to round a cosine of about -1e-10 up to a positive weight.
-    emb = np.array([[1.0, 0.0, 0.0, 0.0], [-1e-10, 1.0, 0.0, 0.0],
-                    [-1e-10, 0.0, 1.0, 0.0], [-1e-10, 0.0, 0.0, 1.0]])
+    # A cancellation case: the exact cosine is about -1.3e-13 but float32 gives +3e-8. The
+    # float32 search must not turn that into a positive weight (Codex review).
+    q = np.array([1257.3022109339329, -1321.048632913019, 0.6404226504432821,
+                  0.10490011715303971, -0.535669373161111, 0.36159505490948474,
+                  1.3040000451301372, 0.9470809631292422])
+    c = np.array([-10011.932792034917, -9528.820209753843, -2.1384143142851264,
+                  -0.20685129520975123, -1.0577207972740845, -1.074269023312429,
+                  -4.330971155054922, -2.9729128238721976])
+    qn, cn = q / np.linalg.norm(q), c / np.linalg.norm(c)
+    assert qn @ cn < 0 < float(qn.astype(np.float32) @ cn.astype(np.float32))  # precondition
+    emb = np.vstack([q, c, c, c])
     sem = threads._Semantic(emb, np.array([False, True, True, True]), k=3)
+    _, w = sem.neighbors([-1, -1, -1, -1])
+    assert (w[0] == 0).all()
     theta = np.array([[0.5, 0.5], [1.0, 0.0], [1.0, 0.0], [1.0, 0.0]])
     assert np.isnan(sem.mix(theta, [-1, -1, -1, -1])[0]).all()
+
+
+def test_matched_true_arm_is_the_true_tree_barring_the_stand_in():
+    # The calibration's matched true arm is _context_mixes on the true tree with the stand-in
+    # parent barred; it must equal a direct _Semantic.mix with that exclusion.
+    rng = np.random.default_rng(3)
+    emb = rng.normal(size=(8, 5))
+    theta = rng.dirichlet(np.ones(K), 8)
+    parents = [-1, 0, 0, 1, 1, 2, 2, 0]
+    stand_in = np.array([-1, 0, 0, 2, 2, 1, 1, 0])
+    pool = np.array([True] * 8)
+    _, root, _ = threads.thread_structure(parents)
+    sem = threads._Semantic(emb, pool, k=3)
+    got = threads._context_mixes(theta, np.full(8, 10.0), np.arange(8), parents, root,
+                                 ("semantic",), semantic=sem,
+                                 semantic_exclude=stand_in)[2]["semantic"]
+    direct = threads._Semantic(emb, pool, k=3).mix(theta, parents, also_exclude=stand_in)
+    assert np.allclose(np.nan_to_num(got), np.nan_to_num(direct))
+    idx, _ = threads._Semantic(emb, pool, k=3).neighbors(parents, also_exclude=stand_in)
+    for d in range(3, 8):
+        assert stand_in[d] not in idx[d] and parents[d] not in idx[d] and d not in idx[d]
+
+
+def test_initially_empty_and_vocabulary_emptied_replies_match():
+    # An encoder that returns a strong vector for "" must not matter: an empty reply and one
+    # the vocabulary emptied both get a zero embedding, so their semantic mixes agree.
+    def enc(texts):
+        out = _bow_embed(texts)
+        out[[i for i, t in enumerate(texts) if not t]] = 10.0
+        return out
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=60, seed=37)
+    from collections import defaultdict
+    kids = defaultdict(list)
+    for i, p in enumerate(parents):
+        if p >= 0:
+            kids[p].append(i)
+    j1, j2 = next(v for v in kids.values() if len(v) >= 2)[:2]      # two replies, one parent
+    docs[j1], docs[j2] = [], ["zzz_only_once"]                     # empty; emptied by min_cf
+    corpus = topica.Corpus.from_documents(docs, min_cf=2)
+    sm = threads.ThreadSmoother(contexts=("parent", "semantic"), semantic_min_tokens=8)
+    sm._embed, sm._embed_cache = enc, {}
+    sem = sm._semantic_for(corpus, len(docs))
+    assert not sem.emb[j1].any() and not sem.emb[j2].any()
+    idx1, _ = sem.neighbors(parents)
+    assert set(idx1[j1]) == set(idx1[j2])      # same parent, no own vector: same neighbors
 
 
 @pytest.mark.parametrize("bad", ["inf", "dim_change"])

@@ -225,7 +225,10 @@ class _Semantic:
             top = np.argpartition(-sims, k - 1, axis=1)[:, :k].copy()
             # float32 only chooses the candidates; their weights are recomputed in float64, so
             # a similarity that is really <= 0 cannot round up into a positive weight.
-            sw = np.einsum("rd,rkd->rk", q64[rows], pe64[top])
+            qr = q64[rows]
+            sw = np.empty(top.shape)
+            for j in range(top.shape[1]):                 # one neighbor column at a time
+                sw[:, j] = (qr * pe64[top[:, j]]).sum(1)
             sw = np.where(np.isfinite(np.take_along_axis(sims, top, 1)), sw, -np.inf)
             idx[rows] = np.where(np.isfinite(sw), self.pool[top], -1)
             wts[rows] = np.where(ok[rows, None], np.clip(sw, 0.0, None), 0.0)
