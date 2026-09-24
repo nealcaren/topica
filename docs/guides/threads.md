@@ -248,7 +248,8 @@ beyond a few tens of thousands of documents.
 
 The semantic context changes what the parent quantities mean. Its query includes the parent's
 embedding, so it can absorb much of what the parent contributes: with it, `alpha["parent"]`
-and `edge_effect` no longer isolate the parent, and in the benchmark both were smaller. Use the
+and `edge_effect` no longer isolate the parent, and in the benchmark they were usually smaller
+(not always: Reddit's parent pseudo-count rose). Use the
 semantic context to *estimate topics*; to *measure* how dyadic a conversation is (parent
 share, edge effect), fit without it.
 

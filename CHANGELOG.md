@@ -18,8 +18,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   six-corpus truncation benchmark, threadtm-paper 0e8ac38, switch + semantic improved
   short-reply topic recovery over the plain switch in all 24 cells, while the pooled fit with
   it still collapsed in two).
-  With it, the parent pseudo-count and edge effect measure the parent beyond its semantic
-  neighborhood; measure dyadic structure without it.
+  With it, the parent pseudo-count and edge effect no longer isolate the parent (the semantic
+  query itself depends on the parent); measure dyadic structure without it.
 
 ### Added
 
