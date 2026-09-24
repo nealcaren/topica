@@ -22,6 +22,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   `op_effect` against a placebo in which a random same-thread comment takes the original
   post's slot. Works with and without `switch`.
 
+### Changed
+
+- **`ThreadSmoother` / `ThreadTM` report the median over calibrations as the point estimate
+  when `n_refit > 0`** (it was calibration 1's, which could sit at the edge of the pooled
+  interval), warn when a calibration rests on fewer than 200 evaluation leaves or 2,000 test
+  tokens, and flag a total pseudo-count at the top of its range (`strength_at_bound`).
+
 ## [0.62.0] - 2026-09-23
 
 ### Added

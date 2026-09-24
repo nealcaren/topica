@@ -367,9 +367,11 @@ def test_switch_recovers_the_edge_effect_at_half_inheritance():
     assert sm.completion["lo"] > 0, sm.completion
     assert min(sm.completion["by_length"]["gain"]) > 0
     replies = np.array(parents) >= 0
+    assert np.isnan(sm.inherit_weights[~replies]).all()   # roots answer no one
     w = sm.inherit_weights[replies]
-    assert w.shape == (replies.sum(),) and ((w >= 0) & (w <= 1)).all()
-    assert abs(w.mean() - 0.5) < 0.15                    # tracks the planted rate
+    w = w[~np.isnan(w)]
+    assert ((w >= 0) & (w <= 1)).all()
+    assert abs(sm.inherit_rate - 0.5) < 0.15             # tracks the planted rate
     assert sm.rho_ci[0] <= sm.rho <= sm.rho_ci[1]
     assert 0 < sm.parent_share < 1
     th = sm.theta_tilde[~np.isnan(sm.theta_tilde[:, 0])]
@@ -387,8 +389,7 @@ def test_switch_finds_no_edge_effect_without_inheritance():
 def test_switch_weights_rise_with_inheritance(inherited):
     docs, parents, *_ = inherited[1:3]
     sm = threads.ThreadSmoother(switch=True).fit(docs, parents, base=_lda, seed=3, n_boot=50)
-    w = sm.inherit_weights[np.array(parents) >= 0]
-    assert w.mean() > 0.75                                # planted rate 0.9
+    assert sm.inherit_rate > 0.75                         # planted rate 0.9
 
 
 def test_switch_rejects_groups():
@@ -552,3 +553,19 @@ def test_switch_bootstrap_intervals_are_not_degenerate_with_one_context():
     sm = threads.ThreadSmoother(contexts=("parent",), switch=True).fit(
         docs, parents, base=_lda, seed=3, n_boot=50, final=False)
     assert sm.rho_ci[0] < sm.rho_ci[1]
+
+
+def test_refit_point_estimates_are_the_median_over_calibrations():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=120, seed=20)
+    sm = threads.ThreadSmoother().fit(docs, parents, base=_lda, seed=3, n_boot=50, n_refit=2,
+                                      final=False)
+    reps = [r["edge_effect"] for r in sm.replicates]
+    assert np.isclose(sm.edge_effect["estimate"], np.median(reps))
+    assert np.isclose(sm.completion["estimate"], np.median([r["completion"]
+                                                            for r in sm.replicates]))
+
+
+def test_thin_calibration_warns():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=20, seed=21)
+    with pytest.warns(UserWarning, match="evaluation leaves"):
+        threads.ThreadSmoother().fit(docs, parents, base=_lda, seed=3, n_boot=20, final=False)

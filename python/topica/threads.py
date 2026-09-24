@@ -443,9 +443,14 @@ class ThreadSmoother:
         bootstrap interval. ``alpha`` and ``parent_share`` then describe the inherit
         component: among replies that inherit, how much comes from each context.
         ``p_no_borrowing`` is the share of bootstrap draws with ``rho < 0.01``.
-    inherit_weights : (``switch=True``) ``(D,)`` posterior inherit probability per input
-        document from the latest :meth:`transform`. Its mean over replies estimates the share
-        of replies that inherit.
+    inherit_weights : (``switch=True``) ``(D,)`` inherit probability per input document from
+        the latest :meth:`transform`; NaN for thread roots and for documents with no
+        in-vocabulary tokens. A short reply carries little evidence, so its weight stays near
+        the prior ``rho``; long replies are the ones the data classify. ``inherit_rate`` is
+        their mean over replies (no interval; report ``rho`` and ``rho_ci`` as the estimate).
+    strength_at_bound : ``True`` when the total pseudo-count is at the top of its range
+        (1000): inheriting replies take their context nearly wholesale, and a larger value
+        would fit about as well. A warning is issued.
     op_effect : (``"op"`` in ``contexts``) held-out gain of the true original post over a
         random other comment of the same thread in its slot, nats per token:
         ``{"estimate", "lo", "hi"}``. Both arms leave the root and that comment out of the
@@ -456,10 +461,15 @@ class ThreadSmoother:
         threads, nats per token: ``{"estimate", "lo", "hi"}``.
     uncertainty : ``"threads"`` (thread bootstrap on one calibration) or ``"refit"`` (pooled
         over ``n_refit`` further calibrations with new masks and base seeds).
-    replicates : per-calibration point estimates when ``n_refit > 0``.
-    draws : the pooled bootstrap draws (``alpha``, ``parent_share``, ``completion``,
-        ``edge_effect``), for intervals on derived quantities such as a difference in parent
-        share between two corpora.
+    replicates : per-calibration point estimates when ``n_refit > 0``. The reported point
+        estimates are then the median over calibrations, so they describe the same pooled
+        distribution as the intervals; smoothing (``theta_tilde``) uses those pseudo-counts in
+        the pooled fit and calibration 1's parameters under the switch.
+    draws : dict of the pooled bootstrap draws as NumPy arrays: ``alpha`` (draws x contexts),
+        ``parent_share``, ``completion``, ``edge_effect``, and ``rho`` and ``op_effect`` when
+        they apply. Difference two fits' draws for an interval on a contrast, e.g.
+        ``np.percentile(a.draws["parent_share"] - b.draws["parent_share"], [2.5, 97.5])``
+        (drop NaN draws, where no borrowing was chosen).
     theta_tilde : ``(D, K)`` smoothed topic mixes of a full-data base fit, one row per input
         document (a document the vocabulary empties gets its pure context mix).
     base_model, corpus : that full-data fit and its Corpus.
@@ -1014,16 +1024,23 @@ class ThreadSmoother:
         def pct(x, lo=2.5, hi=97.5):
             return float(np.percentile(x, lo)), float(np.percentile(x, hi))
 
+        def point(key):
+            """The point estimate: calibration 1's, or with ``n_refit`` the median over every
+            calibration, so it describes the same pooled distribution as the interval (one
+            calibration's estimate can sit at the edge of the pooled draws)."""
+            vals = np.array([r_[key] for r_ in runs], float)
+            return np.nanmedian(vals, axis=0) if n_refit else vals[0]
+
         a_draws = np.vstack([r_["draws_alpha"] for r_ in runs])
-        self.alpha = {c: float(a) for c, a in zip(self.contexts, main["alpha"])}
+        self.alpha = {c: float(a) for c, a in zip(self.contexts, point("alpha"))}
         self.alpha_ci = {c: pct(a_draws[:, j]) for j, c in enumerate(self.contexts)}
         self.draws = {"alpha": a_draws,
                       "completion": np.concatenate([r_["draws_completion"] for r_ in runs])}
 
-        self.rho = self.rho_ci = self.inherit_weights = None
+        self.rho = self.rho_ci = self.inherit_weights = self.inherit_rate = None
         if self.switch:
             self.draws["rho"] = np.concatenate([r_["draws_rho"] for r_ in runs])
-            self.rho = float(main["rho"])
+            self.rho = float(point("rho"))
             self.rho_ci = pct(self.draws["rho"])
             self.new_concentration = float(main["new_concentration"])
             self._switch_x = main["switch_x"]
@@ -1031,7 +1048,9 @@ class ThreadSmoother:
 
         # Under the switch the pseudo-counts are those of the inherit component, so the parent
         # share keeps its meaning: among replies that inherit, how much comes from the parent.
-        share = self._share(main["alpha"])
+        share = self._share(np.array(list(self.alpha.values())))
+        if n_refit and share is not None:
+            share = float(np.nanmedian([self._share(r_["alpha"]) for r_ in runs]))
         no_borrow = (np.mean(self.draws["rho"] < 0.01) if self.switch else None)
         if share is None:
             self.parent_share = self.parent_share_ci = self.parent_share_at_bound = None
@@ -1052,12 +1071,12 @@ class ThreadSmoother:
             self.parent_share_at_bound = bool(np.isclose(self.parent_share, ends).any())
 
         lo, hi = pct(self.draws["completion"])
-        self.completion = {"estimate": float(main["completion"]), "lo": lo, "hi": hi,
+        self.completion = {"estimate": float(point("completion")), "lo": lo, "hi": hi,
                            "by_length": main["by_length"]}
         if "edge_effect" in main:
             self.draws["edge_effect"] = np.concatenate([r_["draws_edge"] for r_ in runs])
             lo, hi = pct(self.draws["edge_effect"])
-            self.edge_effect = {"estimate": float(main["edge_effect"]), "lo": lo, "hi": hi,
+            self.edge_effect = {"estimate": float(point("edge_effect")), "lo": lo, "hi": hi,
                                 "placebo_alpha": {c: float(a) for c, a in
                                                   zip(self.contexts, main["placebo_alpha"])}}
         else:
@@ -1066,7 +1085,7 @@ class ThreadSmoother:
         if "op_effect" in main:
             self.draws["op_effect"] = np.concatenate([r_["draws_op"] for r_ in runs])
             lo, hi = pct(self.draws["op_effect"])
-            self.op_effect = {"estimate": float(main["op_effect"]), "lo": lo, "hi": hi,
+            self.op_effect = {"estimate": float(point("op_effect")), "lo": lo, "hi": hi,
                               "placebo_alpha": {c: float(a) for c, a in
                                                 zip(self.contexts, main["op_placebo_alpha"])}}
         self.alpha_by_group = ({g: {c: float(a) for c, a in zip(self.contexts, v)}
@@ -1091,6 +1110,7 @@ class ThreadSmoother:
             "n_refit": n_refit, "strength_grid_size": int(self.strength_grid.size),
             "share_steps": self.share_steps, **kw, **main["settings"]}
         self.calibration_model = main["model"]
+        self._warn_if_fragile(main)
 
         self.theta_tilde = self.base_model = self.corpus = None
         if final:
@@ -1099,6 +1119,26 @@ class ThreadSmoother:
             self.theta_tilde = self.transform(self.base_model, self.corpus, parents,
                                               groups=groups)
         return self
+
+    def _warn_if_fragile(self, main):
+        """Flag the two ways a calibration can look precise and not be: too little held-out
+        data, and a total pseudo-count at the top of its range."""
+        import warnings
+        st = main["settings"]
+        self.strength_at_bound = bool(
+            (self._unpack(main["switch_x"])[0] >= CONC_GRID[-1] * 0.999) if self.switch
+            else sum(self.alpha.values()) >= self.strength_grid[-1] * 0.999)
+        if st["n_eval_leaves"] < 200 or st["n_test_tokens"] < 2000:
+            warnings.warn(
+                f"ThreadSmoother calibrated on {st['n_eval_leaves']} evaluation leaves and "
+                f"{st['n_test_tokens']} held-out test tokens; estimates this thin vary widely "
+                "with the seed and mask. Use n_refit, and consider a lower min_eval_tokens for "
+                "communities of short comments.", UserWarning, stacklevel=3)
+        if self.strength_at_bound:
+            warnings.warn(
+                "the total pseudo-count is at the top of its range: inheriting replies take "
+                "their context nearly wholesale, and the size of the pseudo-count is not "
+                "identified beyond that (see strength_at_bound).", UserWarning, stacklevel=3)
 
     # -- application -------------------------------------------------------------------
 
@@ -1122,7 +1162,7 @@ class ThreadSmoother:
         full_theta, n, ctx = _context_mixes(theta, lengths, kept, parents, root, self.contexts,
                                             exclude_parent=self.thread_excludes_parent)
         if self.switch:
-            return self._transform_switch(model, corpus, theta, full_theta, n, ctx)
+            return self._transform_switch(model, corpus, theta, full_theta, n, ctx, parents)
         num = np.where(np.isnan(full_theta), 0.0, full_theta) * n[:, None]
         den = n.copy()
         for d in range(len(parents)):
@@ -1138,7 +1178,7 @@ class ThreadSmoother:
         out[den == 0] = np.nan
         return out
 
-    def _transform_switch(self, model, corpus, theta, full_theta, n, ctx):
+    def _transform_switch(self, model, corpus, theta, full_theta, n, ctx, parents):
         """Switch smoothing: each document's inherit probability comes from the marginal
         likelihood of its tokens; the smoothed mix is that probability times the pooled
         shrinkage plus the rest times the document's own mix. Sets ``inherit_weights``."""
@@ -1171,7 +1211,12 @@ class ThreadSmoother:
         # A document with neither tokens nor context has nothing to report.
         with np.errstate(invalid="ignore"):
             out = out / out.sum(1, keepdims=True)
-        self.inherit_weights = w[:, 0]
+        # Report weights for replies with words only: a root answers no one, and an empty
+        # reply's weight would just be the prior.
+        iw = w[:, 0].copy()
+        iw[(np.asarray(parents) < 0) | (n == 0)] = np.nan
+        self.inherit_weights = iw
+        self.inherit_rate = float(np.nanmean(iw)) if np.isfinite(iw).any() else np.nan
         return out
 
     def summary(self) -> dict:
@@ -1186,6 +1231,7 @@ class ThreadSmoother:
                 "completion": self.completion, "edge_effect": self.edge_effect,
                 "op_effect": self.op_effect,
                 "alpha_by_group": self.alpha_by_group, "rho": self.rho, "rho_ci": self.rho_ci,
+                "strength_at_bound": self.strength_at_bound,
                 "settings": self.settings}
 
     def __repr__(self) -> str:
@@ -1369,7 +1415,7 @@ class ThreadTM:
         if name in ("alpha", "alpha_ci", "parent_share", "parent_share_ci",
                     "parent_share_at_bound", "p_no_borrowing", "edge_effect", "completion",
                     "alpha_by_group", "draws", "replicates", "uncertainty", "rho", "rho_ci",
-                    "inherit_weights", "op_effect"):
+                    "inherit_weights", "op_effect", "inherit_rate", "strength_at_bound"):
             if not self.__dict__.get("_fitted"):
                 raise AttributeError(f"{name} is available after fit()")
             return getattr(self.__dict__["smoother"], name)
