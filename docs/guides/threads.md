@@ -194,6 +194,65 @@ correlated: on one Ask community we tested, the pooled fit moved all the weight 
 post and set $a_p$ to zero, while the switch kept both. Compare `alpha` with and without `"op"`
 before reading a drop in $a_p$ as a finding.
 
+## A semantic context from embeddings
+
+A topic model knows only the vocabulary it was fit on, so a three-word reply such as "What
+about the CBO?" gives it little to go on. A pretrained sentence encoder knows what those words
+relate to. The `"semantic"` context brings that in: each document's semantic mix is the
+similarity-weighted mean topic mix of its `semantic_k` nearest neighbors in embedding space,
+using the sum of the document's and its parent's embeddings as the query (the document and
+its parent are never their own neighbors).
+
+```python
+from sentence_transformers import SentenceTransformer
+
+encoder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+model = topica.ThreadTM(20, seed=13, contexts=("parent", "thread", "semantic"))
+model.fit(docs, parents, embed=encoder)            # or embed=lambda texts: array (n, dim)
+model.alpha                                         # includes a pseudo-count for "semantic"
+```
+
+`embed` receives each document's kept tokens joined by spaces and must return one row per
+text. During calibration the texts come from the masked corpus, so held-out words are never
+embedded; embeddings are cached by text. Documents with no kept tokens are not embedded (their
+query is their parent's alone). The encoder must return finite vectors of one fixed dimension,
+and the same vector for the same text whatever else is in the batch (a deterministic encoder
+in inference mode); `fit` warns when fewer than half the scored replies end up with a semantic
+context; negative cosine similarities count as zero, so a document whose nearest
+candidates all point away from it gets no semantic context. The semantic context is a
+context like the others:
+its pseudo-count is estimated on held-out replies, it works with and without `switch=True`,
+and the placebo trees rebuild it from the shuffled parent. For the edge contrast, each placebo
+tree is paired with a matched true tree, and both bar the true and the stand-in parent from
+the semantic neighbors, so the two arms draw neighbors from the same pool. The semantic query
+itself still follows each tree's parent, so with the semantic context `edge_effect` compares
+the whole parent-dependent package (parent mix plus parent-informed semantic neighborhood),
+not the parent with the semantic context held fixed. A duplicated comment can still be
+another's neighbor, so deduplicate first. Neighbors are drawn from documents with
+at least `semantic_min_tokens` tokens (default 30).
+
+On the truncation benchmark in the threadtm-paper project (long replies cut to a few words,
+scored against the topic mix of their held-back words, six corpora), `switch=True` with
+`("parent", "thread", "semantic")` recovered short replies' topics better than the plain switch
+in all 24 corpus-by-length cells (18 intervals excluding zero, none below) and raised held-out
+completion in every corpus. Use it with the switch:
+a pooled fit with the semantic context still collapsed to zero borrowing in two communities
+and was worse than the plain switch in a third. `("parent", "semantic")` did as well as
+`("parent", "thread", "semantic")` (23 of 24 cells) and is faster. (Benchmark:
+`analysis/validation/semantic_benchmark.py` and `results/semantic_benchmark.jsonl` in
+threadtm-paper, commit 0e8ac38, built on the truncation design in
+`truncation_benchmark.py`; all-MiniLM-L6-v2, K = 30, an LDA base. These results hold for that
+setup, not every encoder or corpus.) It needs an embedding model, which topica does not ship. The neighbor search
+is exact and its cost grows with documents times pool size, so expect minutes per calibration
+beyond a few tens of thousands of documents.
+
+The semantic context changes what the parent quantities mean. Its query includes the parent's
+embedding, so it can absorb much of what the parent contributes: with it, `alpha["parent"]`
+and `edge_effect` no longer isolate the parent, and in the benchmark they were usually smaller
+(not always: Reddit's parent pseudo-count rose). Use the
+semantic context to *estimate topics*; to *measure* how dyadic a conversation is (parent
+share, edge effect), fit without it.
+
 ## Strip quotes first
 
 Quoted text makes a reply look like its parent for reasons that have nothing to do with topical
