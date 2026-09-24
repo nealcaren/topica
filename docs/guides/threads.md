@@ -216,8 +216,11 @@ model.alpha                                         # includes a pseudo-count fo
 text. During calibration the texts come from the masked corpus, so held-out words are never
 embedded; embeddings are cached by text. The semantic context is a context like the others:
 its pseudo-count is estimated on held-out replies, it works with and without `switch=True`,
-and the placebo trees rebuild it from the shuffled parent, so `edge_effect` still measures what
-the specific parent adds beyond the semantic neighbors. Neighbors are drawn from documents with
+and the placebo trees rebuild it from the shuffled parent. In both the true and the placebo
+trees the true parent is barred from the semantic neighbors, so a semantically close parent
+cannot re-enter the placebo that way; `edge_effect` measures what the specific parent adds
+beyond its semantic neighborhood. A duplicated comment can still be another's neighbor, so
+deduplicate first. Neighbors are drawn from documents with
 at least `semantic_min_tokens` tokens (default 30).
 
 On the truncation benchmark in the threadtm-paper project (long replies cut to a few words,

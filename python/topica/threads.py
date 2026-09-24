@@ -188,9 +188,11 @@ class _Semantic:
         self.pos[self.pool] = np.arange(self.pool.size)
         self.k = int(k)
 
-    def neighbors(self, parents):
+    def neighbors(self, parents, also_exclude=None):
         e = self.emb
         par = np.asarray(parents, int)
+        extra = (np.full(len(e), -1) if also_exclude is None
+                 else np.asarray(also_exclude, int))
         q = e.copy()
         has_p = par >= 0
         q[has_p] += e[par[has_p]]
@@ -207,7 +209,7 @@ class _Semantic:
             rows = np.arange(start, min(start + 1024, len(e)))
             sims = q[rows] @ pe.T
             r_ = np.arange(rows.size)
-            for who in (rows, np.where(par[rows] >= 0, par[rows], -1)):   # never self/parent
+            for who in (rows, np.where(par[rows] >= 0, par[rows], -1), extra[rows]):
                 at = np.where(who >= 0, self.pos[np.clip(who, 0, None)], -1)
                 hit = at >= 0
                 sims[r_[hit], at[hit]] = -np.inf
@@ -217,8 +219,10 @@ class _Semantic:
             wts[rows] = np.where(ok[rows, None], np.clip(sw, 0.0, None), 0.0)
         return idx, wts
 
-    def mix(self, full_theta, parents):
-        idx, wts = self.neighbors(parents)
+    def mix(self, full_theta, parents, also_exclude=None):
+        if self.pool.size == 0:                          # no neighbors to draw from
+            return np.full(full_theta.shape, np.nan)
+        idx, wts = self.neighbors(parents, also_exclude)
         th = full_theta[np.clip(idx, 0, None)]            # (D, k, K)
         good = (idx >= 0) & ~np.isnan(th[:, :, 0]) & (wts > 0)
         w = np.where(good, wts, 0.0)
@@ -230,7 +234,7 @@ class _Semantic:
 
 
 def _context_mixes(theta, lengths, kept, parents, root, contexts, exclude_parent=False,
-                   op_source=None, thread_drop=None, semantic=None):
+                   op_source=None, thread_drop=None, semantic=None, semantic_exclude=None):
     """Per-original-document context topic mixes (NaN rows where unavailable).
 
     The thread mix always excludes the document itself; with ``exclude_parent`` it also
@@ -241,7 +245,8 @@ def _context_mixes(theta, lengths, kept, parents, root, contexts, exclude_parent
     names another document to stand in for each reply's root; the thread mix then excludes
     the stand-in as well as the root. ``thread_drop`` names one more document per reply to
     leave out of the thread mix (-1 for none). ``"semantic"`` needs ``semantic`` (a
-    :class:`_Semantic`) and follows the tree in ``parents``."""
+    :class:`_Semantic`) and follows the tree in ``parents``; ``semantic_exclude`` names one more
+    document per row that may not be a semantic neighbor (-1 for none)."""
     op_source = root if op_source is None else op_source
     n_docs = len(parents)
     k = theta.shape[1]
@@ -261,7 +266,7 @@ def _context_mixes(theta, lengths, kept, parents, root, contexts, exclude_parent
     if "semantic" in contexts:
         if semantic is None:
             raise ValueError("the semantic context needs document embeddings (embed=)")
-        out["semantic"] = semantic.mix(full_theta, parents)
+        out["semantic"] = semantic.mix(full_theta, parents, semantic_exclude)
     if "op" in contexts:
         op = np.full((n_docs, k), np.nan)
         for d, p in enumerate(parents):
@@ -297,9 +302,15 @@ def _placebo_contexts(theta, lengths, kept, parents, root, contexts, exclude_par
 
     Every context is built from the shuffled tree, so the placebo differs from the true tree
     only in which comment is each reply's parent. With non-overlapping contexts the true parent
-    therefore moves into the placebo's thread mix and the stand-in parent leaves it."""
+    therefore moves into the placebo's thread mix and the stand-in parent leaves it. The
+    semantic context is the exception: the true parent is barred from the placebo's semantic
+    neighbors as it is from the true tree's, so a semantically close parent cannot re-enter the
+    placebo through that route and the edge effect measures the parent beyond its semantic
+    neighborhood in both arms."""
+    true_par = np.asarray(parents, int)
     return [_context_mixes(theta, lengths, kept, sp, root, contexts,
-                           exclude_parent=exclude_parent, semantic=semantic)[2]
+                           exclude_parent=exclude_parent, semantic=semantic,
+                           semantic_exclude=true_par)[2]
             for sp in _shuffled_trees(parents, n_shuffle, seed)]
 
 
@@ -626,7 +637,7 @@ class ThreadSmoother:
 
     # -- the semantic context ----------------------------------------------------------------
 
-    def _semantic_for(self, corpus, n_docs):
+    def _semantic_for(self, corpus, n_docs, strict=True):
         """A :class:`_Semantic` over ``corpus``: one embedding per original document, from the
         tokens the corpus kept (zero for a document it dropped), cached by text."""
         if "semantic" not in self.contexts:
@@ -646,9 +657,14 @@ class ThreadSmoother:
         pool = np.zeros(n_docs, bool)
         pool[kept[np.asarray(corpus.doc_lengths) >= self.semantic_min_tokens]] = True
         if pool.sum() < 3:
-            raise ValueError(f"the semantic context needs documents with at least "
-                             f"{self.semantic_min_tokens} tokens to draw neighbors from; "
-                             "lower semantic_min_tokens")
+            msg = (f"the semantic context needs documents with at least "
+                   f"{self.semantic_min_tokens} tokens to draw neighbors from")
+            if strict:
+                raise ValueError(msg + "; lower semantic_min_tokens")
+            import warnings
+            warnings.warn(msg + "; it is unavailable for this corpus", UserWarning,
+                          stacklevel=3)
+            pool[:] = False
         return _Semantic(emb, pool, self.semantic_k)
 
     # -- one calibration -------------------------------------------------------------------
@@ -1172,6 +1188,7 @@ class ThreadSmoother:
             raise ValueError("the semantic context needs embed=, and embed= needs "
                              "'semantic' in contexts")
         self._embed = embed
+        self._embed_cache = {}          # a new fit may bring a new encoder or corpus
         corpus_kwargs = dict(corpus_kwargs or {})
         sw = corpus_kwargs.get("stopwords")
         if sw is not None:
@@ -1341,7 +1358,8 @@ class ThreadSmoother:
         lengths = np.asarray(corpus.doc_lengths, float)
         full_theta, n, ctx = _context_mixes(theta, lengths, kept, parents, root, self.contexts,
                                             exclude_parent=self.thread_excludes_parent,
-                                            semantic=self._semantic_for(corpus, len(parents)))
+                                            semantic=self._semantic_for(corpus, len(parents),
+                                                                        strict=False))
         if self.switch:
             return self._transform_switch(model, corpus, theta, full_theta, n, ctx, parents)
         num = np.where(np.isnan(full_theta), 0.0, full_theta) * n[:, None]

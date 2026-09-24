@@ -669,3 +669,53 @@ def test_all_four_contexts_fit():
                                     switch=switch, semantic_min_tokens=8).fit(
             docs, parents, base=_lda, seed=3, n_boot=10, final=False, embed=_bow_embed)
         assert set(sm.alpha) == {"parent", "op", "thread", "semantic"}
+
+
+def test_placebo_bars_the_true_parent_from_semantic_neighbors():
+    # Reply 3's true parent is 1; under a placebo tree its parent is 2. Doc 1 is by far the
+    # closest embedding to 3, so without the bar it would be 3's top semantic neighbor.
+    emb = np.array([[0.0, 1.0], [1.0, 0.0], [0.0, 0.1], [1.0, 0.01], [0.7, 0.7]])
+    sem = threads._Semantic(emb, np.array([True, True, True, False, True]), k=2)
+    placebo_parents = [-1, 0, 0, 2, 0]
+    idx, _ = sem.neighbors(placebo_parents)
+    assert 1 in idx[3]                                      # the leak Gemini flagged
+    idx, _ = sem.neighbors(placebo_parents, also_exclude=[-1, -1, -1, 1, -1])
+    assert 1 not in idx[3] and 2 not in idx[3]
+
+
+def test_semantic_transform_on_a_small_corpus_warns_instead_of_failing():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=60, seed=28)
+    sm = threads.ThreadSmoother(contexts=("parent", "semantic"), semantic_min_tokens=8).fit(
+        docs, parents, base=_lda, seed=3, n_boot=10, final=False, embed=_bow_embed)
+    small_docs = [["w1", "w2", "w4"], ["w1", "w3", "w5"], ["w2", "w3", "w6"]]
+    corpus = topica.Corpus.from_documents(small_docs)
+    model = topica.LDA(K, seed=1).fit(corpus, iters=50)
+    with pytest.warns(UserWarning, match="semantic context"):
+        out = sm.transform(model, corpus, [-1, 0, 1])
+    assert out.shape == (3, K)
+
+
+def test_each_fit_starts_a_fresh_embedding_cache():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=60, seed=29)
+    calls = []
+
+    def a(texts):
+        calls.append("a")
+        return _bow_embed(texts)
+
+    def b(texts):
+        calls.append("b")
+        return _bow_embed(texts, dim=32)
+    sm = threads.ThreadSmoother(contexts=("parent", "semantic"), semantic_min_tokens=8)
+    sm.fit(docs, parents, base=_lda, seed=3, n_boot=10, final=False, embed=a)
+    sm.fit(docs, parents, base=_lda, seed=3, n_boot=10, final=False, embed=b)
+    assert "b" in calls                                     # the new encoder was used
+    assert {len(v) for v in sm._embed_cache.values()} == {32}
+
+
+def test_threadtm_passes_embed_through():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=80, seed=30)
+    m = topica.ThreadTM(K, seed=3, contexts=("parent", "semantic"), switch=True,
+                        semantic_min_tokens=8).fit(docs, parents, iters=100, n_boot=10,
+                                                   embed=_bow_embed)
+    assert "semantic" in m.alpha and m.doc_topic_all.shape == (len(docs), K)
