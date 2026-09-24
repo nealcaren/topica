@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+## [0.62.0] - 2026-09-23
+
 ### Added
 
 - **`ThreadTM` is now a threaded topic model built on a standard base** (#895, experimental).
