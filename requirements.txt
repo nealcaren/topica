@@ -1,0 +1,8 @@
+# Documentation site (mkdocs build / serve)
+# Pin to the current Material 9.x line. Material warns that the rewritten
+# MkDocs 2.0 core will break all current themes/plugins, and Material 9.x
+# already requires mkdocs<2, so this transitively keeps the breaking core out
+# until we migrate deliberately. (Material itself is on 9.x; do not pin "<2",
+# which would select the ancient 1.x series.)
+mkdocs-material>=9,<10
+mkdocstrings[python]>=0.25
