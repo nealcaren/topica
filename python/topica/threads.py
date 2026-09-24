@@ -207,8 +207,9 @@ class _Semantic:
         q[ok] /= norm[ok, None]
         pe = e[self.pool]
         pn = np.linalg.norm(pe, axis=1)
-        pe = (pe / np.where(pn > 0, pn, 1.0)[:, None]).astype(np.float32)
-        q = q.astype(np.float32)
+        pe64 = pe / np.where(pn > 0, pn, 1.0)[:, None]
+        pe = pe64.astype(np.float32)
+        q64, q = q, q.astype(np.float32)
         k = min(self.k, self.pool.size)     # excluded self/parent entries get zero weight
         idx = np.full((len(e), k), -1)
         wts = np.zeros((len(e), k))
@@ -222,7 +223,10 @@ class _Semantic:
                 hit = at >= 0
                 sims[r_[hit], at[hit]] = -np.inf
             top = np.argpartition(-sims, k - 1, axis=1)[:, :k].copy()
-            sw = np.take_along_axis(sims, top, 1).astype(float)
+            # float32 only chooses the candidates; their weights are recomputed in float64, so
+            # a similarity that is really <= 0 cannot round up into a positive weight.
+            sw = np.einsum("rd,rkd->rk", q64[rows], pe64[top])
+            sw = np.where(np.isfinite(np.take_along_axis(sims, top, 1)), sw, -np.inf)
             idx[rows] = np.where(np.isfinite(sw), self.pool[top], -1)
             wts[rows] = np.where(ok[rows, None], np.clip(sw, 0.0, None), 0.0)
         self._memo[key] = (idx, wts)
@@ -362,6 +366,36 @@ def _op_placebo_contexts(theta, lengths, kept, parents, root, contexts, exclude_
                                  semantic=semantic)[2]
         out.append((true, placebo))
     return out
+
+
+def _pooled_predictive(a, keys, nn, pl, P, avail, P_draw, A_draw, sl=lambda x: x):
+    """Per-token predictive of the pooled shrinkage with pseudo-counts ``a`` over context
+    ``keys``: ``(n pL + sum_c a_c P_c) / (n + sum_c a_c)``, a missing context (availability 0)
+    contributing nothing. A placebo key's ``P`` and ``avail`` average its draws; when an arm's
+    availability varies across draws, its keys also carry per-draw arrays in ``P_draw`` /
+    ``A_draw`` and the predictive is the mean of each draw's normalized predictive, so every
+    context's prediction stays paired with its own draw's denominator. ``sl`` restricts the
+    per-token arrays to a token subset."""
+    if not any(c in P_draw for c in keys):
+        # Availability is the same in every draw, so the denominators agree and the averaged
+        # predictive equals the average of the per-draw predictives.
+        num, denom = nn * pl, nn.copy()
+        for a_c, c in zip(a, keys):
+            if a_c > 0:
+                w = a_c * sl(avail[c])
+                num, denom = num + w * sl(P[c]), denom + w
+        return num / denom
+    n_draws = len(next(P_draw[c] for c in keys if c in P_draw))
+    mix = 0.0
+    for d_ in range(n_draws):
+        num, denom = nn * pl, nn.copy()
+        for a_c, c in zip(a, keys):
+            if a_c > 0:
+                av = sl(A_draw[c][d_]) if c in A_draw else sl(avail[c])
+                pc = sl(P_draw[c][d_]) if c in P_draw else sl(P[c])
+                num, denom = num + a_c * av * pc, denom + a_c * av
+        mix = mix + num / denom / n_draws
+    return mix
 
 
 def _shuffled_trees(parents, n_shuffle, seed):
@@ -818,7 +852,6 @@ class ThreadSmoother:
             A_draw[key] = np.array([np.concatenate(
                 [np.full(ids.size, float(not np.isnan(m[c][i, 0]))) for i, ids in leaves])
                 for m in mixes])
-        fractional = {key: True for key in P_draw}
         n_tok = np.concatenate(n_tok)
         tj = np.concatenate(tj)
         grp = np.array(grp, dtype=object)
@@ -826,6 +859,9 @@ class ThreadSmoother:
         is_val = np.array([r in val_roots for r in roots])
         val_idx, test_idx = np.flatnonzero(is_val), np.flatnonzero(~is_val)
         settings = {"n_eval_leaves": len(leaves), "n_eval_threads": n_threads,
+                    "semantic_coverage": (float(np.mean([not np.isnan(ctx["semantic"][i, 0])
+                                                         for i, _ in leaves]))
+                                          if "semantic" in ctx else None),
                     "n_val_threads": int(is_val.sum()),
                     "n_test_tokens": int(np.isin(tj, test_idx).sum())}
 
@@ -843,27 +879,8 @@ class ThreadSmoother:
 
         def token_ll(a, keys, mask):
             sl = (lambda x: x) if mask.all() else (lambda x: x[mask])
-            nn = sl(n_tok)
-            if not any(fractional.get(c, False) for c in keys):
-                # Availability is the same in every draw, so the denominators agree and the
-                # averaged predictive equals the average of the per-draw predictives.
-                num, denom = nn * sl(pL), nn.copy()
-                for a_c, c in zip(a, keys):
-                    if a_c > 0:          # a missing context (avail 0) contributes nothing
-                        w = a_c * sl(avail[c])
-                        num, denom = num + w * sl(P[c]), denom + w
-                return np.log(num / denom)
-            n_draws = len(next(P_draw[c] for c in keys if c in P_draw))
-            mix = 0.0
-            for d_ in range(n_draws):
-                num, denom = nn * sl(pL), nn.copy()
-                for a_c, c in zip(a, keys):
-                    if a_c > 0:
-                        av = sl(A_draw[c][d_]) if c in A_draw else sl(avail[c])
-                        pc = sl(P_draw[c][d_]) if c in P_draw else sl(P[c])
-                        num, denom = num + a_c * av * pc, denom + a_c * av
-                mix = mix + num / denom / n_draws
-            return np.log(mix)
+            return np.log(_pooled_predictive(a, keys, sl(n_tok), sl(pL), P, avail, P_draw,
+                                             A_draw, sl))
 
         def tables(keys, mask):
             """Per-thread log-likelihood sums for every grid point, on tokens in ``mask``."""
@@ -1330,6 +1347,9 @@ class ThreadSmoother:
             "contexts": self.contexts, "theta": self.theta_source, "seed": seed,
             "thread_excludes_parent": self.thread_excludes_parent, "switch": self.switch,
             "semantic_k": self.semantic_k, "semantic_min_tokens": self.semantic_min_tokens,
+            "share_candidates": (len(self._switch_shares()) if self.switch
+                                 else len(self._share_vectors()) if len(self.contexts) > 1
+                                 else 1),
             "n_refit": n_refit, "strength_grid_size": int(self.strength_grid.size),
             "share_steps": self.share_steps, **kw, **main["settings"]}
         self.calibration_model = main["model"]
@@ -1365,6 +1385,12 @@ class ThreadSmoother:
                 f"{st['n_test_tokens']} held-out test tokens; estimates this thin vary widely "
                 "with the seed and mask. Use n_refit, and consider a lower min_eval_tokens for "
                 "communities of short comments.", UserWarning, stacklevel=3)
+        cov = st.get("semantic_coverage")
+        if cov is not None and cov < 0.5:
+            warnings.warn(
+                f"only {cov:.0%} of the scored replies have a semantic context (neighbors with "
+                "positive similarity); check the encoder's output (all-zero or unrelated "
+                "vectors give none).", UserWarning, stacklevel=3)
         if self.strength_at_bound:
             warnings.warn(
                 "a pseudo-count is at the top of its search range: larger values fit about as "

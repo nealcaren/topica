@@ -215,8 +215,10 @@ model.alpha                                         # includes a pseudo-count fo
 `embed` receives each document's kept tokens joined by spaces and must return one row per
 text. During calibration the texts come from the masked corpus, so held-out words are never
 embedded; embeddings are cached by text. Documents with no kept tokens are not embedded (their
-query is their parent's alone). The encoder must return finite vectors of one fixed dimension
-for the same text; negative cosine similarities count as zero, so a document whose nearest
+query is their parent's alone). The encoder must return finite vectors of one fixed dimension,
+and the same vector for the same text whatever else is in the batch (a deterministic encoder
+in inference mode); `fit` warns when fewer than half the scored replies end up with a semantic
+context; negative cosine similarities count as zero, so a document whose nearest
 candidates all point away from it gets no semantic context. The semantic context is a
 context like the others:
 its pseudo-count is estimated on held-out replies, it works with and without `switch=True`,

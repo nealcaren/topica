@@ -763,3 +763,75 @@ def test_semantic_settings_are_recorded():
                                 semantic_min_tokens=8).fit(
         docs, parents, base=_lda, seed=3, n_boot=10, final=False, embed=_bow_embed)
     assert sm.summary()["settings"]["semantic_k"] == 7
+
+
+def test_pooled_predictive_pairs_each_draw_with_its_denominator():
+    # Two placebo draws for one token: the semantic context exists only in draw 0, and the
+    # parent prediction differs by draw. The predictive must be the mean of each draw's own
+    # normalized predictive (Codex review oracle), not a ratio of averages.
+    n, pl, a = np.array([4.0]), np.array([0.2]), (2.0, 3.0)
+    keys = ("_s_parent", "_s_semantic")
+    Pd = {"_s_parent": np.array([[0.9], [0.1]]), "_s_semantic": np.array([[0.6], [0.0]])}
+    Ad = {"_s_parent": np.array([[1.0], [1.0]]), "_s_semantic": np.array([[1.0], [0.0]])}
+    P = {k: v.mean(0) for k, v in Pd.items()}
+    avail = {k: v.mean(0) for k, v in Ad.items()}
+    got = threads._pooled_predictive(a, keys, n, pl, P, avail, Pd, Ad)
+    d0 = (4 * 0.2 + 2 * 0.9 + 3 * 0.6) / (4 + 2 + 3)
+    d1 = (4 * 0.2 + 2 * 0.1) / (4 + 2)
+    assert np.isclose(got[0], (d0 + d1) / 2)
+    # With identical availability the fast path must agree with the per-draw mean.
+    Ad2 = {k: np.ones_like(v) for k, v in Ad.items()}
+    fast = threads._pooled_predictive(a, keys, n, pl, P, {k: v.mean(0) for k, v in Ad2.items()},
+                                      {}, {})
+    slow = threads._pooled_predictive(a, keys, n, pl, P, {k: v.mean(0) for k, v in Ad2.items()},
+                                      Pd, Ad2)
+    assert np.isclose(fast[0], slow[0])
+
+
+def test_near_zero_negative_similarity_gives_no_semantic_context():
+    # float32 used to round a cosine of about -1e-10 up to a positive weight.
+    emb = np.array([[1.0, 0.0, 0.0, 0.0], [-1e-10, 1.0, 0.0, 0.0],
+                    [-1e-10, 0.0, 1.0, 0.0], [-1e-10, 0.0, 0.0, 1.0]])
+    sem = threads._Semantic(emb, np.array([False, True, True, True]), k=3)
+    theta = np.array([[0.5, 0.5], [1.0, 0.0], [1.0, 0.0], [1.0, 0.0]])
+    assert np.isnan(sem.mix(theta, [-1, -1, -1, -1])[0]).all()
+
+
+@pytest.mark.parametrize("bad", ["inf", "dim_change"])
+def test_more_invalid_embeddings_are_rejected(bad):
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=40, seed=34)
+    calls = {"n": 0}
+
+    def enc(texts):
+        calls["n"] += 1
+        if bad == "inf":
+            return np.full((len(texts), 4), np.inf)
+        return _bow_embed(texts, dim=16 if calls["n"] == 1 else 8)
+    with pytest.raises(ValueError, match="embed"):
+        threads.ThreadSmoother(contexts=("parent", "semantic"), semantic_min_tokens=8).fit(
+            docs, parents, base=_lda, seed=3, n_boot=10, n_refit=1, final=False, embed=enc)
+
+
+def test_all_zero_embeddings_warn_about_coverage():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=60, seed=35)
+    with pytest.warns(UserWarning, match="semantic context"):
+        sm = threads.ThreadSmoother(contexts=("parent", "semantic"), semantic_min_tokens=8).fit(
+            docs, parents, base=_lda, seed=3, n_boot=10, final=False,
+            embed=lambda t: np.zeros((len(t), 4)))
+    assert sm.settings["semantic_coverage"] == 0.0
+
+
+def test_semantic_masking_holds_across_refits():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=80, seed=36)
+    seen = []
+
+    def rec(texts):
+        seen.extend(texts)
+        return _bow_embed(texts)
+    threads.ThreadSmoother(contexts=("parent", "semantic"), semantic_min_tokens=8).fit(
+        docs, parents, base=_lda, seed=3, n_boot=10, n_refit=2, final=False, embed=rec)
+    _, _, has_child = threads.thread_structure(parents)
+    leaves = [d for i, d in enumerate(docs) if parents[i] >= 0 and not has_child[i]
+              and len(d) >= 5]
+    full = {" ".join(d) for d in leaves}
+    assert seen and not (set(seen) & full)      # three calibrations, no whole leaf embedded
