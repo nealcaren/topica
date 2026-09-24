@@ -21,7 +21,7 @@ Every model shares the same shape: construct with hyperparameters and a `seed`,
 | Steer topics with known keywords | [`keyATM`, `seededlda`](guided.md) |
 | Sharper, more coherent topics at scale | [`ProdLDA`](#prodlda) |
 | Model short texts (tweets, answers) | [`PT`, `GSDMM`](short-text.md) |
-| Model nested reply threads (posts + comments) | [`TreeFieldTM`](#treefieldtm), [`CSATM`](#csatm) |
+| Model nested reply threads (posts + comments) | [`ThreadTM`](threads.md) (start here), [`TreeFieldTM`](#treefieldtm), [`CSATM`](#csatm) |
 | Build a topic hierarchy | `PA`, `HLDA` |
 
 ## The roster

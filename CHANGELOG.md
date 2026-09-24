@@ -6,6 +6,29 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ## [Unreleased]
 
+### Added
+
+- **Per-reply inherit-or-innovate switch for `ThreadSmoother` / `ThreadTM`** (#897,
+  experimental). `switch=True` gives each reply a two-component mixture prior: inherit (the
+  pooled context shrinkage) or new (centered on the corpus mean mix). The inherit probability
+  comes from a sequential Dirichlet-multinomial marginal likelihood of the reply's own tokens
+  with the topics held fixed, so the reply's fitted mix never scores its own words. New
+  attributes `rho`, `rho_ci` and `inherit_weights`. On the planted simulator it recovers a
+  positive edge effect at 50% inheritance, where the pooled fit borrows nothing, and the mean
+  inherit weight tracks the planted rate. Opt-in; `groups=` not yet supported.
+- **The original post as a separate context** (#900, experimental).
+  `contexts=("parent", "op", "thread")` adds the thread root's mix with its own pseudo-count
+  for replies at depth 2 or deeper, removes the root from the thread mix, and reports
+  `op_effect` against a placebo in which a random same-thread comment takes the original
+  post's slot. Works with and without `switch`.
+
+### Changed
+
+- **`ThreadSmoother` / `ThreadTM` report held-out effects as the median over calibrations
+  when `n_refit > 0`** (they were calibration 1's, which could sit at the edge of the pooled
+  interval; parameters stay calibration 1's, the set the smoother applies), warn when a calibration rests on fewer than 200 evaluation leaves or 2,000 test
+  tokens, and flag a total pseudo-count at the top of its range (`strength_at_bound`).
+
 ## [0.62.0] - 2026-09-23
 
 ### Added

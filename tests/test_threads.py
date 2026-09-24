@@ -9,7 +9,8 @@ truth, and (c) finds no edge effect on a no-inheritance null.
 Known limit (documented in topica.threads): one pseudo-count per context borrows for every
 reply, so when only about half of replies inherit and the rest start sharply different topics,
 borrowing hurts the non-inheriting replies as much as it helps the others and the fit returns
-zero. A per-reply inherit-or-innovate switch is the follow-up.
+zero. The per-reply inherit-or-innovate switch (`switch=True`, #897) handles that case; its
+tests are at the end of this file.
 """
 from collections import Counter
 from itertools import permutations
@@ -336,3 +337,266 @@ def test_groups_are_read_by_position_not_label():
     a = threads.ThreadSmoother(contexts=("parent",)).fit(docs, parents, groups=labels, **kw)
     b = threads.ThreadSmoother(contexts=("parent",)).fit(docs, parents, groups=series, **kw)
     assert a.alpha_by_group == b.alpha_by_group
+
+
+# ------------------------------------------------ inherit-or-innovate switch (#897)
+
+
+def test_sequential_log_ml_is_exact_for_two_tokens():
+    # For two tokens the soft-count Polya urn is the exact Dirichlet-multinomial marginal:
+    # p(w1) = sum_k m_k b_k,w1 and p(w2 | w1) = sum_k E[theta_k | w1] b_k,w2.
+    beta = np.array([[0.7, 0.2, 0.1], [0.1, 0.3, 0.6]])
+    m = np.array([[0.3, 0.7]])
+    grid = np.array([0.5, 5.0])
+    got = threads._sequential_log_ml([np.array([0, 2])], m, grid, beta)[0]
+    for a, g in zip(grid, got):
+        p1 = m[0] * beta[:, 0]
+        r = p1 / p1.sum()
+        post = (a * m[0] + r) / (a + 1)
+        assert np.isclose(g, np.log(p1.sum()) + np.log(post @ beta[:, 2]))
+
+
+def test_switch_recovers_the_edge_effect_at_half_inheritance():
+    # The pooled pseudo-count fit borrows nothing here (see module docstring); the switch lets
+    # each reply's own words decide, so the inheriting half gains and the rest are left alone.
+    # 600 threads, the size #897 set: the placebo averages its draws inside the log, which is
+    # conservative, and at 300 threads the interval grazes zero.
+    docs, parents, _, _ = _simulate(inherit=0.5, n_threads=600, seed=0)
+    sm = threads.ThreadSmoother(switch=True).fit(docs, parents, base=_lda, seed=3, n_boot=100)
+    assert sm.edge_effect["lo"] > 0, sm.edge_effect
+    assert sm.completion["lo"] > 0, sm.completion
+    assert min(sm.completion["by_length"]["gain"]) > 0
+    replies = np.array(parents) >= 0
+    assert np.isnan(sm.inherit_weights[~replies]).all()   # roots answer no one
+    w = sm.inherit_weights[replies]
+    w = w[~np.isnan(w)]
+    assert ((w >= 0) & (w <= 1)).all()
+    assert abs(sm.inherit_rate - 0.5) < 0.15             # tracks the planted rate
+    assert sm.rho_ci[0] <= sm.rho <= sm.rho_ci[1]
+    assert 0 < sm.parent_share < 1
+    th = sm.theta_tilde[~np.isnan(sm.theta_tilde[:, 0])]
+    assert np.allclose(th.sum(1), 1.0) and (th >= 0).all()
+
+
+def test_switch_finds_no_edge_effect_without_inheritance():
+    docs, parents, _, _ = _simulate(inherit=0.0, seed=1)
+    sm = threads.ThreadSmoother(switch=True).fit(docs, parents, base=_lda, seed=3, n_boot=100,
+                                                 final=False)
+    assert sm.edge_effect["lo"] <= 0 <= sm.edge_effect["hi"], sm.edge_effect
+    assert sm.rho < 0.2
+
+
+def test_switch_weights_rise_with_inheritance(inherited):
+    docs, parents, *_ = inherited[1:3]
+    sm = threads.ThreadSmoother(switch=True).fit(docs, parents, base=_lda, seed=3, n_boot=50)
+    assert sm.inherit_rate > 0.75                         # planted rate 0.9
+
+
+def test_switch_rejects_groups():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=20, seed=15)
+    with pytest.raises(ValueError, match="groups"):
+        threads.ThreadSmoother(switch=True).fit(docs, parents, base=_lda,
+                                                groups=[0] * len(docs))
+
+
+# ------------------------------------------------ the original post as a context (#900)
+
+
+def _simulate_op(n_threads=300, seed=0):
+    """Replies at every depth draw their topics near the thread ROOT (the original post), not
+    near their parent. Most replies answer another reply, so parent and OP differ."""
+    rng = np.random.default_rng(seed)
+    beta = rng.dirichlet(np.full(V, 0.05), K)
+    docs, parents = [], []
+
+    def emit(theta, length):
+        z = rng.choice(K, size=length, p=theta)
+        return [f"w{rng.choice(V, p=beta[k])}" for k in z]
+
+    for _ in range(n_threads):
+        root = len(docs)
+        th_root = rng.dirichlet(np.full(K, 0.2))
+        docs.append(emit(th_root, 60)), parents.append(-1)
+        members = [root]
+        for _ in range(rng.integers(6, 13)):
+            p = int(rng.choice(members[1:] if len(members) > 2 and rng.random() < 0.7
+                               else members))
+            th = (rng.dirichlet(80 * th_root + 0.05) if rng.random() < 0.9
+                  else rng.dirichlet(np.full(K, 0.2)))
+            members.append(len(docs))
+            docs.append(emit(th, int(rng.integers(5, 13)))), parents.append(p)
+    return docs, parents
+
+
+def test_op_context_is_the_root_for_deep_replies_and_leaves_the_thread_mix():
+    # root 0 -> 1 -> 2, and 0 -> 3
+    theta = np.array([[1.0, 0.0], [0.0, 1.0], [0.5, 0.5], [0.2, 0.8]])
+    parents = [-1, 0, 1, 0]
+    _, root, _ = threads.thread_structure(parents)
+    _, _, ctx = threads._context_mixes(theta, np.full(4, 10.0), np.arange(4), parents, root,
+                                       ("parent", "op", "thread"), exclude_parent=True)
+    assert np.isnan(ctx["op"][1, 0]) and np.isnan(ctx["op"][3, 0])   # parent is the root
+    assert np.allclose(ctx["op"][2], [1.0, 0.0])
+    assert np.allclose(ctx["thread"][2], [0.2, 0.8])                  # not 0 (root) or 1
+
+
+def test_op_placebo_arms_share_one_thread_pool():
+    # root 0 -> 1 -> 2, and 0 -> 3, 0 -> 4. Reply 2's donor must be 3 or 4; both arms leave the
+    # root and the donor out of the thread mix, and differ only in the original post.
+    theta = np.array([[1.0, 0.0], [0.0, 1.0], [0.5, 0.5], [0.2, 0.8], [0.6, 0.4]])
+    parents = [-1, 0, 1, 0, 0]
+    _, root, _ = threads.thread_structure(parents)
+    for true, placebo in threads._op_placebo_contexts(
+            theta, np.full(5, 10.0), np.arange(5), parents, root,
+            ("parent", "op", "thread"), True, 4, 5):
+        donor = 3 if np.allclose(placebo["op"][2], theta[3]) else 4
+        other = 7 - donor
+        assert np.allclose(placebo["op"][2], theta[donor])
+        assert np.allclose(true["op"][2], theta[0])
+        assert np.allclose(true["thread"][2], theta[other])
+        assert np.allclose(placebo["thread"][2], theta[other])
+        assert np.allclose(true["parent"][2], placebo["parent"][2])
+
+
+def test_op_placebo_keeps_a_dropped_root_missing():
+    # The corpus dropped the root (row 0 not kept): neither arm may have an original post.
+    theta = np.array([[0.0, 1.0], [0.5, 0.5], [0.2, 0.8], [0.6, 0.4]])   # rows 1..4
+    parents = [-1, 0, 1, 0, 0]
+    _, root, _ = threads.thread_structure(parents)
+    kept = np.array([1, 2, 3, 4])
+    for true, placebo in threads._op_placebo_contexts(
+            theta, np.full(4, 10.0), kept, parents, root, ("parent", "op", "thread"),
+            True, 3, 5):
+        assert np.isnan(true["op"][2, 0]) and np.isnan(placebo["op"][2, 0])
+
+
+@pytest.mark.parametrize("switch", [False, True])
+def test_op_context_is_recovered_when_replies_answer_the_original_post(switch):
+    docs, parents = _simulate_op(seed=16)
+    sm = threads.ThreadSmoother(contexts=("parent", "op", "thread"), switch=switch).fit(
+        docs, parents, base=_lda, seed=3, n_boot=100, final=False)
+    assert sm.alpha["op"] > sm.alpha["parent"], sm.alpha      # a_p not inflated
+    assert sm.op_effect["lo"] > 0, sm.op_effect
+    assert sm.edge_effect["lo"] <= 0 <= sm.edge_effect["hi"], sm.edge_effect
+
+
+def test_op_context_finds_no_op_effect_when_replies_ignore_the_original_post():
+    # Replies share a thread topic that the original post does not carry (the root is drawn
+    # fresh), so the OP should add nothing beyond a same-thread comment standing in for it.
+    # (When the OP itself carries the thread's topic, replies following the thread and replies
+    # answering the OP generate the same data; a positive op_effect is then expected.)
+    rng = np.random.default_rng(18)
+    beta = rng.dirichlet(np.full(V, 0.05), K)
+    docs, parents = [], []
+
+    def emit(theta, length):
+        z = rng.choice(K, size=length, p=theta)
+        return [f"w{rng.choice(V, p=beta[k])}" for k in z]
+
+    for _ in range(300):
+        th_thread = rng.dirichlet(np.full(K, 0.2))
+        members = [len(docs)]
+        docs.append(emit(rng.dirichlet(np.full(K, 0.2)), 60)), parents.append(-1)
+        for _ in range(rng.integers(6, 13)):
+            p = int(rng.choice(members))
+            members.append(len(docs))
+            docs.append(emit(rng.dirichlet(80 * th_thread + 0.05), int(rng.integers(5, 13))))
+            parents.append(p)
+    sm = threads.ThreadSmoother(contexts=("parent", "op", "thread")).fit(
+        docs, parents, base=_lda, seed=3, n_boot=100, final=False)
+    assert sm.op_effect["lo"] <= 0 <= sm.op_effect["hi"], sm.op_effect
+
+
+def _switch_harness(contexts, share, log_a, theta_rows, docs_tokens, parents, kept):
+    """A ThreadSmoother with hand-set switch parameters and a fake two-topic model."""
+    from types import SimpleNamespace
+    sm = threads.ThreadSmoother(contexts=contexts, switch=True)
+    sm.alpha = {c: 1.0 for c in contexts}
+    sm._switch_x = np.array([log_a, 0.0, 0.0])            # A = exp(log_a), a_new = 1, rho = .5
+    sm._switch_share = np.asarray(share, float)
+    model = SimpleNamespace(doc_topic=np.asarray(theta_rows, float),
+                            topic_word=np.array([[0.9, 0.1], [0.1, 0.9]]))
+    corpus = SimpleNamespace(vocabulary=["a", "b"], kept_indices=list(kept),
+                             doc_lengths=np.array([len(docs_tokens[k]) for k in kept]),
+                             documents=lambda: [docs_tokens[k] for k in kept])
+    return sm, model, corpus
+
+
+def test_switch_drops_a_missing_contexts_pseudocount():
+    # Parent share 0.01, OP share 0.99 of A = 100. A top-level reply has no OP, so it must
+    # borrow with pseudo-count 1 (the parent's), not the full 100.
+    docs = [["a"] * 20, ["b"]]
+    sm, model, corpus = _switch_harness(("parent", "op"), [0.01, 0.99], np.log(100.0),
+                                        [[1.0, 0.0], [0.0, 1.0]], docs, [-1, 0], [0, 1])
+    out = sm.transform(model, corpus, [-1, 0])
+    w = sm.inherit_weights[1]
+    expect = w * (1 * np.array([0.0, 1.0]) + 1.0 * np.array([1.0, 0.0])) / 2 \
+        + (1 - w) * np.array([0.0, 1.0])
+    assert np.allclose(out[1], expect)
+
+
+def test_switch_gives_an_empty_document_its_pure_context_mix():
+    # Reply 1 is empty but its row is kept (no pruning); root 2 is empty and has no context.
+    docs = [["a"] * 20, [], []]
+    sm, model, corpus = _switch_harness(("parent",), [1.0], np.log(5.0),
+                                        [[0.9, 0.1], [0.5, 0.5], [0.5, 0.5]], docs,
+                                        [-1, 0, -1], [0, 1, 2])
+    out = sm.transform(model, corpus, [-1, 0, -1])
+    assert np.allclose(out[1], [0.9, 0.1])
+    assert np.isnan(out[2]).all()
+
+
+def test_switch_bootstrap_intervals_are_not_degenerate_with_one_context():
+    # One context gives one share candidate; the intervals must still reflect re-optimizing
+    # the continuous parameters on each bootstrap sample.
+    docs, parents, _, _ = _simulate(inherit=0.5, n_threads=150, seed=19)
+    sm = threads.ThreadSmoother(contexts=("parent",), switch=True).fit(
+        docs, parents, base=_lda, seed=3, n_boot=50, final=False)
+    assert sm.rho_ci[0] < sm.rho_ci[1]
+
+
+def test_refit_point_estimates_are_the_median_over_calibrations():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=120, seed=20)
+    sm = threads.ThreadSmoother().fit(docs, parents, base=_lda, seed=3, n_boot=50, n_refit=2,
+                                      final=False)
+    reps = [r["edge_effect"] for r in sm.replicates]
+    assert np.isclose(sm.edge_effect["estimate"], np.median(reps))
+    assert np.isclose(sm.completion["estimate"], np.median([r["completion"]
+                                                            for r in sm.replicates]))
+
+
+def test_thin_calibration_warns():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=20, seed=21)
+    with pytest.warns(UserWarning, match="evaluation leaves"):
+        threads.ThreadSmoother().fit(docs, parents, base=_lda, seed=3, n_boot=20, final=False)
+
+
+def test_marginal_likelihood_table_covers_tiny_concentrations():
+    # A small A times a lattice-edge share can fall far below the search floor; the table
+    # must still be exact there rather than clamping (two tokens: the urn is exact).
+    beta = np.eye(2)
+    a = 0.01 / (1 + np.exp(6))
+    lml = threads._sequential_log_ml([np.array([0, 1])], np.array([[0.5, 0.5]]),
+                                     threads.CONC_GRID, beta)
+    exact = np.log(0.5) + np.log(a * 0.5 / (a + 1))
+    assert np.isclose(threads._interp_cols(lml, a, threads.CONC_GRID)[0], exact, atol=1e-3)
+
+
+@pytest.mark.parametrize("stop", ["english", np.array(["w1", "w2"]), ("w1",)])
+def test_stopwords_in_any_supported_form(stop):
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=60, seed=23)
+    docs = [d + ["the", "and"] if i % 3 else d for i, d in enumerate(docs)]
+    sm = threads.ThreadSmoother(switch=True).fit(
+        docs, parents, base=_lda, seed=3, n_boot=20, final=False,
+        corpus_kwargs={"stopwords": stop})
+    sw = sm.settings["corpus_kwargs"]["stopwords"]
+    assert isinstance(sw, list)
+    if isinstance(stop, str):          # resolved to the word list, not shattered to "e","n",..
+        assert "the" in sw and len(sw) > 100
+
+
+def test_zero_borrowing_is_not_at_the_strength_bound():
+    docs, parents, _, _ = _simulate(inherit=0.0, seed=1)
+    sm = threads.ThreadSmoother().fit(docs, parents, base=_lda, seed=3, n_boot=50,
+                                      final=False)
+    assert sum(sm.alpha.values()) == 0 and sm.strength_at_bound is False
