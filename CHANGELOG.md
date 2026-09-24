@@ -14,7 +14,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   neighbors, queried with the document's plus its parent's embedding) as a context with its
   own pseudo-count, estimated on held-out replies like the others. Calibration embeds only the
   masked corpus, embeddings are cached by text, and the placebo trees rebuild the context from
-  the shuffled parent. Works with and without `switch=True`.
+  the shuffled parent. Works with and without `switch=True`; use it with the switch (on a
+  six-corpus truncation benchmark, switch + semantic improved short-reply topic recovery over
+  the plain switch in 22 of 24 cells, while the pooled fit with it still collapsed in two).
+  With it, the parent pseudo-count and edge effect measure the parent beyond its semantic
+  neighborhood; measure dyadic structure without it.
 
 ### Added
 

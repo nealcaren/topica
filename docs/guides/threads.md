@@ -221,10 +221,19 @@ the specific parent adds beyond the semantic neighbors. Neighbors are drawn from
 at least `semantic_min_tokens` tokens (default 30).
 
 On the truncation benchmark in the threadtm-paper project (long replies cut to a few words,
-scored against the topic mix of their held-back words), adding the semantic context improves
-recovery over the plain switch on the shortest replies, and a pooled fit with
-`("parent", "thread", "semantic")` no longer collapses to zero borrowing where the parent-only
-fit did. It needs an embedding model, which topica does not ship; any encoder works.
+scored against the topic mix of their held-back words, six corpora), `switch=True` with the
+semantic context recovered short replies' topics better than the plain switch in 22 of 24
+corpus-by-length cells and raised held-out completion in every corpus. Use it with the switch:
+a pooled fit with the semantic context still collapsed to zero borrowing in two communities
+and was worse than the plain switch in a third. `("parent", "semantic")` did as well as
+`("parent", "thread", "semantic")` and is faster. It needs an embedding model, which topica
+does not ship; any encoder works.
+
+The semantic context changes what the parent quantities mean. Its query includes the parent's
+embedding, so it absorbs much of what the parent contributes: with it, `alpha["parent"]` and
+`edge_effect` measure the parent beyond its semantic neighborhood, and both shrink. Use the
+semantic context to *estimate topics*; to *measure* how dyadic a conversation is (parent
+share, edge effect), fit without it.
 
 ## Strip quotes first
 
