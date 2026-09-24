@@ -214,13 +214,19 @@ model.alpha                                         # includes a pseudo-count fo
 
 `embed` receives each document's kept tokens joined by spaces and must return one row per
 text. During calibration the texts come from the masked corpus, so held-out words are never
-embedded; embeddings are cached by text. The semantic context is a context like the others:
+embedded; embeddings are cached by text. Documents with no kept tokens are not embedded (their
+query is their parent's alone). The encoder must return finite vectors of one fixed dimension
+for the same text; negative cosine similarities count as zero, so a document whose nearest
+candidates all point away from it gets no semantic context. The semantic context is a
+context like the others:
 its pseudo-count is estimated on held-out replies, it works with and without `switch=True`,
-and the placebo trees rebuild it from the shuffled parent. In both the true and the placebo
-trees the true parent is barred from the semantic neighbors, so a semantically close parent
-cannot re-enter the placebo that way; `edge_effect` measures what the specific parent adds
-beyond its semantic neighborhood. A duplicated comment can still be another's neighbor, so
-deduplicate first. Neighbors are drawn from documents with
+and the placebo trees rebuild it from the shuffled parent. For the edge contrast, each placebo
+tree is paired with a matched true tree, and both bar the true and the stand-in parent from
+the semantic neighbors, so the two arms draw neighbors from the same pool. The semantic query
+itself still follows each tree's parent, so with the semantic context `edge_effect` compares
+the whole parent-dependent package (parent mix plus parent-informed semantic neighborhood),
+not the parent with the semantic context held fixed. A duplicated comment can still be
+another's neighbor, so deduplicate first. Neighbors are drawn from documents with
 at least `semantic_min_tokens` tokens (default 30).
 
 On the truncation benchmark in the threadtm-paper project (long replies cut to a few words,
@@ -229,12 +235,16 @@ semantic context recovered short replies' topics better than the plain switch in
 corpus-by-length cells and raised held-out completion in every corpus. Use it with the switch:
 a pooled fit with the semantic context still collapsed to zero borrowing in two communities
 and was worse than the plain switch in a third. `("parent", "semantic")` did as well as
-`("parent", "thread", "semantic")` and is faster. It needs an embedding model, which topica
-does not ship; any encoder works.
+`("parent", "thread", "semantic")` and is faster. (Benchmark:
+`analysis/validation/truncation_benchmark.py` in threadtm-paper, commit 0090c67, with
+all-MiniLM-L6-v2, K = 30 and an LDA base; these results hold for that setup, not every
+encoder or corpus.) It needs an embedding model, which topica does not ship. The neighbor search
+is exact and its cost grows with documents times pool size, so expect minutes per calibration
+beyond a few tens of thousands of documents.
 
 The semantic context changes what the parent quantities mean. Its query includes the parent's
-embedding, so it absorbs much of what the parent contributes: with it, `alpha["parent"]` and
-`edge_effect` measure the parent beyond its semantic neighborhood, and both shrink. Use the
+embedding, so it can absorb much of what the parent contributes: with it, `alpha["parent"]`
+and `edge_effect` no longer isolate the parent, and in the benchmark both were smaller. Use the
 semantic context to *estimate topics*; to *measure* how dyadic a conversation is (parent
 share, edge effect), fit without it.
 

@@ -181,18 +181,24 @@ class _Semantic:
     documents with enough tokens to have a reliable mix), never the document itself or its
     parent. ``emb`` has one row per original document, zero for a document with no text."""
 
-    def __init__(self, emb, pool, k):
+    def __init__(self, emb, pool, k, rows=None):
         self.emb = np.asarray(emb, float)
         self.pool = np.flatnonzero(pool)
         self.pos = np.full(len(self.emb), -1)
         self.pos[self.pool] = np.arange(self.pool.size)
         self.k = int(k)
+        # Only these rows are searched (calibration needs the scored leaves alone); None = all.
+        self.rows = None if rows is None else np.asarray(rows, int)
+        self._memo = {}
 
     def neighbors(self, parents, also_exclude=None):
         e = self.emb
         par = np.asarray(parents, int)
         extra = (np.full(len(e), -1) if also_exclude is None
                  else np.asarray(also_exclude, int))
+        key = (par.tobytes(), extra.tobytes())
+        if key in self._memo:                              # the same tree is searched once
+            return self._memo[key]
         q = e.copy()
         has_p = par >= 0
         q[has_p] += e[par[has_p]]
@@ -201,35 +207,42 @@ class _Semantic:
         q[ok] /= norm[ok, None]
         pe = e[self.pool]
         pn = np.linalg.norm(pe, axis=1)
-        pe = pe / np.where(pn > 0, pn, 1.0)[:, None]
+        pe = (pe / np.where(pn > 0, pn, 1.0)[:, None]).astype(np.float32)
+        q = q.astype(np.float32)
         k = min(self.k, self.pool.size)     # excluded self/parent entries get zero weight
         idx = np.full((len(e), k), -1)
         wts = np.zeros((len(e), k))
-        for start in range(0, len(e), 1024):              # chunks bound the (D, pool) block
-            rows = np.arange(start, min(start + 1024, len(e)))
+        todo = np.arange(len(e)) if self.rows is None else self.rows
+        for start in range(0, todo.size, 256):            # chunks bound the (rows, pool) block
+            rows = todo[start:start + 256]
             sims = q[rows] @ pe.T
             r_ = np.arange(rows.size)
             for who in (rows, np.where(par[rows] >= 0, par[rows], -1), extra[rows]):
                 at = np.where(who >= 0, self.pos[np.clip(who, 0, None)], -1)
                 hit = at >= 0
                 sims[r_[hit], at[hit]] = -np.inf
-            top = np.argpartition(-sims, k - 1, axis=1)[:, :k]
-            sw = np.take_along_axis(sims, top, 1)
+            top = np.argpartition(-sims, k - 1, axis=1)[:, :k].copy()
+            sw = np.take_along_axis(sims, top, 1).astype(float)
             idx[rows] = np.where(np.isfinite(sw), self.pool[top], -1)
             wts[rows] = np.where(ok[rows, None], np.clip(sw, 0.0, None), 0.0)
+        self._memo[key] = (idx, wts)
         return idx, wts
 
     def mix(self, full_theta, parents, also_exclude=None):
         if self.pool.size == 0:                          # no neighbors to draw from
             return np.full(full_theta.shape, np.nan)
         idx, wts = self.neighbors(parents, also_exclude)
-        th = full_theta[np.clip(idx, 0, None)]            # (D, k, K)
-        good = (idx >= 0) & ~np.isnan(th[:, :, 0]) & (wts > 0)
-        w = np.where(good, wts, 0.0)
-        tot = w.sum(1)
         out = np.full(full_theta.shape, np.nan)
-        m = tot > 0
-        out[m] = np.einsum("dk,dkt->dt", w[m], np.nan_to_num(th[m])) / tot[m, None]
+        for start in range(0, len(idx), 4096):             # bound the (rows, k, K) block
+            sl = slice(start, start + 4096)
+            th = full_theta[np.clip(idx[sl], 0, None)]
+            good = (idx[sl] >= 0) & ~np.isnan(th[:, :, 0]) & (wts[sl] > 0)
+            w = np.where(good, wts[sl], 0.0)
+            tot = w.sum(1)
+            m = tot > 0
+            blk = np.full((len(w), full_theta.shape[1]), np.nan)
+            blk[m] = np.einsum("dk,dkt->dt", w[m], np.nan_to_num(th[m])) / tot[m, None]
+            out[sl] = blk
         return out
 
 
@@ -304,9 +317,8 @@ def _placebo_contexts(theta, lengths, kept, parents, root, contexts, exclude_par
     only in which comment is each reply's parent. With non-overlapping contexts the true parent
     therefore moves into the placebo's thread mix and the stand-in parent leaves it. The
     semantic context is the exception: the true parent is barred from the placebo's semantic
-    neighbors as it is from the true tree's, so a semantically close parent cannot re-enter the
-    placebo through that route and the edge effect measures the parent beyond its semantic
-    neighborhood in both arms."""
+    neighbors, and the calibration pairs each placebo with a matched true arm that bars the
+    stand-in, so both arms draw semantic neighbors from the same pool."""
     true_par = np.asarray(parents, int)
     return [_context_mixes(theta, lengths, kept, sp, root, contexts,
                            exclude_parent=exclude_parent, semantic=semantic,
@@ -637,23 +649,31 @@ class ThreadSmoother:
 
     # -- the semantic context ----------------------------------------------------------------
 
-    def _semantic_for(self, corpus, n_docs, strict=True):
+    def _semantic_for(self, corpus, n_docs, strict=True, rows=None):
         """A :class:`_Semantic` over ``corpus``: one embedding per original document, from the
         tokens the corpus kept (zero for a document it dropped), cached by text."""
         if "semantic" not in self.contexts:
             return None
         kept = np.asarray(corpus.kept_indices, int)
         texts = [" ".join(t) for t in corpus.documents()]
-        new = [t for t in dict.fromkeys(texts) if t not in self._embed_cache]
+        # A document with no kept tokens is not embedded: its query is its parent's alone.
+        new = [t for t in dict.fromkeys(texts) if t and t not in self._embed_cache]
         if new:
             enc = self._embed.encode if hasattr(self._embed, "encode") else self._embed
             vecs = np.asarray(enc(new), float)
-            if vecs.ndim != 2 or vecs.shape[0] != len(new):
-                raise ValueError("embed must return one row per text: shape (n_texts, dim)")
+            if vecs.ndim != 2 or vecs.shape[0] != len(new) or vecs.shape[1] == 0:
+                raise ValueError("embed must return one row per text: shape (n_texts, dim) "
+                                 "with dim >= 1")
+            if not np.isfinite(vecs).all():
+                raise ValueError("embed returned NaN or infinite values")
+            if self._embed_cache and vecs.shape[1] != len(next(iter(self._embed_cache.values()))):
+                raise ValueError("embed returned a different dimension than before")
             self._embed_cache.update(zip(new, vecs))
+        if not self._embed_cache:
+            raise ValueError("no document has text to embed")
         dim = len(next(iter(self._embed_cache.values())))
         emb = np.zeros((n_docs, dim))
-        emb[kept] = np.array([self._embed_cache[t] for t in texts])
+        emb[kept] = np.array([self._embed_cache[t] if t else np.zeros(dim) for t in texts])
         pool = np.zeros(n_docs, bool)
         pool[kept[np.asarray(corpus.doc_lengths) >= self.semantic_min_tokens]] = True
         if pool.sum() < 3:
@@ -665,7 +685,7 @@ class ThreadSmoother:
             warnings.warn(msg + "; it is unavailable for this corpus", UserWarning,
                           stacklevel=3)
             pool[:] = False
-        return _Semantic(emb, pool, self.semantic_k)
+        return _Semantic(emb, pool, self.semantic_k, rows=rows)
 
     # -- one calibration -------------------------------------------------------------------
 
@@ -701,8 +721,9 @@ class ThreadSmoother:
             raise ValueError("base model's doc_topic / topic_word do not match its corpus")
         vidx = {w: j for j, w in enumerate(corpus.vocabulary)}
 
-        # Embeddings come from the masked corpus: held-out tokens are never embedded.
-        sem = self._semantic_for(corpus, len(docs))
+        # Embeddings come from the masked corpus: held-out tokens are never embedded. Only the
+        # masked leaves are ever scored, so only their neighbors are searched.
+        sem = self._semantic_for(corpus, len(docs), rows=sorted(held))
         _, n_doc, ctx = _context_mixes(theta, lengths, kept, parents, root, self.contexts,
                                        exclude_parent=self.thread_excludes_parent, semantic=sem)
         shuf_ctx = (_placebo_contexts(theta, lengths, kept, parents, root, self.contexts,
@@ -713,6 +734,15 @@ class ThreadSmoother:
                                        self.thread_excludes_parent, n_shuffle, seed,
                                        semantic=sem)
                   if "op" in self.contexts else [])
+        # With the semantic context, the edge contrast uses matched arms: for each shuffle,
+        # both the true and the placebo tree bar the true AND the stand-in parent from the
+        # semantic neighbors, so the two arms draw neighbors from the same pool.
+        shuf_true = []
+        if sem is not None and shuf_ctx:
+            for sp in _shuffled_trees(parents, n_shuffle, seed):
+                sm_ = _context_mixes(theta, lengths, kept, parents, root, ("semantic",),
+                                     semantic=sem, semantic_exclude=np.asarray(sp))[2]
+                shuf_true.append({**ctx, "semantic": sm_["semantic"]})
         row = np.full(len(docs), -1)
         row[kept] = np.arange(len(kept))
         # Held-out tokens get the corpus's own filtering: in the vocabulary and not a stopword
@@ -748,6 +778,7 @@ class ThreadSmoother:
         # Placebo keys are prefixed; each averages the predictive over its draws.
         sources = [("", c, [ctx]) for c in self.contexts]
         sources += [("_shuffled_", c, shuf_ctx) for c in self.contexts if shuf_ctx]
+        sources += [("_shuftrue_", c, shuf_true) for c in self.contexts if shuf_true]
         if op_ctx:   # the matched arms of the original-post contrast
             sources += [("_optrue_", c, [t for t, _ in op_ctx]) for c in self.contexts]
             sources += [("_opshuf_", c, [p for _, p in op_ctx]) for c in self.contexts]
@@ -770,12 +801,16 @@ class ThreadSmoother:
         pL = np.concatenate(pL)
         P = {c: np.concatenate(v) for c, v in P.items()}
         avail = {c: np.concatenate(v) for c, v in avail.items()}
-        # A placebo key whose availability differs across draws needs each draw's predictive
-        # (pooled fit only; the switch builds its own per-draw tables). Built only then.
+        # A placebo arm in which any context's availability differs across draws needs each
+        # draw's complete predictive, for every context of that arm, so each draw's
+        # predictions stay paired with its own denominator (pooled fit only; the switch builds
+        # its own per-draw tables). Built only then.
         P_draw, A_draw = {}, {}
+        varying = {pre for pre, c, _ in sources
+                   if pre and ((avail[pre + c] > 0) & (avail[pre + c] < 1)).any()}
         for pre, c, mixes in sources:
             key = pre + c
-            if not pre or self.switch or not ((avail[key] > 0) & (avail[key] < 1)).any():
+            if not pre or self.switch or pre not in varying:
                 continue
             P_draw[key] = np.array([np.concatenate(
                 [m[c][i] @ beta[:, ids] if not np.isnan(m[c][i, 0]) else np.zeros(ids.size)
@@ -799,7 +834,8 @@ class ThreadSmoother:
             kept_docs = corpus.documents()
             obs = [np.array([vidx[w] for w in kept_docs[row[i]]], int) for i, _ in leaves]
             out = self._calibrate_switch(leaves, obs, theta, beta, ctx, shuf_ctx, op_ctx, pL,
-                                         n_tok, tj, val_idx, test_idx, n_boot, seed)
+                                         n_tok, tj, val_idx, test_idx, n_boot, seed,
+                                         shuf_true=shuf_true)
             out["settings"], out["model"] = settings, model
             return out
 
@@ -897,24 +933,21 @@ class ThreadSmoother:
                                      if (~val_tok & (ter == t_)).any() else float("nan")
                                      for t_ in range(3)]}
 
+        def arm_ll(pre):
+            keys = tuple(pre + c for c in self.contexts)
+            tab_a, _, _ = tables(keys, everything)
+            a = refine_point(grid[int(np.argmax(tab_a[:, val_idx].sum(1)))], keys, everything)
+            return np.bincount(tj, token_ll(a, keys, everything), n_threads), a
+
         if "parent" in self.contexts:
-            keys_s = tuple("_shuffled_" + c for c in self.contexts)
-            tab_s, _, _ = tables(keys_s, everything)
-            g_s = int(np.argmax(tab_s[:, val_idx].sum(1)))
-            a_s = refine_point(grid[g_s], keys_s, everything)
-            ll_s = np.bincount(tj, token_ll(a_s, keys_s, everything), n_threads)
-            edge_t = ll_star - ll_s
+            ll_s, a_s = arm_ll("_shuffled_")
+            ll_ref = arm_ll("_shuftrue_")[0] if shuf_true else ll_star
+            edge_t = ll_ref - ll_s
             out["edge_effect"] = rate(edge_t, test_idx)
             out["draws_edge"] = edge_t[boot_test].sum(1) / tok_t[boot_test].sum(1)
             out["placebo_alpha"] = a_s
 
         if "op" in self.contexts and op_ctx:
-            def arm_ll(pre):
-                keys = tuple(pre + c for c in self.contexts)
-                tab_a, _, _ = tables(keys, everything)
-                a = refine_point(grid[int(np.argmax(tab_a[:, val_idx].sum(1)))], keys,
-                                 everything)
-                return np.bincount(tj, token_ll(a, keys, everything), n_threads), a
             ll_true_o, _ = arm_ll("_optrue_")
             ll_plac_o, a_o = arm_ll("_opshuf_")
             op_t = ll_true_o - ll_plac_o
@@ -968,7 +1001,7 @@ class ThreadSmoother:
         return np.where(np.isnan(li), 0.0, w)
 
     def _calibrate_switch(self, leaves, obs, theta, beta, ctx, shuf_ctx, op_ctx, pL, n_tok,
-                          tj, val_idx, test_idx, n_boot, seed):
+                          tj, val_idx, test_idx, n_boot, seed, shuf_true=()):
         """Fit the switch: a two-component mixture prior per reply, *inherit* (the pooled
         multi-context shrinkage, centered on the share-weighted context mix with concentration
         A) or *new* (centered on the corpus mean mix). The inherit probability of each reply
@@ -1116,7 +1149,7 @@ class ThreadSmoother:
         # true and placebo arms that share one thread pool.
         if shuf_ctx:
             ll_s, a_s = arm(shuf_ctx)
-            edge_t = ll_star - ll_s
+            edge_t = (arm(shuf_true)[0] if shuf_true else ll_star) - ll_s
             out["edge_effect"] = rate(edge_t, test_idx)
             out["draws_edge"] = edge_t[boot_test].sum(1) / tok_t[boot_test].sum(1)
             out["placebo_alpha"] = a_s
@@ -1296,6 +1329,7 @@ class ThreadSmoother:
         self.settings = {
             "contexts": self.contexts, "theta": self.theta_source, "seed": seed,
             "thread_excludes_parent": self.thread_excludes_parent, "switch": self.switch,
+            "semantic_k": self.semantic_k, "semantic_min_tokens": self.semantic_min_tokens,
             "n_refit": n_refit, "strength_grid_size": int(self.strength_grid.size),
             "share_steps": self.share_steps, **kw, **main["settings"]}
         self.calibration_model = main["model"]

@@ -719,3 +719,47 @@ def test_threadtm_passes_embed_through():
                         semantic_min_tokens=8).fit(docs, parents, iters=100, n_boot=10,
                                                    embed=_bow_embed)
     assert "semantic" in m.alpha and m.doc_topic_all.shape == (len(docs), K)
+
+
+def test_matched_edge_arms_share_a_semantic_pool():
+    # Reply 3's true parent is 1, its placebo parent 2; the two parents are identical. With
+    # both arms barring both parents, the semantic mixes must agree (Codex review).
+    emb = np.array([[1.0, 0.0], [1.0, 0.0], [1.0, 0.0], [1.0, 0.0]])
+    theta = np.array([[0.0, 1.0], [1.0, 0.0], [1.0, 0.0], [0.5, 0.5]])
+    sem = threads._Semantic(emb, np.array([True, True, True, False]), k=3)
+    true_arm = sem.mix(theta, [-1, 0, 0, 1], also_exclude=[-1, -1, -1, 2])
+    placebo = sem.mix(theta, [-1, 0, 0, 2], also_exclude=[-1, -1, -1, 1])
+    assert np.allclose(true_arm[3], placebo[3])
+
+
+def test_empty_documents_are_not_embedded():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=60, seed=31)
+    docs[5] = []                                          # an initially empty reply
+    seen = []
+
+    def rec(texts):
+        seen.extend(texts)
+        return _bow_embed(texts)
+    threads.ThreadSmoother(contexts=("parent", "semantic"), semantic_min_tokens=8).fit(
+        docs, parents, base=_lda, seed=3, n_boot=10, final=False, embed=rec)
+    assert "" not in seen
+
+
+@pytest.mark.parametrize("bad", ["nan", "zero_dim"])
+def test_invalid_embeddings_are_rejected(bad):
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=40, seed=32)
+
+    def enc(texts):
+        return (np.full((len(texts), 4), np.nan) if bad == "nan"
+                else np.zeros((len(texts), 0)))
+    with pytest.raises(ValueError, match="embed"):
+        threads.ThreadSmoother(contexts=("parent", "semantic"), semantic_min_tokens=8).fit(
+            docs, parents, base=_lda, seed=3, n_boot=10, final=False, embed=enc)
+
+
+def test_semantic_settings_are_recorded():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=60, seed=33)
+    sm = threads.ThreadSmoother(contexts=("parent", "semantic"), semantic_k=7,
+                                semantic_min_tokens=8).fit(
+        docs, parents, base=_lda, seed=3, n_boot=10, final=False, embed=_bow_embed)
+    assert sm.summary()["settings"]["semantic_k"] == 7
