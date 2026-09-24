@@ -359,7 +359,9 @@ def test_sequential_log_ml_is_exact_for_two_tokens():
 def test_switch_recovers_the_edge_effect_at_half_inheritance():
     # The pooled pseudo-count fit borrows nothing here (see module docstring); the switch lets
     # each reply's own words decide, so the inheriting half gains and the rest are left alone.
-    docs, parents, _, _ = _simulate(inherit=0.5, n_threads=300, seed=0)
+    # 600 threads, the size #897 set: the placebo averages its draws inside the log, which is
+    # conservative, and at 300 threads the interval grazes zero.
+    docs, parents, _, _ = _simulate(inherit=0.5, n_threads=600, seed=0)
     sm = threads.ThreadSmoother(switch=True).fit(docs, parents, base=_lda, seed=3, n_boot=100)
     assert sm.edge_effect["lo"] > 0, sm.edge_effect
     assert sm.completion["lo"] > 0, sm.completion
@@ -437,18 +439,34 @@ def test_op_context_is_the_root_for_deep_replies_and_leaves_the_thread_mix():
     assert np.allclose(ctx["thread"][2], [0.2, 0.8])                  # not 0 (root) or 1
 
 
-def test_op_placebo_swaps_in_a_same_thread_comment_and_keeps_the_root_out():
-    # root 0 -> 1 -> 2, and 0 -> 3, 0 -> 4. Reply 2's stand-in OP must be 3 or 4.
+def test_op_placebo_arms_share_one_thread_pool():
+    # root 0 -> 1 -> 2, and 0 -> 3, 0 -> 4. Reply 2's donor must be 3 or 4; both arms leave the
+    # root and the donor out of the thread mix, and differ only in the original post.
     theta = np.array([[1.0, 0.0], [0.0, 1.0], [0.5, 0.5], [0.2, 0.8], [0.6, 0.4]])
     parents = [-1, 0, 1, 0, 0]
     _, root, _ = threads.thread_structure(parents)
-    for draw in threads._op_placebo_contexts(theta, np.full(5, 10.0), np.arange(5), parents,
-                                             root, ("parent", "op", "thread"), True, 4, 5):
-        stand_in = 3 if np.allclose(draw["op"][2], theta[3]) else 4
-        assert np.allclose(draw["op"][2], theta[stand_in])
-        other = 7 - stand_in                                    # the remaining one of 3, 4
-        assert np.allclose(draw["thread"][2], theta[other])     # neither root nor stand-in
-        assert np.allclose(draw["parent"][2], theta[1])                    # parent unchanged
+    for true, placebo in threads._op_placebo_contexts(
+            theta, np.full(5, 10.0), np.arange(5), parents, root,
+            ("parent", "op", "thread"), True, 4, 5):
+        donor = 3 if np.allclose(placebo["op"][2], theta[3]) else 4
+        other = 7 - donor
+        assert np.allclose(placebo["op"][2], theta[donor])
+        assert np.allclose(true["op"][2], theta[0])
+        assert np.allclose(true["thread"][2], theta[other])
+        assert np.allclose(placebo["thread"][2], theta[other])
+        assert np.allclose(true["parent"][2], placebo["parent"][2])
+
+
+def test_op_placebo_keeps_a_dropped_root_missing():
+    # The corpus dropped the root (row 0 not kept): neither arm may have an original post.
+    theta = np.array([[0.0, 1.0], [0.5, 0.5], [0.2, 0.8], [0.6, 0.4]])   # rows 1..4
+    parents = [-1, 0, 1, 0, 0]
+    _, root, _ = threads.thread_structure(parents)
+    kept = np.array([1, 2, 3, 4])
+    for true, placebo in threads._op_placebo_contexts(
+            theta, np.full(4, 10.0), kept, parents, root, ("parent", "op", "thread"),
+            True, 3, 5):
+        assert np.isnan(true["op"][2, 0]) and np.isnan(placebo["op"][2, 0])
 
 
 @pytest.mark.parametrize("switch", [False, True])
@@ -486,3 +504,51 @@ def test_op_context_finds_no_op_effect_when_replies_ignore_the_original_post():
     sm = threads.ThreadSmoother(contexts=("parent", "op", "thread")).fit(
         docs, parents, base=_lda, seed=3, n_boot=100, final=False)
     assert sm.op_effect["lo"] <= 0 <= sm.op_effect["hi"], sm.op_effect
+
+
+def _switch_harness(contexts, share, log_a, theta_rows, docs_tokens, parents, kept):
+    """A ThreadSmoother with hand-set switch parameters and a fake two-topic model."""
+    from types import SimpleNamespace
+    sm = threads.ThreadSmoother(contexts=contexts, switch=True)
+    sm.alpha = {c: 1.0 for c in contexts}
+    sm._switch_x = np.array([log_a, 0.0, 0.0])            # A = exp(log_a), a_new = 1, rho = .5
+    sm._switch_share = np.asarray(share, float)
+    model = SimpleNamespace(doc_topic=np.asarray(theta_rows, float),
+                            topic_word=np.array([[0.9, 0.1], [0.1, 0.9]]))
+    corpus = SimpleNamespace(vocabulary=["a", "b"], kept_indices=list(kept),
+                             doc_lengths=np.array([len(docs_tokens[k]) for k in kept]),
+                             documents=lambda: [docs_tokens[k] for k in kept])
+    return sm, model, corpus
+
+
+def test_switch_drops_a_missing_contexts_pseudocount():
+    # Parent share 0.01, OP share 0.99 of A = 100. A top-level reply has no OP, so it must
+    # borrow with pseudo-count 1 (the parent's), not the full 100.
+    docs = [["a"] * 20, ["b"]]
+    sm, model, corpus = _switch_harness(("parent", "op"), [0.01, 0.99], np.log(100.0),
+                                        [[1.0, 0.0], [0.0, 1.0]], docs, [-1, 0], [0, 1])
+    out = sm.transform(model, corpus, [-1, 0])
+    w = sm.inherit_weights[1]
+    expect = w * (1 * np.array([0.0, 1.0]) + 1.0 * np.array([1.0, 0.0])) / 2 \
+        + (1 - w) * np.array([0.0, 1.0])
+    assert np.allclose(out[1], expect)
+
+
+def test_switch_gives_an_empty_document_its_pure_context_mix():
+    # Reply 1 is empty but its row is kept (no pruning); root 2 is empty and has no context.
+    docs = [["a"] * 20, [], []]
+    sm, model, corpus = _switch_harness(("parent",), [1.0], np.log(5.0),
+                                        [[0.9, 0.1], [0.5, 0.5], [0.5, 0.5]], docs,
+                                        [-1, 0, -1], [0, 1, 2])
+    out = sm.transform(model, corpus, [-1, 0, -1])
+    assert np.allclose(out[1], [0.9, 0.1])
+    assert np.isnan(out[2]).all()
+
+
+def test_switch_bootstrap_intervals_are_not_degenerate_with_one_context():
+    # One context gives one share candidate; the intervals must still reflect re-optimizing
+    # the continuous parameters on each bootstrap sample.
+    docs, parents, _, _ = _simulate(inherit=0.5, n_threads=150, seed=19)
+    sm = threads.ThreadSmoother(contexts=("parent",), switch=True).fit(
+        docs, parents, base=_lda, seed=3, n_boot=50, final=False)
+    assert sm.rho_ci[0] < sm.rho_ci[1]

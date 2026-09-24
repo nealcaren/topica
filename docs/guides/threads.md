@@ -104,12 +104,21 @@ $$
                             {n_d + a_p + a_t} + (1 - w_d)\,\theta_d .
 $$
 
-The component probabilities use the Dirichlet-multinomial marginal likelihood of the reply's
-tokens with the topics held fixed, computed token by token, so the reply's own fitted
-$\theta_d$ never scores the words it was fit to. (A likelihood ratio built from $\theta_d$
-would always favor "new".) The pseudo-counts, the innovate concentration and $\rho$ are chosen
-by held-out log likelihood on validation threads, and `completion`, `edge_effect` and
-`op_effect` are reported on test threads, exactly as in the pooled fit. `alpha` and
+The component probabilities use an approximation to the Dirichlet-multinomial marginal
+likelihood of the reply's tokens with the topics held fixed: a sequential Polya urn that
+predicts each token from the ones before it, carrying soft topic counts. It is exact for two
+tokens; beyond that it is an approximation and depends on token order (we use the reply's own
+order, so results are reproducible). Because the reply's own fitted $\theta_d$ never enters,
+it cannot vouch for the words it was fit to. (A likelihood ratio built from $\theta_d$ would
+always favor "new".) Read `inherit_weights` as a ranking of replies and its mean as an
+approximate inherit rate, not as calibrated posterior probabilities. The pseudo-counts, the
+innovate concentration and $\rho$ are chosen by held-out log likelihood on validation threads,
+and `completion`, `edge_effect` and `op_effect` are reported on test threads, as in the pooled
+fit. Bootstrap draws re-choose the parameters on resampled validation threads; the held-out
+gains are evaluated at the point estimate and resampled over test threads, so their intervals
+are conditional on the calibration (use `n_refit` to widen them for masking and base-fit
+variation). A pseudo-count at the top of its range (1000) means inheriting replies take their
+context nearly wholesale. `alpha` and
 `parent_share` describe the inherit component: among replies that inherit, how much comes from
 the parent. The mean of `inherit_weights` over replies estimates the share that inherit at all.
 
@@ -133,10 +142,13 @@ $$
 $$
 
 The thread mix then excludes the parent and the root. A top-level reply's parent *is* the root,
-so it borrows from the parent only. `op_effect` is the held-out gain over a placebo in which a
-random other comment of the same thread takes the original post's slot (the root stays out of
-every context), so it asks whether the original post predicts replies better than any
-same-thread comment would. It works with `switch=True` as well.
+so it borrows from its parent and the rest of the thread, with no separate original-post term;
+its $a_o$ is simply dropped, not passed to the other contexts. `op_effect` compares two
+matched fits: in both, the root and one random other comment of the same thread are left out
+of the thread mix; one uses the root as the original post and the other uses that comment. It
+asks whether the original post predicts replies better than a same-thread comment in the same
+slot. A reply whose root the vocabulary emptied has no original post in either arm. It works
+with `switch=True` as well.
 
 Read a positive `op_effect` with care. When the original post itself carries the thread's
 topic, "replies follow the thread" and "replies answer the original post" produce the same
