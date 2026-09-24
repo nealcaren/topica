@@ -368,10 +368,10 @@ def _call_base(base, corpus, seed):
     return base(corpus, seed=seed) if takes_seed else base(corpus)
 
 
-def _gate():
+def _gate(name="ThreadSmoother"):
     if not experimental_enabled():
         raise RuntimeError(
-            "ThreadSmoother is experimental: it is an original construction validated by "
+            f"{name} is experimental: it is an original construction validated by "
             "planted recovery, with no published reference yet. Enable experimental models "
             "with `topica.enable_experimental()` or set TOPICA_EXPERIMENTAL=1. Experimental "
             "features may change or be removed without a deprecation cycle.")
@@ -1288,7 +1288,7 @@ class ThreadTM:
                  thread_excludes_parent: bool = True,
                  strength_grid: Sequence[float] | None = None, share_steps: int = 97,
                  switch: bool = False, base_kwargs: dict | None = None) -> None:
-        _gate()
+        _gate("ThreadTM")
         if int(num_topics) < 1:
             raise ValueError("num_topics must be >= 1")
         if not callable(base) and base not in _BASES:
