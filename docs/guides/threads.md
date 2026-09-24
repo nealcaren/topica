@@ -77,9 +77,11 @@ value, where the data cannot tell the smaller pseudo-count from zero.
 A single calibration holds the base fit and the held-out mask fixed. `fit(..., n_refit=R)`
 repeats the calibration `R` more times with new masks and base seeds and pools the bootstrap
 draws, so intervals also reflect masking and base-fit variation. Use it for any number you
-report; `replicates` lists each calibration's point estimates, and the reported point
-estimates are then the median over calibrations, so an estimate and its interval describe the
-same pooled distribution. `fit` warns when the calibration rests on fewer than 200 evaluation
+report; `replicates` lists each calibration's point estimates. The held-out effects
+(`completion`, `edge_effect`, `op_effect`) are then reported as the median over calibrations,
+so an effect and its interval describe the same pooled distribution. The parameters (`alpha`,
+`parent_share`, `rho`) stay the first calibration's, because those are the values the smoother
+applies; their intervals pool every calibration. `fit` warns when the calibration rests on fewer than 200 evaluation
 leaves or 2,000 held-out test tokens; `summary()["settings"]` has the counts.
 
 `draws` is a dict of NumPy arrays (`alpha`, `parent_share`, `completion`, `edge_effect`, and
@@ -107,13 +109,14 @@ many replies inherit. `switch=True` lets each reply's own words decide whether i
 ```python
 model = topica.ThreadTM(20, seed=13, switch=True).fit(docs, parents, iters=1000)
 model.rho               # prior probability that a reply inherits, with rho_ci
-model.inherit_weights   # (D,) posterior inherit probability per document
+model.inherit_weights   # (D,) approximate inherit probability per reply
 ```
 
 Each reply's topic mix gets a two-component mixture prior. The *inherit* component is the
 pooled shrinkage above: a Dirichlet centered on the context mix, weighted by the pseudo-counts.
 The *new* component is centered on the corpus mean mix. The reply's inherit probability $w_d$
-is the posterior probability of the inherit component given its observed tokens, and
+is the (approximate) posterior probability of the inherit component given its observed
+tokens, and
 
 $$
 \tilde\theta_d = w_d\,\frac{n_d\theta_d + a_p\theta_{\mathrm{par}(d)} + a_t\theta_{\mathrm{thr}(d)}}
@@ -142,7 +145,7 @@ the parent. The mean of `inherit_weights` over replies estimates the share that 
 
 | Quantity | What it answers |
 |---|---|
-| `rho`, `rho_ci` | What share of replies inherit their context at all? Report this, with its interval. |
+| `rho`, `rho_ci` | The model's estimate of the share of replies that inherit their context: the prior weight of the inherit component, chosen by held-out fit. Report this, with its interval, as a model-based estimate rather than a count of replies. |
 | `alpha`, `parent_share` | Among replies that inherit, how much of the borrowing comes from the parent (versus the thread or the original post)? A parent share of 0.98 with `rho` of 0.55 means about half the replies inherit, and those that do take up their parent. |
 | `inherit_weights` | Which replies inherit? A ranking, NaN for roots and empty replies. A short reply carries little evidence, so its weight stays near `rho`; only longer replies are classified with confidence. |
 | `inherit_rate` | The mean of `inherit_weights` over replies. It leans toward `rho` in communities of short comments and has no interval. |

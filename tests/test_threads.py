@@ -569,3 +569,34 @@ def test_thin_calibration_warns():
     docs, parents, _, _ = _simulate(inherit=0.9, n_threads=20, seed=21)
     with pytest.warns(UserWarning, match="evaluation leaves"):
         threads.ThreadSmoother().fit(docs, parents, base=_lda, seed=3, n_boot=20, final=False)
+
+
+def test_marginal_likelihood_table_covers_tiny_concentrations():
+    # A small A times a lattice-edge share can fall far below the search floor; the table
+    # must still be exact there rather than clamping (two tokens: the urn is exact).
+    beta = np.eye(2)
+    a = 0.01 / (1 + np.exp(6))
+    lml = threads._sequential_log_ml([np.array([0, 1])], np.array([[0.5, 0.5]]),
+                                     threads.CONC_GRID, beta)
+    exact = np.log(0.5) + np.log(a * 0.5 / (a + 1))
+    assert np.isclose(threads._interp_cols(lml, a, threads.CONC_GRID)[0], exact, atol=1e-3)
+
+
+@pytest.mark.parametrize("stop", ["english", np.array(["w1", "w2"]), ("w1",)])
+def test_stopwords_in_any_supported_form(stop):
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=60, seed=23)
+    docs = [d + ["the", "and"] if i % 3 else d for i, d in enumerate(docs)]
+    sm = threads.ThreadSmoother(switch=True).fit(
+        docs, parents, base=_lda, seed=3, n_boot=20, final=False,
+        corpus_kwargs={"stopwords": stop})
+    sw = sm.settings["corpus_kwargs"]["stopwords"]
+    assert isinstance(sw, list)
+    if isinstance(stop, str):          # resolved to the word list, not shattered to "e","n",..
+        assert "the" in sw and len(sw) > 100
+
+
+def test_zero_borrowing_is_not_at_the_strength_bound():
+    docs, parents, _, _ = _simulate(inherit=0.0, seed=1)
+    sm = threads.ThreadSmoother().fit(docs, parents, base=_lda, seed=3, n_boot=50,
+                                      final=False)
+    assert sum(sm.alpha.values()) == 0 and sm.strength_at_bound is False

@@ -34,8 +34,8 @@ borrowing costs the second group about as much as it helps the first, and the fi
 zero even though some replies do inherit. A zero pseudo-count therefore means "borrowing does
 not help on average", not "no reply follows its parent". ``ThreadSmoother(switch=True)`` handles
 that case with a per-reply inherit-or-innovate switch: a two-component mixture prior, the
-shrinkage above or an innovate component centered on the corpus mean mix, whose posterior
-weights come from each reply's own tokens.
+shrinkage above or an innovate component centered on the corpus mean mix, whose weights come
+from an approximate marginal likelihood of each reply's own tokens.
 
 ``contexts=("parent", "op", "thread")`` adds the original post (the thread root) as a third,
 non-overlapping context with its own pseudo-count. :attr:`ThreadSmoother.op_effect` contrasts
@@ -281,7 +281,11 @@ def _shuffled_trees(parents, n_shuffle, seed):
             for s in range(n_shuffle)]
 
 
-CONC_GRID = np.geomspace(0.01, 1000.0, 21)
+# Marginal-likelihood table: down to 1e-8 so a document's concentration A * (share of its
+# available contexts) stays on the table even for a small A and a lattice-edge share; the
+# parameters themselves are searched from CONC_MIN up.
+CONC_GRID = np.geomspace(1e-8, 1000.0, 45)
+CONC_MIN = 0.01
 
 
 def _sequential_log_ml(ids, prior_mean, conc_grid, beta):
@@ -461,10 +465,11 @@ class ThreadSmoother:
         threads, nats per token: ``{"estimate", "lo", "hi"}``.
     uncertainty : ``"threads"`` (thread bootstrap on one calibration) or ``"refit"`` (pooled
         over ``n_refit`` further calibrations with new masks and base seeds).
-    replicates : per-calibration point estimates when ``n_refit > 0``. The reported point
-        estimates are then the median over calibrations, so they describe the same pooled
-        distribution as the intervals; smoothing (``theta_tilde``) uses those pseudo-counts in
-        the pooled fit and calibration 1's parameters under the switch.
+    replicates : per-calibration point estimates when ``n_refit > 0``. The held-out effects
+        (``completion``, ``edge_effect``, ``op_effect``) are then reported as the median over
+        calibrations, so each describes the same pooled distribution as its interval. The
+        parameters (``alpha``, ``parent_share``, ``rho``) stay calibration 1's, the set
+        :meth:`transform` applies, with pooled intervals; ``replicates`` shows how they vary.
     draws : dict of the pooled bootstrap draws as NumPy arrays: ``alpha`` (draws x contexts),
         ``parent_share``, ``completion``, ``edge_effect``, and ``rho`` and ``op_effect`` when
         they apply. Difference two fits' draws for an interval on a contrast, e.g.
@@ -585,7 +590,7 @@ class ThreadSmoother:
         row[kept] = np.arange(len(kept))
         # Held-out tokens get the corpus's own filtering: in the vocabulary and not a stopword
         # (a fixed vocabulary can list a stopword the corpus then removed).
-        stop = set(corpus_kwargs.get("stopwords") or [])
+        stop = set(corpus_kwargs.get("stopwords") or ())
 
         # Common scored support: the leaf, every requested context and every placebo context
         # exist; at least one in-vocabulary held token. The original post is the exception: a
@@ -619,25 +624,37 @@ class ThreadSmoother:
         if op_ctx:   # the matched arms of the original-post contrast
             sources += [("_optrue_", c, [t for t, _ in op_ctx]) for c in self.contexts]
             sources += [("_opshuf_", c, [p for _, p in op_ctx]) for c in self.contexts]
+        # Per draw as well: when a context's availability differs across draws (a donor can
+        # empty the thread mix), the placebo predictive must be the average of each draw's
+        # normalized predictive, not a ratio of averages.
         P = {pre + c: [] for pre, c, _ in sources}
         avail = {key: [] for key in P}
+        P_draw = {pre + c: [[] for _ in mixes] for pre, c, mixes in sources if pre}
+        A_draw = {key: [[] for _ in v] for key, v in P_draw.items()}
         for i, ids in leaves:
             r = row[i]
             pL.append(theta[r] @ beta[:, ids])
             for pre, c, mixes in sources:
-                # Draws can differ in availability (a donor can empty the thread mix): average
-                # the predictive over the draws that have the context, and weight the context
-                # by the share of draws that do.
                 have = [m[c][i] for m in mixes if not np.isnan(m[c][i, 0])]
                 P[pre + c].append(np.mean([h @ beta[:, ids] for h in have], 0) if have
                                   else np.zeros(ids.size))
                 avail[pre + c].append(np.full(ids.size, len(have) / len(mixes)))
+                if pre:
+                    for d_, m in enumerate(mixes):
+                        ok = not np.isnan(m[c][i, 0])
+                        P_draw[pre + c][d_].append(m[c][i] @ beta[:, ids] if ok
+                                                   else np.zeros(ids.size))
+                        A_draw[pre + c][d_].append(np.full(ids.size, float(ok)))
             n_tok.append(np.full(ids.size, n_doc[i]))
             tj.append(np.full(ids.size, tpos[root[i]]))
             grp.extend([None if groups is None else groups[i]] * ids.size)
         pL = np.concatenate(pL)
         P = {c: np.concatenate(v) for c, v in P.items()}
         avail = {c: np.concatenate(v) for c, v in avail.items()}
+        P_draw = {c: np.array([np.concatenate(d_) for d_ in v]) for c, v in P_draw.items()}
+        A_draw = {c: np.array([np.concatenate(d_) for d_ in v]) for c, v in A_draw.items()}
+        # A key set whose availability differs across draws needs the per-draw path.
+        fractional = {c: bool(((avail[c] > 0) & (avail[c] < 1)).any()) for c in P_draw}
         n_tok = np.concatenate(n_tok)
         tj = np.concatenate(tj)
         grp = np.array(grp, dtype=object)
@@ -662,12 +679,26 @@ class ThreadSmoother:
         def token_ll(a, keys, mask):
             sl = (lambda x: x) if mask.all() else (lambda x: x[mask])
             nn = sl(n_tok)
-            num, denom = nn * sl(pL), nn.copy()
-            for a_c, c in zip(a, keys):
-                if a_c > 0:          # a missing context (avail 0) contributes nothing
-                    w = a_c * sl(avail[c])
-                    num, denom = num + w * sl(P[c]), denom + w
-            return np.log(num / denom)
+            if not any(fractional.get(c, False) for c in keys):
+                # Availability is the same in every draw, so the denominators agree and the
+                # averaged predictive equals the average of the per-draw predictives.
+                num, denom = nn * sl(pL), nn.copy()
+                for a_c, c in zip(a, keys):
+                    if a_c > 0:          # a missing context (avail 0) contributes nothing
+                        w = a_c * sl(avail[c])
+                        num, denom = num + w * sl(P[c]), denom + w
+                return np.log(num / denom)
+            n_draws = len(next(P_draw[c] for c in keys if c in P_draw))
+            mix = 0.0
+            for d_ in range(n_draws):
+                num, denom = nn * sl(pL), nn.copy()
+                for a_c, c in zip(a, keys):
+                    if a_c > 0:
+                        av = sl(A_draw[c][d_]) if c in A_draw else sl(avail[c])
+                        pc = sl(P_draw[c][d_]) if c in P_draw else sl(P[c])
+                        num, denom = num + a_c * av * pc, denom + a_c * av
+                mix = mix + num / denom / n_draws
+            return np.log(mix)
 
         def tables(keys, mask):
             """Per-thread log-likelihood sums for every grid point, on tokens in ``mask``."""
@@ -792,7 +823,7 @@ class ThreadSmoother:
         concentration ``A``, the innovate concentration ``a_new`` (both kept on the
         marginal-likelihood grid, where the objective is defined) and the prior inherit weight
         ``rho`` (kept within about (3e-4, 1 - 3e-4), beyond which the objective is flat)."""
-        lo, hi = np.log(CONC_GRID[0]), np.log(CONC_GRID[-1])
+        lo, hi = np.log(CONC_MIN), np.log(CONC_GRID[-1])
         return (float(np.exp(np.clip(x[0], lo, hi))), float(np.exp(np.clip(x[1], lo, hi))),
                 float(1.0 / (1.0 + np.exp(-np.clip(x[2], -8.0, 8.0)))))
 
@@ -868,7 +899,7 @@ class ThreadSmoother:
             mix = np.mean([token_mix(x, *t, m) for t in tabs_j], 0)
             return np.bincount(tj[m], np.log(mix), n_threads)
 
-        lo = np.array([np.log(CONC_GRID[0])] * 2 + [-8.0])
+        lo = np.array([np.log(CONC_MIN)] * 2 + [-8.0])
         hi = np.array([np.log(CONC_GRID[-1])] * 2 + [8.0])
         starts = [np.array([la, 0.0, 0.0]) for la in (0.0, np.log(10.0), np.log(100.0))]
 
@@ -898,20 +929,25 @@ class ThreadSmoother:
         brng = np.random.default_rng(seed + 1)
         boot_val = val_idx[brng.integers(0, len(val_idx), (n_boot, len(val_idx)))]
         boot_test = test_idx[brng.integers(0, len(test_idx), (n_boot, len(test_idx)))]
-        boot_j = np.array([int(np.argmax(tab[:, b].sum(1))) for b in boot_val])
-
-        # Bootstrap re-selection: each draw re-chooses the share on its resampled validation
-        # threads and re-optimizes (A, a_new, rho) there, warm-started at that share's
-        # optimum. (The held-out gains below are evaluated at the point estimate and
-        # resampled over test threads, as in the pooled fit.)
-        boot_x = []
-        for b, j in zip(boot_val, boot_j):
+        # Bootstrap re-selection: on each resampled validation set, the three shares that
+        # profile best are each re-optimized in (A, a_new, rho), warm-started at their
+        # full-sample optima, and the best re-optimized share wins. (The held-out gains below
+        # are evaluated at the point estimate and resampled over test threads, as in the
+        # pooled fit.)
+        boot_x, boot_j = [], []
+        for b in boot_val:
             wb = np.bincount(b, None, n_threads)
-            tabs_j = [true_tabs[j]]
+            best = None
+            for j in np.argsort(tab[:, b].sum(1))[-3:]:
+                tabs_j = [true_tabs[j]]
 
-            def f(x, wb=wb, tabs_j=tabs_j):
-                return thread_ll(x, tabs_j, on_val) @ wb / (tok_t @ wb)
-            boot_x.append(_coord_search(f, xs[j], lo, hi, step=0.25, min_step=0.05)[0])
+                def f(x, wb=wb, tabs_j=tabs_j):
+                    return thread_ll(x, tabs_j, on_val) @ wb / (tok_t @ wb)
+                x, v = _coord_search(f, xs[j], lo, hi, step=0.25, min_step=0.05)
+                if best is None or v > best[2]:
+                    best = (int(j), x, v)
+            boot_j.append(best[0])
+            boot_x.append(best[1])
 
         def rate(num, idx):
             return num[idx].sum() / tok_t[idx].sum()
@@ -1010,6 +1046,14 @@ class ThreadSmoother:
         if self.switch and groups is not None:
             raise ValueError("groups= is not supported with switch=True yet")
         corpus_kwargs = dict(corpus_kwargs or {})
+        sw = corpus_kwargs.get("stopwords")
+        if sw is not None:
+            # One materialized list for every corpus and for held-out filtering: a language
+            # name ("english") resolves to its word list, any other iterable to a list.
+            if isinstance(sw, str):
+                from .stopwords import stopwords as _resolve_stopwords
+                sw = _resolve_stopwords(sw)
+            corpus_kwargs["stopwords"] = [str(w) for w in sw]
         kw = dict(heldout_frac=heldout_frac, val_frac=val_frac, min_eval_tokens=min_eval_tokens,
                   n_shuffle=n_shuffle, n_boot=n_boot, corpus_kwargs=corpus_kwargs,
                   refine=refine)
@@ -1025,14 +1069,17 @@ class ThreadSmoother:
             return float(np.percentile(x, lo)), float(np.percentile(x, hi))
 
         def point(key):
-            """The point estimate: calibration 1's, or with ``n_refit`` the median over every
-            calibration, so it describes the same pooled distribution as the interval (one
-            calibration's estimate can sit at the edge of the pooled draws)."""
+            """A held-out effect's point estimate: calibration 1's, or with ``n_refit`` the
+            median over calibrations, so it describes the same pooled distribution as its
+            interval (one calibration's estimate can sit at the edge of the pooled draws).
+            The model's parameters are not medianed: they stay calibration 1's, the set
+            :meth:`transform` applies, so ``alpha``, ``parent_share`` and ``rho`` describe
+            the fitted smoother."""
             vals = np.array([r_[key] for r_ in runs], float)
-            return np.nanmedian(vals, axis=0) if n_refit else vals[0]
+            return float(np.nanmedian(vals)) if n_refit else float(vals[0])
 
         a_draws = np.vstack([r_["draws_alpha"] for r_ in runs])
-        self.alpha = {c: float(a) for c, a in zip(self.contexts, point("alpha"))}
+        self.alpha = {c: float(a) for c, a in zip(self.contexts, main["alpha"])}
         self.alpha_ci = {c: pct(a_draws[:, j]) for j, c in enumerate(self.contexts)}
         self.draws = {"alpha": a_draws,
                       "completion": np.concatenate([r_["draws_completion"] for r_ in runs])}
@@ -1040,7 +1087,7 @@ class ThreadSmoother:
         self.rho = self.rho_ci = self.inherit_weights = self.inherit_rate = None
         if self.switch:
             self.draws["rho"] = np.concatenate([r_["draws_rho"] for r_ in runs])
-            self.rho = float(point("rho"))
+            self.rho = float(main["rho"])
             self.rho_ci = pct(self.draws["rho"])
             self.new_concentration = float(main["new_concentration"])
             self._switch_x = main["switch_x"]
@@ -1048,9 +1095,7 @@ class ThreadSmoother:
 
         # Under the switch the pseudo-counts are those of the inherit component, so the parent
         # share keeps its meaning: among replies that inherit, how much comes from the parent.
-        share = self._share(np.array(list(self.alpha.values())))
-        if n_refit and share is not None:
-            share = float(np.nanmedian([self._share(r_["alpha"]) for r_ in runs]))
+        share = self._share(main["alpha"])
         no_borrow = (np.mean(self.draws["rho"] < 0.01) if self.switch else None)
         if share is None:
             self.parent_share = self.parent_share_ci = self.parent_share_at_bound = None
@@ -1125,9 +1170,13 @@ class ThreadSmoother:
         data, and a total pseudo-count at the top of its range."""
         import warnings
         st = main["settings"]
-        self.strength_at_bound = bool(
-            (self._unpack(main["switch_x"])[0] >= CONC_GRID[-1] * 0.999) if self.switch
-            else sum(self.alpha.values()) >= self.strength_grid[-1] * 0.999)
+        # The optimizer's own ceiling: the likelihood grid under the switch; the refinement cap
+        # (or, without refinement, the largest grid strength) in the pooled fit. Zero
+        # borrowing is never "at the bound".
+        total = sum(self.alpha.values())
+        cap = (CONC_GRID[-1] if self.switch
+               else MAX_PSEUDOCOUNT if self.settings["refine"] else self.strength_grid[-1])
+        self.strength_at_bound = bool(total > 0 and total >= cap * 0.999)
         if st["n_eval_leaves"] < 200 or st["n_test_tokens"] < 2000:
             warnings.warn(
                 f"ThreadSmoother calibrated on {st['n_eval_leaves']} evaluation leaves and "
