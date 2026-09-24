@@ -1,5 +1,5 @@
 """STM/CTM posterior_doc_topic — the hedged E[softmax(eta)] readout, symmetric with
-ThreadTM.posterior_doc_topic (issue #840)."""
+TreeFieldTM.posterior_doc_topic (issue #840)."""
 import numpy as np
 import pytest
 

@@ -74,7 +74,7 @@ One gotcha when you compare them side by side: `inverted_rbo` defaults to
 default to `topn=25`. On a small vocabulary the wider window forces overlap and
 reads as a misleadingly low diversity, so set `topn` explicitly when comparing.
 
-A second gotcha bites shrinkage models (STM, CTM, ThreadTM) specifically. Ranking
+A second gotcha bites shrinkage models (STM, CTM, TreeFieldTM) specifically. Ranking
 each topic's top words by raw probability floats the corpus's shared high-frequency
 words into every topic's list, so `topic_diversity` and `exclusivity` penalize the
 model for a measurement artifact rather than a topic-quality defect. Pass

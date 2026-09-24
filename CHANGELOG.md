@@ -8,6 +8,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`ThreadTM` is now a threaded topic model built on a standard base** (#895, experimental).
+  `topica.ThreadTM(K, base="lda"|"stm"|"ctm")` fits the base and smooths each document's topic
+  mix toward its parent's and the rest of its thread's (non-overlapping contexts) with Dirichlet
+  pseudo-counts, so short replies borrow more. The pseudo-counts are chosen by held-out log
+  likelihood on validation threads and reported on test threads, with thread-bootstrap
+  intervals (optionally pooled over `n_refit` recalibrations with new masks and base seeds),
+  the parent share `a_p / (a_p + a_t)` on a logit-spaced grid that keeps it inside (0, 1), and
+  a placebo-netted edge effect against parents permuted within (thread, depth), which preserves
+  child counts. The engine is `topica.threads.ThreadSmoother`, usable over any fitted model;
+  helpers `strip_quotes`, `strip_copied_runs`, `shuffle_parents`, `thread_structure`.
+  Validated by planted recovery.
 - **`topica.evaluate.topic_groups(runs)`: a TopicCheck-style groups-by-runs table** (#803).
   It groups the topics of N runs at once (average-linkage clustering with TopicCheck's
   up-to-one constraint, so a group holds at most one topic per run) and returns the
@@ -26,6 +37,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Changed
 
+- **The previous `ThreadTM` is renamed `TreeFieldTM`** (#895). The logistic-normal model with
+  a reply-tree structured prior is unchanged apart from its name; `reply_completion` still uses
+  it internally. Saved files load as before (the save tag is numeric). The name `ThreadTM` now
+  refers to the model above.
 - **Spectral initialization floors anchor-word candidates at 0.3% of documents** (#874).
   Farthest-point anchor selection picked near-singleton words on large corpora of short
   documents, and the converged recovery built on those anchors could start EM in a
@@ -37,7 +52,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   corpora are unchanged, and corpora under about 333 documents are unaffected.
   `STM.fit` / `CTM.fit(spectral_anchor_min_doc_frac=0.0)` restores `stm`'s unfloored
   anchors. The same default applies to every other model that uses the spectral init
-  (ThreadTM, DTM, STS, and `LDA(init="spectral")`), which do not expose the switch.
+  (TreeFieldTM, DTM, STS, and `LDA(init="spectral")`), which do not expose the switch.
 
 ## [0.61.0] - 2026-09-23
 

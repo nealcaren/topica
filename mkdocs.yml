@@ -100,6 +100,7 @@ nav:
       - Covariates & STM: guides/covariates.md
       - Guided topics (seed words): guides/guided.md
       - Short text: guides/short-text.md
+      - Threaded conversations (ThreadTM): guides/threads.md
       - Embedding topics: guides/embedding.md
       - LLM-based topics: guides/llm.md
   - Analyze & validate:
@@ -120,7 +121,7 @@ nav:
       - Guided topics (keyATM): examples/guided.md
       - Sentiment covariate (DMR): examples/dmr-sentiment.md
       - Short text (GSDMM/BTM): examples/short-text.md
-      - Threaded conversations (ThreadTM): examples/threads.md
+      - Reply trees (TreeFieldTM): examples/threads.md
       - LLM embeddings & labels: examples/llm-topics.md
   - Replications:
       - Overview: replications/index.md

@@ -1,7 +1,7 @@
-# Threaded conversations (ThreadTM)
+# Threaded conversations (TreeFieldTM)
 
 A worked analysis of **two subreddits** where the unit of analysis is not a
-document but a *reply tree*. [`ThreadTM`](../api/models.md) is a logistic-normal
+document but a *reply tree*. [`TreeFieldTM`](../api/models.md) is a logistic-normal
 topic model with a reply-tree structured prior: a comment's topic prior is coupled
 to the comment it answers, so the model can express *persistence* — the degree to
 which a reply stays on its parent's topic. This example shows what that buys, and,
@@ -15,7 +15,13 @@ just as important, when it does not.
     Data: [`topica.datasets.load_threads()`](../api/datasets.md#topica.datasets.load_threads)
     — two subreddits from ConvoKit's `reddit-corpus-small` (Chang et al. 2020):
     `askscience` (technical Q&A) and `pokemontrades` (trade coordination).
-    `ThreadTM` is experimental, so call `topica.enable_experimental()` first.
+    `TreeFieldTM` is experimental, so call `topica.enable_experimental()` first.
+
+!!! tip "Looking for ThreadTM?"
+    This example uses `TreeFieldTM`, topica's earlier threaded model (it was called
+    `ThreadTM` before 0.62). The current [`ThreadTM`](../guides/threads.md) keeps LDA or STM
+    as the base and borrows topic mass from each reply's parent and thread, with
+    pseudo-counts estimated on held-out replies and a parent-permutation placebo.
 
 ## 1. Load a threaded corpus
 
@@ -28,7 +34,7 @@ so the fit is turnkey.
 ```python
 import topica
 
-topica.enable_experimental()          # ThreadTM is experimental
+topica.enable_experimental()          # TreeFieldTM is experimental
 b = topica.datasets.load_threads()
 
 len(b.documents)                      # 5042 comments
@@ -51,7 +57,7 @@ def subset(b, name, k=5):
     remap = {old: new for new, old in enumerate(keep)}
     docs = [b.documents[i] for i in keep]
     parents = [-1 if b.parents[i] < 0 else remap.get(b.parents[i], -1) for i in keep]
-    return topica.ThreadTM(k, coupling="parent", seed=13).fit(
+    return topica.TreeFieldTM(k, coupling="parent", seed=13).fit(
         docs, parents=parents, min_count=5
     )
 
@@ -101,7 +107,7 @@ The twist: `pokemontrades` has the **deepest reply trees in the entire source
 corpus** — a median depth of 8 against `askscience`'s 4 (and chains up to 60 deep).
 Long chains, but each turn coordinates a trade rather than developing the topic. Deep threads do not imply
 that topics persist down them — you have to read `reliability`, not tree shape.
-This is the honest boundary of the model: `ThreadTM`'s reply-tree prior pays off
+This is the honest boundary of the model: `TreeFieldTM`'s reply-tree prior pays off
 where the conversation is *contingent* (replies respond on topic), and its own
 diagnostic tells you when a community is not that.
 
@@ -112,10 +118,10 @@ diagnostic tells you when a community is not that.
     per-comment estimates, and if the gate still fails, the honest conclusion is
     that persistence is not recoverable in that corpus.
 
-## What ThreadTM adds over LDA/STM
+## What TreeFieldTM adds over LDA/STM
 
 LDA gives you the topics; STM adds *who* talks about them (the `subreddit`
-covariate here works exactly as in STM). ThreadTM adds one more axis — whether the
+covariate here works exactly as in STM). TreeFieldTM adds one more axis — whether the
 conversation actually *responds* on a topic — and, unlike a raw parent-child
 correlation, it corrects that estimate for measurement error and gates it on
 identifiability. On real forum data the benefit is genre-dependent: it is a

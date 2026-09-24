@@ -51,7 +51,7 @@ bt = topica.BERTopic(
 
 Threaded discussion needs the reply tree, not just a text table.
 [`load_threads`](#topica.datasets.load_threads) is the
-[`ThreadTM`](models.md) vignette: two subreddits with every comment's parent
+[`TreeFieldTM`](models.md) vignette: two subreddits with every comment's parent
 index preserved, returned as a `Bunch` whose `documents` and `parents` line up
 for a turnkey `fit`. See the [threaded conversations
 example](../examples/threads.md).

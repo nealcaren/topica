@@ -1,4 +1,4 @@
-//! Python binding for ThreadTM — a reply-threaded topic model (CTM/STM logistic-normal topics
+//! Python binding for TreeFieldTM — a reply-threaded topic model (CTM/STM logistic-normal topics
 //! with a reply-tree structured prior; see `crate::thread_tm`). Experimental tier: topica-original,
 //! no published reference yet, so `fit` is gated behind `topica.enable_experimental()`.
 //!
@@ -8,7 +8,7 @@
 //! read from `persistence()` — an identifiable reduced-form estimate (observed slope + reliability
 //! gate + attenuation-corrected structural κ) — rather than the ML `kappa` getter, which collapses
 //! to the σ² floor on real corpora. The covariate story lives entirely in
-//! `group_prevalence`/`prevalence_se`; ThreadTM is outside the `effects` namespace. `transform`
+//! `group_prevalence`/`prevalence_se`; TreeFieldTM is outside the `effects` namespace. `transform`
 //! infers proportions for new reply forests (a single topological pass, topics/field/anchors held
 //! fixed); formula covariates remain a follow-up.
 
@@ -20,7 +20,7 @@ use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use std::collections::HashMap;
 
-/// ThreadTM: a reply-threaded topic model. A reply's topic prior is coupled to the comment it
+/// TreeFieldTM: a reply-threaded topic model. A reply's topic prior is coupled to the comment it
 /// answers (a persistence-smoothing prior along reply edges), reverting toward its covariate-group
 /// baseline; `kappa` measures the reversion (on real corpora it is typically ~0, i.e. persistence-
 /// dominated). Reduces to a plain logistic-normal topic model when the reply tree is flat.
@@ -30,7 +30,7 @@ use std::collections::HashMap;
 /// root prior), or `"blend"` (shrink toward both, `α·parent + β·root + (1-α-β)·anchor`, with the
 /// weights estimated or pinned via `blend_alpha`/`blend_beta`).
 #[pyclass(module = "topica")]
-pub struct ThreadTM {
+pub struct TreeFieldTM {
     num_topics: usize,
     em_iters: usize,
     seed: u64,
@@ -110,16 +110,16 @@ pub struct ThreadTM {
     corpus: Option<corpus::Corpus>,
 }
 
-/// Serialisable snapshot of a fitted ThreadTM (see `save`/`load`).
+/// Serialisable snapshot of a fitted TreeFieldTM (see `save`/`load`).
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ThreadTmState {
     num_topics: usize,
     em_iters: usize,
     seed: u64,
     // Defaults a missing `coupling` to the original parent coupling. NOTE this is inert for the
-    // current positional-bincode save format (a genuinely older ThreadTM save, which predates this
+    // current positional-bincode save format (a genuinely older TreeFieldTM save, which predates this
     // field, cannot round-trip and will fail to load) — it only migrates a self-describing format.
-    // Acceptable under the pre-v1.0 save-compat policy: ThreadTM is new and experimental. Kept for
+    // Acceptable under the pre-v1.0 save-compat policy: TreeFieldTM is new and experimental. Kept for
     // consistency with the other states (see mod.rs / neural.rs).
     #[serde(default = "default_coupling")]
     coupling: String,
@@ -385,7 +385,7 @@ fn depth_content_groups(parents: &[i64], edges: &[usize]) -> (Vec<usize>, usize,
     (groups, n_levels, names)
 }
 
-impl ThreadTM {
+impl TreeFieldTM {
     fn require_fitted(&self) -> PyResult<()> {
         if self.fitted {
             Ok(())
@@ -423,7 +423,7 @@ impl ThreadTM {
 }
 
 #[pymethods]
-impl ThreadTM {
+impl TreeFieldTM {
     #[new]
     #[pyo3(signature = (num_topics, *, em_iters=150, seed=13, coupling="parent".to_string(), blend_alpha=None, blend_beta=None))]
     fn new(
@@ -437,7 +437,7 @@ impl ThreadTM {
         // Gate at construction, not only at fit (issue #856): a first-timer who builds the model
         // before enabling the experimental tier gets the requirement immediately, not many lines
         // into a fit later.
-        require_experimental("ThreadTM")?;
+        require_experimental("TreeFieldTM")?;
         if num_topics < 2 {
             return Err(PyValueError::new_err("num_topics must be >= 2"));
         }
@@ -471,7 +471,7 @@ impl ThreadTM {
                 ));
             }
         }
-        Ok(ThreadTM {
+        Ok(TreeFieldTM {
             num_topics,
             em_iters,
             seed,
@@ -517,7 +517,7 @@ impl ThreadTM {
         })
     }
 
-    /// Fit ThreadTM. `data` is either a `topica.Corpus` or a list of token lists (already
+    /// Fit TreeFieldTM. `data` is either a `topica.Corpus` or a list of token lists (already
     /// tokenized). `parents[d]` is `d`'s parent **document index** in the reply tree (`-1` for a
     /// thread root); build it in the SAME order as the documents. `covariates` is an optional
     /// per-document categorical group id in a DENSE range `0..num_groups` (the reversion anchor
@@ -590,7 +590,7 @@ impl ThreadTM {
         prevalence_anchor: Option<Bound<'_, PyAny>>,
         prevalence_strength: f64,
     ) -> PyResult<Py<Self>> {
-        require_experimental("ThreadTM")?;
+        require_experimental("TreeFieldTM")?;
         // Accept either a topica.Corpus (materialise its token strings) or raw token lists, so the
         // reply tree can be built in the same document order the corpus was ingested in.
         let docs: Vec<Vec<String>> = if let Ok(c) = data.extract::<Corpus>() {
@@ -675,7 +675,7 @@ impl ThreadTM {
                 PyErr::warn_bound(
                     py,
                     &py.get_type_bound::<pyo3::exceptions::PyUserWarning>(),
-                    "ThreadTM.fit called with parents=None: no reply tree, so the model reduces to \
+                    "TreeFieldTM.fit called with parents=None: no reply tree, so the model reduces to \
                      a plain logistic-normal topic model and kappa/sigma2 are undefined (NaN). \
                      Pass parents to use the reply structure.",
                     1,
@@ -2049,7 +2049,7 @@ impl ThreadTM {
         )
     }
 
-    /// Save the fitted model to `path`. Reload with `ThreadTM.load`.
+    /// Save the fitted model to `path`. Reload with `TreeFieldTM.load`.
     fn save(&self, path: &str) -> PyResult<()> {
         self.require_fitted()?;
         write_state(
@@ -2111,7 +2111,7 @@ impl ThreadTM {
         if s.fitted && s.topic_names.is_empty() {
             s.topic_names = (0..s.beta.len()).map(|i| format!("topic_{i}")).collect();
         }
-        Ok(ThreadTM {
+        Ok(TreeFieldTM {
             num_topics: s.num_topics,
             em_iters: s.em_iters,
             seed: s.seed,
@@ -2579,7 +2579,7 @@ impl ThreadTM {
     fn __repr__(&self) -> String {
         if self.fitted && self.coupling == "blend" {
             return format!(
-                "ThreadTM(num_topics={}, coupling=\"blend\", fitted, alpha={:.3}±{:.3}, \
+                "TreeFieldTM(num_topics={}, coupling=\"blend\", fitted, alpha={:.3}±{:.3}, \
                  beta={:.3}±{:.3}, sigma2={:.3})",
                 self.num_topics,
                 self.blend_alpha,
@@ -2591,12 +2591,12 @@ impl ThreadTM {
         }
         if self.fitted {
             format!(
-                "ThreadTM(num_topics={}, coupling={:?}, fitted, kappa={:.3}, sigma2={:.3})",
+                "TreeFieldTM(num_topics={}, coupling={:?}, fitted, kappa={:.3}, sigma2={:.3})",
                 self.num_topics, self.coupling, self.kappa, self.sigma2
             )
         } else {
             format!(
-                "ThreadTM(num_topics={}, coupling={:?}, unfitted)",
+                "TreeFieldTM(num_topics={}, coupling={:?}, unfitted)",
                 self.num_topics, self.coupling
             )
         }

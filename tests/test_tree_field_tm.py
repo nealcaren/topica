@@ -1,4 +1,4 @@
-"""Tests for ThreadTM — the reply-threaded topic model (experimental).
+"""Tests for TreeFieldTM — the reply-threaded topic model (experimental).
 
 The Rust side (src/thread_tm.rs) carries the planted-recovery test through the full model; these
 exercise the Python binding contract: the experimental gate, the fit surface (parents +
@@ -42,9 +42,9 @@ def _content_shift_corpus(seed=0, n_threads=120):
 
 def test_content_depth_recovers_planted_shift():
     """#841 acceptance: content="depth" recovers a topic whose words shift root->deep, which a
-    no-content ThreadTM misses."""
+    no-content TreeFieldTM misses."""
     docs, parents, AR, AD, B = _content_shift_corpus()
-    m = topica.ThreadTM(2, em_iters=80, seed=13).fit(docs, parents=parents, content="depth")
+    m = topica.TreeFieldTM(2, em_iters=80, seed=13).fit(docs, parents=parents, content="depth")
     assert m.content_labels == ["root", "shallow", "deep"]
 
     def overlap(words, pool):
@@ -57,7 +57,7 @@ def test_content_depth_recovers_planted_shift():
     assert overlap(twa["deep"], AD) >= 4 and overlap(twa["deep"], AR) <= 1
 
     # a no-content fit cannot separate the two vocabularies for the same topic
-    mnc = topica.ThreadTM(2, em_iters=80, seed=13).fit(docs, parents=parents)
+    mnc = topica.TreeFieldTM(2, em_iters=80, seed=13).fit(docs, parents=parents)
     assert mnc.topic_word_by_group is None and mnc.content_kappa is None
     tw = np.asarray(mnc.topic_word)
     an = max(range(2), key=lambda t: overlap(
@@ -71,7 +71,7 @@ def test_content_word_contrast():
     """#846: content_word_contrast(topic, "deep", "root") surfaces the words that separate a topic's
     language between two levels — for the planted shift, deep-over-root favors AD, root-over-deep AR."""
     docs, parents, AR, AD, B = _content_shift_corpus()
-    m = topica.ThreadTM(2, em_iters=80, seed=13).fit(docs, parents=parents, content="depth")
+    m = topica.TreeFieldTM(2, em_iters=80, seed=13).fit(docs, parents=parents, content="depth")
     a = max(range(2), key=lambda t: len(set(m.content_top_words(t, n=5)["root"]) & set(AR)))
     deep_over_root = m.content_word_contrast(a, "deep", "root", n=5)
     assert all(isinstance(w, str) and isinstance(r, float) for w, r in deep_over_root)
@@ -91,8 +91,8 @@ def test_content_smooth_ordered_levels():
     """#846: content_smooth ties adjacent (ordered) depth levels; the fit stays valid and the
     smoothed per-level topic-word distributions are closer between adjacent levels than unsmoothed."""
     docs, parents, *_ = _content_shift_corpus(n_threads=60)
-    m0 = topica.ThreadTM(2, em_iters=60, seed=13).fit(docs, parents=parents, content="depth")
-    ms = topica.ThreadTM(2, em_iters=60, seed=13).fit(
+    m0 = topica.TreeFieldTM(2, em_iters=60, seed=13).fit(docs, parents=parents, content="depth")
+    ms = topica.TreeFieldTM(2, em_iters=60, seed=13).fit(
         docs, parents=parents, content="depth", content_smooth=5.0
     )
     tw0 = np.asarray(m0.topic_word_by_group)  # (K, G, V)
@@ -103,7 +103,7 @@ def test_content_smooth_ordered_levels():
     adjs = np.abs(tws[:, 0] - tws[:, 1]).sum(axis=1).mean()
     assert adjs <= adj0 + 1e-9
     with pytest.raises(ValueError):
-        topica.ThreadTM(2, em_iters=5, seed=13).fit(
+        topica.TreeFieldTM(2, em_iters=5, seed=13).fit(
             docs, parents=parents, content="depth", content_smooth=-1.0
         )
 
@@ -112,7 +112,7 @@ def test_content_readouts_and_labels():
     """#841: content readouts have the right shapes (STM-compatible), plug into topica.content, and
     are None without a content covariate."""
     docs, parents, *_ = _content_shift_corpus(n_threads=40)
-    m = topica.ThreadTM(2, em_iters=40, seed=13).fit(docs, parents=parents, content="depth")
+    m = topica.TreeFieldTM(2, em_iters=40, seed=13).fit(docs, parents=parents, content="depth")
     K, G, V = 2, 3, len(m.vocabulary)
     twbg = np.asarray(m.topic_word_by_group)  # (K, G, V), STM's layout
     assert twbg.shape == (K, G, V)
@@ -124,7 +124,7 @@ def test_content_readouts_and_labels():
     assert np.asarray(ck["kappa_interaction"]).shape == (K, G, V)
     tw = m.content_top_words(0, n=5)
     assert set(tw) == {"root", "shallow", "deep"} and len(tw["root"]) == 5
-    # the shared cross-model content diagnostics work on the ThreadTM content channel
+    # the shared cross-model content diagnostics work on the TreeFieldTM content channel
     pol = topica.content.topic_polarization(m)
     assert pol.shape == (K,) and np.all(pol >= 0)
 
@@ -141,12 +141,12 @@ def test_content_arbitrary_labels_and_transform():
             depth += 1
             cur = parents[cur]
         labels.append("root" if depth == 0 else "reply")
-    m = topica.ThreadTM(2, em_iters=40, seed=13).fit(docs, parents=parents, content=labels)
+    m = topica.TreeFieldTM(2, em_iters=40, seed=13).fit(docs, parents=parents, content=labels)
     assert m.content_labels == ["root", "reply"]
     th = m.transform(docs[:6], parents=parents[:6], content=["root", "reply", "reply", "reply", "reply", "reply"])
     assert th.shape == (6, 2)
     # depth transform round-trips on a content=depth model
-    md = topica.ThreadTM(2, em_iters=40, seed=13).fit(docs, parents=parents, content="depth")
+    md = topica.TreeFieldTM(2, em_iters=40, seed=13).fit(docs, parents=parents, content="depth")
     thd = md.transform(docs[:6], parents=parents[:6], content="depth")
     assert thd.shape == (6, 2)
     with pytest.raises(ValueError):
@@ -156,12 +156,12 @@ def test_content_arbitrary_labels_and_transform():
 def test_content_save_load_and_prior(tmp_path):
     """#841: content model round-trips through save/load; l1 and l2 priors both fit."""
     docs, parents, *_ = _content_shift_corpus(n_threads=40)
-    m = topica.ThreadTM(2, em_iters=40, seed=13).fit(
+    m = topica.TreeFieldTM(2, em_iters=40, seed=13).fit(
         docs, parents=parents, content="depth", content_prior="l1", content_prior_var=0.5
     )
     p = str(tmp_path / "content.topica")
     m.save(p)
-    m2 = topica.ThreadTM.load(p)
+    m2 = topica.TreeFieldTM.load(p)
     assert m2.content_labels == m.content_labels
     assert np.allclose(np.asarray(m.topic_word_by_group), np.asarray(m2.topic_word_by_group))
     assert np.allclose(
@@ -169,11 +169,11 @@ def test_content_save_load_and_prior(tmp_path):
         m2.transform(docs[:5], parents=parents[:5], content="depth"),
     )
     with pytest.raises(ValueError):
-        topica.ThreadTM(2, em_iters=5, seed=13).fit(
+        topica.TreeFieldTM(2, em_iters=5, seed=13).fit(
             docs, parents=parents, content="depth", depth_bins=[1, 2]  # must start at 0
         )
     with pytest.raises(ValueError):
-        topica.ThreadTM(2, em_iters=5, seed=13).fit(
+        topica.TreeFieldTM(2, em_iters=5, seed=13).fit(
             docs, parents=parents, content="depth", content_prior="bogus"
         )
 
@@ -203,11 +203,11 @@ def _threaded_corpus(seed=13, n_threads=60, depth=10, doc_len=40):
 
 def test_experimental_gate_blocks_construction():
     """Construction must refuse until experimental models are enabled (issue #856: the gate fires
-    at ThreadTM(...), not only at fit, so a first-timer learns immediately). Fresh interpreter."""
+    at TreeFieldTM(...), not only at fit, so a first-timer learns immediately). Fresh interpreter."""
     code = (
         "import topica\n"
         "try:\n"
-        "    m = topica.ThreadTM(3); print('NOTGATED')\n"
+        "    m = topica.TreeFieldTM(3); print('NOTGATED')\n"
         "except RuntimeError as e:\n"
         "    print('GATED' if 'experimental' in str(e) else 'OTHER')\n"
     )
@@ -224,7 +224,7 @@ def test_experimental_gate_blocks_construction():
 
 def test_fit_shapes_and_readouts():
     docs, parents, cov, vocab = _threaded_corpus()
-    m = topica.ThreadTM(2, em_iters=60, seed=13)
+    m = topica.TreeFieldTM(2, em_iters=60, seed=13)
     m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
     D, K, V, G = len(docs), 2, len(vocab), 2
     assert m.topic_word.shape == (K, V)
@@ -262,7 +262,7 @@ def test_fit_shapes_and_readouts():
 
 def test_topic_and_prevalence_recovery():
     docs, parents, cov, vocab = _threaded_corpus()
-    m = topica.ThreadTM(2, em_iters=100, seed=13)
+    m = topica.TreeFieldTM(2, em_iters=100, seed=13)
     m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
     beta = m.topic_word
     vidx = {w: i for i, w in enumerate(m.vocabulary)}
@@ -277,7 +277,7 @@ def test_topic_and_prevalence_recovery():
 
 
 def test_parent_validation():
-    m = topica.ThreadTM(2, em_iters=5)
+    m = topica.TreeFieldTM(2, em_iters=5)
     with pytest.raises(ValueError):
         m.fit([["a"], ["b"]], parents=[-1])  # wrong length
     with pytest.raises(ValueError):
@@ -289,13 +289,13 @@ def test_parent_validation():
 
 
 def test_unfitted_raises():
-    m = topica.ThreadTM(3)
+    m = topica.TreeFieldTM(3)
     with pytest.raises(RuntimeError):
         m.topic_word
 
 
 def test_reduces_to_flat_when_no_tree():
-    """With no reply edges ThreadTM is a plain logistic-normal topic model: topics still recover,
+    """With no reply edges TreeFieldTM is a plain logistic-normal topic model: topics still recover,
     and the reply parameters are correctly flagged unidentified (NaN)."""
     import math
     import warnings
@@ -303,7 +303,7 @@ def test_reduces_to_flat_when_no_tree():
     docs, parents, cov, vocab = _threaded_corpus()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # parents=None warns on purpose
-        m = topica.ThreadTM(2, em_iters=80, seed=13)
+        m = topica.TreeFieldTM(2, em_iters=80, seed=13)
         m.fit(docs, parents=None)
     beta = m.topic_word
     vidx = {w: i for i, w in enumerate(m.vocabulary)}
@@ -323,7 +323,7 @@ def test_held_out_beat_tree_vs_no_tree():
     rng = np.random.default_rng(0)
     test = set(rng.choice(leaves, size=len(leaves) // 3, replace=False).tolist())
     train = [[] if i in test else docs[i] for i in range(d)]  # hold out leaf tokens
-    m = topica.ThreadTM(2, em_iters=100, seed=13)
+    m = topica.TreeFieldTM(2, em_iters=100, seed=13)
     m.fit(train, parents=parents, covariates=cov, covariate_names=["A", "B"])
     beta, theta, anchor = m.topic_word, m.doc_topic, m.group_prevalence
     vidx = {w: i for i, w in enumerate(m.vocabulary)}
@@ -350,7 +350,7 @@ def test_fit_accepts_corpus():
     reply tree indexes line up with the corpus documents."""
     docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=6)
     corpus = topica.Corpus.from_documents(docs)
-    m = topica.ThreadTM(2, em_iters=40, seed=13)
+    m = topica.TreeFieldTM(2, em_iters=40, seed=13)
     m.fit(corpus, parents=parents, covariates=cov, covariate_names=["A", "B"])
     assert m.topic_word.shape == (2, len(vocab))
     assert m.doc_topic.shape == (len(docs), 2)
@@ -363,7 +363,7 @@ def test_min_count_emptying_warns():
     import warnings
 
     docs = [["a0", "a0", "a1"], ["rareX", "rareY"], ["a1", "a1", "a0"]]
-    m = topica.ThreadTM(2, em_iters=10, seed=13)
+    m = topica.TreeFieldTM(2, em_iters=10, seed=13)
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         m.fit(docs, parents=[-1, 0, 1], min_count=2)
@@ -378,14 +378,14 @@ def test_kappa_is_fit_not_frozen():
     import math
 
     docs, parents, cov, vocab = _threaded_corpus()
-    m = topica.ThreadTM(2, em_iters=100, seed=13)
+    m = topica.TreeFieldTM(2, em_iters=100, seed=13)
     m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
     # the field was fit: κ is a real estimate, not the 0.3 initializer, and σ²/p0 are not the 1.0 inits
     assert m.kappa != pytest.approx(0.3), "kappa is frozen at 1 - a_init (field never fit)"
     assert not (m.sigma2 == 1.0 and m.p0 == 1.0), "sigma2/p0 frozen at inits"
     assert np.isfinite(m.kappa) and np.isfinite(m.sigma2)
     # too few iterations to reach the warm-up-gated field fit → unidentified, reported as NaN
-    m2 = topica.ThreadTM(2, em_iters=8, seed=13)
+    m2 = topica.TreeFieldTM(2, em_iters=8, seed=13)
     m2.fit(docs, parents=parents)
     assert math.isnan(m2.kappa) and math.isnan(m2.sigma2), (m2.kappa, m2.sigma2)
 
@@ -409,7 +409,7 @@ def test_prevalence_se_cluster_robust():
         parents.append(-1 if step == 0 else base + step - 1)
         docs.append([f"b{rng.integers(5)}" for _ in range(20)])
         cov.append(1)
-    m = topica.ThreadTM(2, em_iters=60, seed=13)
+    m = topica.TreeFieldTM(2, em_iters=60, seed=13)
     m.fit(docs, parents=parents, covariates=cov, covariate_names=["multi", "single"])
     se = m.prevalence_se
     assert np.all(np.isfinite(se[0])), "multi-thread group should have a finite SE"
@@ -424,7 +424,7 @@ def test_kappa_within_its_ci():
 
     for seed in (1, 7, 13, 21):
         docs, parents, cov, vocab = _threaded_corpus(seed=seed, n_threads=30, depth=8)
-        m = topica.ThreadTM(2, em_iters=80, seed=seed)
+        m = topica.TreeFieldTM(2, em_iters=80, seed=seed)
         m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
         lo, hi = m.kappa_ci
         assert math.isfinite(lo) and math.isfinite(hi) and lo <= hi
@@ -438,7 +438,7 @@ def test_persistence():
     import math
 
     docs, parents, cov, vocab = _threaded_corpus(n_threads=60, depth=8)
-    m = topica.ThreadTM(4, em_iters=60, seed=13)
+    m = topica.TreeFieldTM(4, em_iters=60, seed=13)
     m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
     r = m.persistence(bootstrap=200)
     for key in (
@@ -472,7 +472,7 @@ def test_persistence_requires_tree():
     docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=6)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        m = topica.ThreadTM(3, em_iters=30, seed=13)
+        m = topica.TreeFieldTM(3, em_iters=30, seed=13)
         m.fit(docs, parents=None)
     with pytest.raises(ValueError):
         m.persistence()
@@ -480,7 +480,7 @@ def test_persistence_requires_tree():
 
 def test_coherence():
     docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=6)
-    m = topica.ThreadTM(2, em_iters=40, seed=13)
+    m = topica.TreeFieldTM(2, em_iters=40, seed=13)
     m.fit(docs, parents=parents)
     coh = m.coherence(10)
     assert coh.shape == (2,) and np.all(np.isfinite(coh))
@@ -492,11 +492,11 @@ def test_coherence():
 
 def test_save_load_roundtrip(tmp_path):
     docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=6)
-    m = topica.ThreadTM(2, em_iters=40, seed=13)
+    m = topica.TreeFieldTM(2, em_iters=40, seed=13)
     m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
     p = str(tmp_path / "reply.topica")
     m.save(p)
-    m2 = topica.ThreadTM.load(p)
+    m2 = topica.TreeFieldTM.load(p)
     assert np.array_equal(m.topic_word, m2.topic_word)
     assert np.array_equal(m.group_prevalence, m2.group_prevalence)
     assert m.kappa == m2.kappa and m.kappa_ci == m2.kappa_ci
@@ -544,7 +544,7 @@ def test_posterior_doc_topic_predictive(tmp_path):
     """posterior_doc_topic is a correct MC estimate of E[softmax(eta)]: proper simplex,
     deterministic, converges to an independent reference, and survives save/load (issue #838)."""
     docs, parents = _thin_leaf_corpus()
-    m = topica.ThreadTM(3, em_iters=50, seed=13).fit(docs, parents=parents)
+    m = topica.TreeFieldTM(3, em_iters=50, seed=13).fit(docs, parents=parents)
 
     plug = np.asarray(m.doc_topic)
     pdt = np.asarray(m.posterior_doc_topic(n_samples=400, seed=13))
@@ -589,7 +589,7 @@ def test_posterior_doc_topic_predictive(tmp_path):
     # it depends only on doc_eta + the full nu, which round-trip, so it survives save/load
     p = str(tmp_path / "reply.topica")
     m.save(p)
-    m2 = topica.ThreadTM.load(p)
+    m2 = topica.TreeFieldTM.load(p)
     assert np.array_equal(pdt, np.asarray(m2.posterior_doc_topic(n_samples=400, seed=13)))
 
 
@@ -600,7 +600,7 @@ def test_posterior_doc_topic_hedges_toward_uniform():
     checked the two θ differ would pass even on an implementation that hedged the wrong way — the
     direction is the property the fix rests on."""
     docs, parents = _thin_leaf_corpus()
-    m = topica.ThreadTM(2, em_iters=60, seed=13).fit(docs, parents=parents)
+    m = topica.TreeFieldTM(2, em_iters=60, seed=13).fit(docs, parents=parents)
     plug = np.asarray(m.doc_topic)
     pdt = np.asarray(m.posterior_doc_topic(n_samples=1000, seed=13))
     gain = _entropy(pdt) - _entropy(plug)
@@ -635,11 +635,11 @@ def test_covariates_accept_string_labels():
     the group names, and an unseen label at transform is a clear error (not an opaque PyO3 crash)."""
     docs, parents, cov, _ = _threaded_corpus(n_threads=30, depth=4)
     labels = ["RedPill" if g == 0 else "CMV" for g in cov]
-    m = topica.ThreadTM(2, em_iters=30, seed=13).fit(docs, parents=parents, covariates=labels)
+    m = topica.TreeFieldTM(2, em_iters=30, seed=13).fit(docs, parents=parents, covariates=labels)
     # first-seen order: group 0 is "RedPill" (thread 0 is group 0)
     assert m.group_labels() == ["RedPill", "CMV"]
     # integer and string fits must agree (same encoding)
-    mi = topica.ThreadTM(2, em_iters=30, seed=13).fit(docs, parents=parents, covariates=cov)
+    mi = topica.TreeFieldTM(2, em_iters=30, seed=13).fit(docs, parents=parents, covariates=cov)
     assert np.allclose(m.group_prevalence, mi.group_prevalence)
     # transform accepts labels, mapped through the fitted groups
     th = m.transform(docs[:5], parents=[-1, 0, 1, 2, 3], covariates=["RedPill"] * 5)
@@ -653,11 +653,11 @@ def test_covariates_accept_whole_valued_floats():
     once held a NaN) is accepted as integer ids; a non-whole float is a clear error."""
     docs, parents, cov, _ = _threaded_corpus(n_threads=24, depth=4)
     fcov = [float(g) for g in cov]  # 0.0 / 1.0
-    m = topica.ThreadTM(2, em_iters=30, seed=13).fit(docs, parents=parents, covariates=fcov)
-    mi = topica.ThreadTM(2, em_iters=30, seed=13).fit(docs, parents=parents, covariates=cov)
+    m = topica.TreeFieldTM(2, em_iters=30, seed=13).fit(docs, parents=parents, covariates=fcov)
+    mi = topica.TreeFieldTM(2, em_iters=30, seed=13).fit(docs, parents=parents, covariates=cov)
     assert np.allclose(m.group_prevalence, mi.group_prevalence)
     with pytest.raises(ValueError):
-        topica.ThreadTM(2, em_iters=5, seed=13).fit(
+        topica.TreeFieldTM(2, em_iters=5, seed=13).fit(
             docs, parents=parents, covariates=[0.5] + fcov[1:]
         )
 
@@ -667,14 +667,14 @@ def test_covariates_accept_pandas_series():
     pd = pytest.importorskip("pandas")
     docs, parents, cov, _ = _threaded_corpus(n_threads=24, depth=4)
     s = pd.Series(["RedPill" if g == 0 else "CMV" for g in cov])
-    m = topica.ThreadTM(2, em_iters=30, seed=13).fit(docs, parents=parents, covariates=s)
+    m = topica.TreeFieldTM(2, em_iters=30, seed=13).fit(docs, parents=parents, covariates=s)
     assert m.group_labels() == ["RedPill", "CMV"]
 
 
 def test_early_stopped_and_fit_history():
     """#830/API: converged has an early_stopped alias and a fit_history the stop_reason helper reads."""
     docs, parents, _, _ = _threaded_corpus(n_threads=20, depth=4)
-    m = topica.ThreadTM(2, em_iters=200, seed=13).fit(docs, parents=parents)
+    m = topica.TreeFieldTM(2, em_iters=200, seed=13).fit(docs, parents=parents)
     assert m.early_stopped == m.converged
     hist = m.fit_history
     assert isinstance(hist, list) and hist and hist[0][0] == 0
@@ -684,17 +684,17 @@ def test_early_stopped_and_fit_history():
 def test_converged_flag():
     """#830 T4a: a fitted model exposes a `converged` bool (not inferred from bound_history len)."""
     docs, parents, _, _ = _threaded_corpus(n_threads=20, depth=5)
-    m = topica.ThreadTM(2, em_iters=200, seed=13).fit(docs, parents=parents)
+    m = topica.TreeFieldTM(2, em_iters=200, seed=13).fit(docs, parents=parents)
     assert isinstance(m.converged, bool)
     with pytest.raises(RuntimeError):
-        topica.ThreadTM(2).converged  # unfitted
+        topica.TreeFieldTM(2).converged  # unfitted
 
 
 def test_kappa_ci_boundary_flag():
     """#830 T1: when the profile CI collapses to the persistence floor, kappa_ci returns a one-sided
     (lower, nan) and warns, rather than a false-precision zero-width interval."""
     docs, parents = _persistent_corpus()
-    m = topica.ThreadTM(2, em_iters=80, seed=13).fit(docs, parents=parents)
+    m = topica.TreeFieldTM(2, em_iters=80, seed=13).fit(docs, parents=parents)
     with pytest.warns(UserWarning, match="persistence floor"):
         lo, hi = m.kappa_ci
     assert lo == pytest.approx(m.kappa, abs=1e-3)
@@ -705,7 +705,7 @@ def test_group_prevalence_ci():
     """#830 T3a / #843: topica.inspect.group_prevalence_ci returns a FrameDict (labels + mean/ci/sd)
     matching the house CI-helper convention, with valid prob-scale intervals and a tidy to_frame."""
     docs, parents, cov, _ = _threaded_corpus(n_threads=30, depth=4)
-    m = topica.ThreadTM(3, em_iters=40, seed=13).fit(
+    m = topica.TreeFieldTM(3, em_iters=40, seed=13).fit(
         docs, parents=parents, covariates=cov, covariate_names=["A", "B"]
     )
     res = topica.inspect.group_prevalence_ci(m, ci=0.9, n_samples=1500, seed=1)
@@ -730,7 +730,7 @@ def test_topic_table_pretty_print():
     """#830 T3b: topic_table prints as an aligned table, not a raw list-of-dicts dump, while staying
     a list (indexing / to_frame unchanged)."""
     docs, parents, _, _ = _threaded_corpus(n_threads=20, depth=4)
-    m = topica.ThreadTM(2, em_iters=30, seed=13).fit(docs, parents=parents)
+    m = topica.TreeFieldTM(2, em_iters=30, seed=13).fit(docs, parents=parents)
     tt = topica.inspect.topic_table(m)
     s = str(tt)
     assert "topic" in s and "prev" in s
@@ -741,7 +741,7 @@ def test_topic_table_pretty_print():
 def test_record_fit_defaults_corpus():
     """#830 T4b: record_fit(model) works without re-passing the corpus (defaults to model.corpus)."""
     docs, parents, _, _ = _threaded_corpus(n_threads=20, depth=4)
-    m = topica.ThreadTM(2, em_iters=30, seed=13).fit(docs, parents=parents)
+    m = topica.TreeFieldTM(2, em_iters=30, seed=13).fit(docs, parents=parents)
     assert m.corpus.num_docs == len(docs)
     man = topica.provenance.record_fit(m)  # no corpus argument
     assert man is not None
@@ -751,7 +751,7 @@ def test_record_fit_defaults_corpus():
 
 
 def test_reply_completion_scores_logistic_normal_fairly():
-    """reply_completion must score ThreadTM and STM (logistic-normal) with the posterior-predictive
+    """reply_completion must score TreeFieldTM and STM (logistic-normal) with the posterior-predictive
     theta, not the plug-in, so the LDA delta is not an estimator artifact (issue #838). The two
     logistic-normal baselines (no_tree, stm) should sit close to the tree; the delta is recorded and
     predictive_samples is surfaced in settings."""
@@ -811,7 +811,7 @@ def test_reply_completion_plugin_theta_matches_doc_topic():
         hp = set(order[:k].tolist())
         held[d] = [toks[i] for i in range(len(toks)) if i in hp]
         train[d] = [toks[i] for i in range(len(toks)) if i not in hp]
-    m = topica.ThreadTM(3, em_iters=30, seed=13, coupling="parent")
+    m = topica.TreeFieldTM(3, em_iters=30, seed=13, coupling="parent")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=UserWarning)
         m.fit(train, parents=list(parents), covariates=cov, min_count=1)
@@ -832,7 +832,7 @@ def test_reply_completion_rejects_unknown_theta():
 
 def test_reply_completion_stm_kwargs_only_moves_stm_arm():
     """stm_kwargs (issue #888) changes only the stm arm: a one-iteration fit moves its score
-    while the ThreadTM arms stay bit-identical; the options are recorded in settings. (One
+    while the TreeFieldTM arms stay bit-identical; the options are recorded in settings. (One
     iteration, not a few: from the spectral init this arm converges in about three.)"""
     docs, parents = _branching_corpus(seed=1, persistence=0.92)
     cov = [i % 2 for i in range(len(docs))]
@@ -915,10 +915,10 @@ def test_reply_completion_stm_kwargs_needs_stm_baseline():
 
 
 def test_inspect_integration():
-    """The taught inspect API must work on ThreadTM (regression: it was misdispatched as a
+    """The taught inspect API must work on TreeFieldTM (regression: it was misdispatched as a
     time-sliced model because topic_word/vocabulary were methods, not properties)."""
     docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=6)
-    m = topica.ThreadTM(2, em_iters=40, seed=13)
+    m = topica.TreeFieldTM(2, em_iters=40, seed=13)
     m.fit(docs, parents=parents)
     table = topica.inspect.topic_table(m)
     assert len(table) == 2
@@ -992,7 +992,7 @@ def test_reply_completion_requires_branching_for_placebo():
 
 def test_transform_shapes_and_simplex():
     docs, parents, cov, vocab = _threaded_corpus(n_threads=30, depth=6)
-    m = topica.ThreadTM(2, em_iters=60, seed=13)
+    m = topica.TreeFieldTM(2, em_iters=60, seed=13)
     m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
     theta = m.transform(docs, parents=parents, covariates=cov)
     assert theta.shape == (len(docs), 2)
@@ -1004,7 +1004,7 @@ def test_transform_recovers_training_theta():
     """A single topological pass with the topics/field/anchors frozen is the exact structured
     mean-field fixed point, so transform on the training forest reproduces the fitted doc_topic."""
     docs, parents, cov, vocab = _threaded_corpus(n_threads=30, depth=6)
-    m = topica.ThreadTM(2, em_iters=80, seed=13)
+    m = topica.TreeFieldTM(2, em_iters=80, seed=13)
     m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
     theta = m.transform(docs, parents=parents, covariates=cov)
     dt = np.asarray(m.doc_topic)
@@ -1020,7 +1020,7 @@ def test_transform_tree_couples_reply_to_parent():
     tree-blind baseline anchors at the global mean, isolating the reply coupling from a group anchor
     that would otherwise already pull same-group parents and children together."""
     docs, parents, cov, vocab = _threaded_corpus(n_threads=40, depth=6)
-    m = topica.ThreadTM(2, em_iters=80, seed=13)
+    m = topica.TreeFieldTM(2, em_iters=80, seed=13)
     m.fit(docs, parents=parents)
     tree = m.transform(docs, parents=parents)
     flat = m.transform(docs)  # every doc a root (tree-blind)
@@ -1033,7 +1033,7 @@ def test_transform_tree_couples_reply_to_parent():
 
 def test_transform_new_thread_and_defaults():
     docs, parents, cov, vocab = _threaded_corpus(n_threads=30, depth=6)
-    m = topica.ThreadTM(2, em_iters=60, seed=13)
+    m = topica.TreeFieldTM(2, em_iters=60, seed=13)
     m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
     # a fresh thread expressed in the training vocabulary
     new = [[vocab[i] for i in (0, 1, 2, 3)], [vocab[i] for i in (0, 1, 5, 6)]]
@@ -1049,7 +1049,7 @@ def test_transform_new_thread_and_defaults():
 
 def test_transform_requires_tree_fit():
     docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=5)
-    m = topica.ThreadTM(2, em_iters=30, seed=13)
+    m = topica.TreeFieldTM(2, em_iters=30, seed=13)
     with pytest.warns(UserWarning):
         m.fit(docs)  # no tree -> field undefined
     with pytest.raises(ValueError, match="reply tree"):
@@ -1058,7 +1058,7 @@ def test_transform_requires_tree_fit():
 
 def test_transform_validates_covariate_range():
     docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=5)
-    m = topica.ThreadTM(2, em_iters=40, seed=13)
+    m = topica.TreeFieldTM(2, em_iters=40, seed=13)
     m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
     with pytest.raises(ValueError, match="group id"):
         m.transform(docs[:2], parents=[-1, 0], covariates=[0, 9])
@@ -1067,12 +1067,12 @@ def test_transform_validates_covariate_range():
 
 
 def test_transform_scores_through_eval_heldout():
-    """transform lets ThreadTM ride the generic tree-blind held-out scorer (issue #828 half 2)."""
+    """transform lets TreeFieldTM ride the generic tree-blind held-out scorer (issue #828 half 2)."""
     docs, parents = _branching_corpus(seed=3, persistence=0.9)
-    m = topica.ThreadTM(5, em_iters=60, seed=13)
+    m = topica.TreeFieldTM(5, em_iters=60, seed=13)
     m.fit(docs, parents=parents)
     heldout = topica.evaluate.make_heldout(docs, seed=13)
-    m2 = topica.ThreadTM(5, em_iters=60, seed=13)
+    m2 = topica.TreeFieldTM(5, em_iters=60, seed=13)
     m2.fit(heldout.documents, parents=parents)
     res = topica.evaluate.eval_heldout(m2, heldout)
     assert np.isfinite(res.mean_per_doc_loglik)
@@ -1116,7 +1116,7 @@ def _drop_inducing_corpus(n_threads=45):
     """Each eval leaf carries two corpus-common words plus one unique-rare word. Under
     min_count=2 the rare word is dropped from the vocabulary, so on the ~1/3 of leaves whose
     single seen token happens to be the rare one, the fixed-vocab Corpus empties and drops the
-    leaf (an off-the-shelf baseline cannot score it) while ThreadTM still scores its in-vocab
+    leaf (an off-the-shelf baseline cannot score it) while TreeFieldTM still scores its in-vocab
     held tokens from a prior-only theta. This exercises the per-baseline pairing."""
     docs, parents = [], []
     for t in range(n_threads):
@@ -1127,7 +1127,7 @@ def _drop_inducing_corpus(n_threads=45):
 
 
 def test_reply_completion_offshelf_does_not_shift_core_deltas():
-    """Requesting an off-the-shelf baseline must not change the ThreadTM-vs-ThreadTM contrasts:
+    """Requesting an off-the-shelf baseline must not change the TreeFieldTM-vs-TreeFieldTM contrasts:
     each delta is paired over the leaves that baseline scored, so no_tree (which never drops a
     leaf) is invariant to whether lda is also requested, even when lda drops some leaves."""
     docs, parents = _drop_inducing_corpus()
@@ -1358,7 +1358,7 @@ def _block_mass(model, t, words):
 def _fit_seeded(docs, parents, groups, K=4, **kw):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return topica.ThreadTM(K, em_iters=80, seed=13, coupling="parent").fit(
+        return topica.TreeFieldTM(K, em_iters=80, seed=13, coupling="parent").fit(
             docs, parents=parents, covariates=groups,
             covariate_names=["g0", "g1"], min_count=1, **kw)
 
@@ -1406,7 +1406,7 @@ def test_thread_tm_seed_newbie_guards():
     docs, parents, groups, block_words, _ = _planted_block_corpus(n_threads=20)
 
     def fit(**kw):
-        return topica.ThreadTM(4, em_iters=40, seed=13, coupling="parent").fit(
+        return topica.TreeFieldTM(4, em_iters=40, seed=13, coupling="parent").fit(
             docs, parents=parents, covariates=groups, covariate_names=["g0", "g1"],
             min_count=1, **kw)
 
@@ -1523,16 +1523,16 @@ def test_thread_tm_prevalence_anchor_accepts_string_label():
     docs, parents, groups, _, _ = _planted_block_corpus(n_threads=40)
     labels = ["g0" if g == 0 else "g1" for g in groups]
     target = [0.7, 0.1, 0.1, 0.1]
-    by_label = topica.ThreadTM(4, em_iters=60, seed=13, coupling="parent").fit(
+    by_label = topica.TreeFieldTM(4, em_iters=60, seed=13, coupling="parent").fit(
         docs, parents=parents, covariates=labels, min_count=1,
         prevalence_anchor={"g0": target}, prevalence_strength=0.9)
-    by_index = topica.ThreadTM(4, em_iters=60, seed=13, coupling="parent").fit(
+    by_index = topica.TreeFieldTM(4, em_iters=60, seed=13, coupling="parent").fit(
         docs, parents=parents, covariates=labels, min_count=1,
         prevalence_anchor={0: target}, prevalence_strength=0.9)
     assert np.allclose(np.asarray(by_label.group_prevalence),
                        np.asarray(by_index.group_prevalence))
     with pytest.raises(ValueError, match="is not one of the covariate groups"):
-        topica.ThreadTM(4, em_iters=20, seed=13).fit(
+        topica.TreeFieldTM(4, em_iters=20, seed=13).fit(
             docs, parents=parents, covariates=labels, min_count=1,
             prevalence_anchor={"nope": target})
 
@@ -1607,7 +1607,7 @@ def test_reply_completion_edge_contrast_and_paired_draws():
     lo, hi = edge["ci"]
     assert np.isfinite(lo) and np.isfinite(hi) and lo <= hi
     # delta = tree - baseline, so edge = permuted - no_tree = delta[no_tree] - delta[permuted]
-    # (the ThreadTM baselines all score the identical leaves, so the identity is exact).
+    # (the TreeFieldTM baselines all score the identical leaves, so the identity is exact).
     assert edge["estimate"] == pytest.approx(
         res.delta["no_tree"]["estimate"] - res.delta["permuted"]["estimate"], abs=1e-9)
     # the method reproduces the stored field exactly (same n_boot/seed defaults)
@@ -1653,7 +1653,7 @@ def test_reply_completion_contrast_validation():
 
 def test_transform_covariates_none_uses_mean_anchor():
     docs, parents, cov, vocab = _threaded_corpus(n_threads=30, depth=6)
-    m = topica.ThreadTM(2, em_iters=60, seed=13)
+    m = topica.TreeFieldTM(2, em_iters=60, seed=13)
     m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
     th = m.transform(docs, parents=parents)  # covariates omitted
     assert th.shape == (len(docs), 2) and np.allclose(th.sum(1), 1.0)
@@ -1661,7 +1661,7 @@ def test_transform_covariates_none_uses_mean_anchor():
 
 def test_transform_accepts_corpus_input():
     docs, parents, cov, vocab = _threaded_corpus(n_threads=25, depth=5)
-    m = topica.ThreadTM(2, em_iters=50, seed=13)
+    m = topica.TreeFieldTM(2, em_iters=50, seed=13)
     m.fit(docs, parents=parents)
     from_lists = m.transform(docs, parents=parents)
     corpus = topica.Corpus.from_documents(docs)
@@ -1671,7 +1671,7 @@ def test_transform_accepts_corpus_input():
 
 def test_transform_rejects_negative_covariate():
     docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=5)
-    m = topica.ThreadTM(2, em_iters=40, seed=13)
+    m = topica.TreeFieldTM(2, em_iters=40, seed=13)
     m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
     with pytest.raises(ValueError, match="group id"):
         m.transform(docs[:2], parents=[-1, 0], covariates=[-1, 0])
@@ -1683,12 +1683,12 @@ def test_transform_rejects_negative_covariate():
 
 def test_coupling_validation():
     with pytest.raises(ValueError, match="coupling"):
-        topica.ThreadTM(3, coupling="bogus")
+        topica.TreeFieldTM(3, coupling="bogus")
 
 
 def test_root_coupling_settings_and_repr():
     docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=5)
-    m = topica.ThreadTM(2, em_iters=40, seed=13, coupling="root")
+    m = topica.TreeFieldTM(2, em_iters=40, seed=13, coupling="root")
     assert m.coupling == "root"
     assert m.settings["coupling"] == "root"
     assert "coupling='root'" in repr(m) or 'coupling="root"' in repr(m)
@@ -1699,13 +1699,13 @@ def test_root_coupling_settings_and_repr():
 
 def test_root_coupling_transform_and_save(tmp_path):
     docs, parents, cov, vocab = _threaded_corpus(n_threads=25, depth=5)
-    m = topica.ThreadTM(2, em_iters=50, seed=13, coupling="root")
+    m = topica.TreeFieldTM(2, em_iters=50, seed=13, coupling="root")
     m.fit(docs, parents=parents, covariates=cov, covariate_names=["A", "B"])
     th = m.transform(docs, parents=parents, covariates=cov)
     assert th.shape == (len(docs), 2) and np.allclose(th.sum(1), 1.0)
     p = tmp_path / "rtm_root.bin"
     m.save(str(p))
-    m2 = topica.ThreadTM.load(str(p))
+    m2 = topica.TreeFieldTM.load(str(p))
     assert m2.coupling == "root"
     assert np.allclose(m2.transform(docs, parents=parents, covariates=cov), th)
 
@@ -1715,19 +1715,19 @@ def test_coupling_survives_save_load_both():
     docs, parents, cov, vocab = _threaded_corpus(n_threads=15, depth=4)
     import tempfile, os
     for coupling in ("parent", "root"):
-        m = topica.ThreadTM(2, em_iters=30, seed=13, coupling=coupling)
+        m = topica.TreeFieldTM(2, em_iters=30, seed=13, coupling=coupling)
         m.fit(docs, parents=parents)
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "m.bin")
             m.save(p)
-            assert topica.ThreadTM.load(p).settings["coupling"] == coupling
+            assert topica.TreeFieldTM.load(p).settings["coupling"] == coupling
 
 
 def test_root_coupling_transform_new_forest():
     """Root coupling reparents a NEW forest (different topology from the fit forest) to its thread
     root: transform matches a hand-reparented star fit under parent coupling."""
     docs, parents, cov, vocab = _threaded_corpus(n_threads=25, depth=6)
-    m_root = topica.ThreadTM(2, em_iters=60, seed=13, coupling="root")
+    m_root = topica.TreeFieldTM(2, em_iters=60, seed=13, coupling="root")
     m_root.fit(docs, parents=parents)
     # a fresh multi-level forest, unrelated to the fit topology
     new = [list(docs[i]) for i in (0, 1, 2, 3, 4)]
@@ -1792,13 +1792,13 @@ def test_parent_coupling_wins_on_chain_persistence():
 def test_blend_validation():
     # blend weights only valid with coupling="blend"
     with pytest.raises(ValueError, match="only valid with"):
-        topica.ThreadTM(2, blend_alpha=0.5)
+        topica.TreeFieldTM(2, blend_alpha=0.5)
     with pytest.raises(ValueError, match=r"\[0, 1\]"):
-        topica.ThreadTM(2, coupling="blend", blend_alpha=1.5)
+        topica.TreeFieldTM(2, coupling="blend", blend_alpha=1.5)
     with pytest.raises(ValueError, match="<= 1"):
-        topica.ThreadTM(2, coupling="blend", blend_alpha=0.7, blend_beta=0.6)
+        topica.TreeFieldTM(2, coupling="blend", blend_alpha=0.7, blend_beta=0.6)
     with pytest.raises(ValueError, match="coupling"):
-        topica.ThreadTM(2, coupling="bogus")
+        topica.TreeFieldTM(2, coupling="bogus")
 
 
 def _mixed_corpus(seed=1, n_threads=200):
@@ -1834,7 +1834,7 @@ def _mixed_corpus(seed=1, n_threads=200):
 
 def test_blend_fits_getters_and_repr():
     docs, parents = _mixed_corpus()
-    m = topica.ThreadTM(4, em_iters=80, seed=13, coupling="blend")
+    m = topica.TreeFieldTM(4, em_iters=80, seed=13, coupling="blend")
     m.fit(docs, parents=parents)
     assert m.coupling == "blend"
     assert np.isfinite(m.blend_alpha) and np.isfinite(m.blend_beta)
@@ -1848,7 +1848,7 @@ def test_blend_fits_getters_and_repr():
 def test_blend_estimates_both_weights_positive():
     """On genuinely mixed discourse both the parent and the root weight are estimated positive."""
     docs, parents = _mixed_corpus()
-    m = topica.ThreadTM(4, em_iters=80, seed=13, coupling="blend")
+    m = topica.TreeFieldTM(4, em_iters=80, seed=13, coupling="blend")
     m.fit(docs, parents=parents)
     assert m.blend_alpha > 0.01 and m.blend_beta > 0.01
 
@@ -1858,7 +1858,7 @@ def test_blend_weights_have_clustered_se():
     (issue #863): finite and positive for a both-free fit, the three shares sum to 1, and
     blend_weights() bundles the six numbers consistently with the scalar getters."""
     docs, parents = _mixed_corpus()
-    m = topica.ThreadTM(4, em_iters=80, seed=13, coupling="blend")
+    m = topica.TreeFieldTM(4, em_iters=80, seed=13, coupling="blend")
     m.fit(docs, parents=parents)
     w = m.blend_weights()
     assert set(w) == {"alpha", "beta", "anchor", "alpha_se", "beta_se", "anchor_se"}
@@ -1881,11 +1881,11 @@ def test_blend_pinned_weight_has_zero_se():
     """A pinned weight was fixed, not estimated, so its SE is 0 while the free partner keeps a
     finite positive SE (issue #863)."""
     docs, parents = _mixed_corpus()
-    ma = topica.ThreadTM(4, em_iters=60, seed=13, coupling="blend", blend_alpha=0.6)
+    ma = topica.TreeFieldTM(4, em_iters=60, seed=13, coupling="blend", blend_alpha=0.6)
     ma.fit(docs, parents=parents)
     assert ma.blend_alpha_se == 0.0
     assert np.isfinite(ma.blend_beta_se) and ma.blend_beta_se > 0.0
-    mb = topica.ThreadTM(4, em_iters=60, seed=13, coupling="blend", blend_beta=0.3)
+    mb = topica.TreeFieldTM(4, em_iters=60, seed=13, coupling="blend", blend_beta=0.3)
     mb.fit(docs, parents=parents)
     assert mb.blend_beta_se == 0.0
     assert np.isfinite(mb.blend_alpha_se) and mb.blend_alpha_se > 0.0
@@ -1894,7 +1894,7 @@ def test_blend_pinned_weight_has_zero_se():
 def test_blend_se_nan_without_blend_coupling():
     """The blend readouts are NaN for a non-blend fit (nothing to report)."""
     docs, parents = _mixed_corpus(n_threads=40)
-    m = topica.ThreadTM(4, em_iters=40, seed=13)  # parent coupling
+    m = topica.TreeFieldTM(4, em_iters=40, seed=13)  # parent coupling
     m.fit(docs, parents=parents)
     assert np.isnan(m.blend_alpha_se) and np.isnan(m.blend_beta_se)
     assert np.isnan(m.blend_anchor) and np.isnan(m.blend_anchor_se)
@@ -1908,7 +1908,7 @@ def test_blend_split_se_nan_when_unidentified_but_anchor_finite():
     The individual weight SEs must be NaN there rather than reading as a spuriously tight interval,
     while the anchor SE — the SE of the identified combined share alpha+beta — stays finite (#863)."""
     docs, parents, cov, vocab = _threaded_corpus(n_threads=40, depth=2)
-    m = topica.ThreadTM(2, em_iters=30, seed=13, coupling="blend")
+    m = topica.TreeFieldTM(2, em_iters=30, seed=13, coupling="blend")
     with pytest.warns(UserWarning, match="not separately identified"):
         m.fit(docs, parents=parents)
     assert np.isnan(m.blend_alpha_se) and np.isnan(m.blend_beta_se)
@@ -1924,7 +1924,7 @@ def test_blend_se_is_deterministic():
     docs, parents = _mixed_corpus(n_threads=80)
     ses = []
     for _ in range(4):
-        m = topica.ThreadTM(4, em_iters=60, seed=13, coupling="blend")
+        m = topica.TreeFieldTM(4, em_iters=60, seed=13, coupling="blend")
         m.fit(docs, parents=parents)
         ses.append((m.blend_alpha_se, m.blend_beta_se, m.blend_anchor_se))
     assert all(s == ses[0] for s in ses), ses
@@ -1933,11 +1933,11 @@ def test_blend_se_is_deterministic():
 def test_blend_se_survives_save_load(tmp_path):
     """The clustered SEs round-trip through save/load (issue #863)."""
     docs, parents = _mixed_corpus(n_threads=60)
-    m = topica.ThreadTM(4, em_iters=50, seed=13, coupling="blend")
+    m = topica.TreeFieldTM(4, em_iters=50, seed=13, coupling="blend")
     m.fit(docs, parents=parents)
     p = tmp_path / "blend_se.bin"
     m.save(str(p))
-    m2 = topica.ThreadTM.load(str(p))
+    m2 = topica.TreeFieldTM.load(str(p))
     assert m2.blend_alpha_se == m.blend_alpha_se
     assert m2.blend_beta_se == m.blend_beta_se
     assert m2.blend_anchor_se == pytest.approx(m.blend_anchor_se)
@@ -1945,7 +1945,7 @@ def test_blend_se_survives_save_load(tmp_path):
 
 def test_blend_fixed_weights_respected():
     docs, parents = _mixed_corpus(n_threads=30)
-    m = topica.ThreadTM(4, em_iters=40, seed=13, coupling="blend", blend_alpha=0.6, blend_beta=0.3)
+    m = topica.TreeFieldTM(4, em_iters=40, seed=13, coupling="blend", blend_alpha=0.6, blend_beta=0.3)
     m.fit(docs, parents=parents)
     assert m.blend_alpha == 0.6 and m.blend_beta == 0.3
     assert m.settings["blend_alpha"] == 0.6 and m.settings["blend_beta"] == 0.3
@@ -1957,12 +1957,12 @@ def test_blend_partial_pin_keeps_convexity():
     three-reviewer finding on PR #833."""
     docs, parents = _mixed_corpus()
     for pin in (0.5, 0.7, 0.9):
-        ma = topica.ThreadTM(4, em_iters=60, seed=13, coupling="blend", blend_alpha=pin)
+        ma = topica.TreeFieldTM(4, em_iters=60, seed=13, coupling="blend", blend_alpha=pin)
         ma.fit(docs, parents=parents)
         assert ma.blend_alpha == pin
         assert 0.0 <= ma.blend_beta <= 1.0 - pin + 1e-9
         assert ma.blend_alpha + ma.blend_beta <= 1.0 + 1e-9
-        mb = topica.ThreadTM(4, em_iters=60, seed=13, coupling="blend", blend_beta=pin)
+        mb = topica.TreeFieldTM(4, em_iters=60, seed=13, coupling="blend", blend_beta=pin)
         mb.fit(docs, parents=parents)
         assert mb.blend_beta == pin
         assert 0.0 <= mb.blend_alpha <= 1.0 - pin + 1e-9
@@ -1971,13 +1971,13 @@ def test_blend_partial_pin_keeps_convexity():
 
 def test_blend_transform_and_save(tmp_path):
     docs, parents = _mixed_corpus(n_threads=30)
-    m = topica.ThreadTM(4, em_iters=50, seed=13, coupling="blend")
+    m = topica.TreeFieldTM(4, em_iters=50, seed=13, coupling="blend")
     m.fit(docs, parents=parents)
     th = m.transform(docs, parents=parents)
     assert th.shape == (len(docs), 4) and np.allclose(th.sum(1), 1.0)
     p = tmp_path / "blend.bin"
     m.save(str(p))
-    m2 = topica.ThreadTM.load(str(p))
+    m2 = topica.TreeFieldTM.load(str(p))
     assert m2.coupling == "blend"
     assert m2.blend_alpha == m.blend_alpha and m2.blend_beta == m.blend_beta
     assert np.allclose(m2.transform(docs, parents=parents), th)
@@ -1986,7 +1986,7 @@ def test_blend_transform_and_save(tmp_path):
 def test_blend_identifiability_warning():
     """A shallow (depth-2-only) corpus cannot separate alpha from beta; the fit warns."""
     docs, parents, cov, vocab = _threaded_corpus(n_threads=20, depth=2)
-    m = topica.ThreadTM(2, em_iters=30, seed=13, coupling="blend")
+    m = topica.TreeFieldTM(2, em_iters=30, seed=13, coupling="blend")
     with pytest.warns(UserWarning, match="not separately identified"):
         m.fit(docs, parents=parents)
 
