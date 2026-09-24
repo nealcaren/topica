@@ -143,6 +143,11 @@ topic, "replies follow the thread" and "replies answer the original post" produc
 data, and a long post is simply the most precise estimate of that topic. The OP effect is
 cleanly interpretable when the original post and the discussion can diverge.
 
+In the pooled fit, the parent and original-post pseudo-counts compete when the two are
+correlated: on one Ask community we tested, the pooled fit moved all the weight to the original
+post and set $a_p$ to zero, while the switch kept both. Compare `alpha` with and without `"op"`
+before reading a drop in $a_p$ as a finding.
+
 ## Strip quotes first
 
 Quoted text makes a reply look like its parent for reasons that have nothing to do with topical
