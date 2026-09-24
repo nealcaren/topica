@@ -9,7 +9,8 @@ truth, and (c) finds no edge effect on a no-inheritance null.
 Known limit (documented in topica.threads): one pseudo-count per context borrows for every
 reply, so when only about half of replies inherit and the rest start sharply different topics,
 borrowing hurts the non-inheriting replies as much as it helps the others and the fit returns
-zero. A per-reply inherit-or-innovate switch is the follow-up.
+zero. The per-reply inherit-or-innovate switch (`switch=True`, #897) handles that case; its
+tests are at the end of this file.
 """
 from collections import Counter
 from itertools import permutations
@@ -336,3 +337,61 @@ def test_groups_are_read_by_position_not_label():
     a = threads.ThreadSmoother(contexts=("parent",)).fit(docs, parents, groups=labels, **kw)
     b = threads.ThreadSmoother(contexts=("parent",)).fit(docs, parents, groups=series, **kw)
     assert a.alpha_by_group == b.alpha_by_group
+
+
+# ------------------------------------------------ inherit-or-innovate switch (#897)
+
+
+def test_sequential_log_ml_is_exact_for_two_tokens():
+    # For two tokens the soft-count Polya urn is the exact Dirichlet-multinomial marginal:
+    # p(w1) = sum_k m_k b_k,w1 and p(w2 | w1) = sum_k E[theta_k | w1] b_k,w2.
+    beta = np.array([[0.7, 0.2, 0.1], [0.1, 0.3, 0.6]])
+    m = np.array([[0.3, 0.7]])
+    grid = np.array([0.5, 5.0])
+    got = threads._sequential_log_ml([np.array([0, 2])], m, grid, beta)[0]
+    for a, g in zip(grid, got):
+        p1 = m[0] * beta[:, 0]
+        r = p1 / p1.sum()
+        post = (a * m[0] + r) / (a + 1)
+        assert np.isclose(g, np.log(p1.sum()) + np.log(post @ beta[:, 2]))
+
+
+def test_switch_recovers_the_edge_effect_at_half_inheritance():
+    # The pooled pseudo-count fit borrows nothing here (see module docstring); the switch lets
+    # each reply's own words decide, so the inheriting half gains and the rest are left alone.
+    docs, parents, _, _ = _simulate(inherit=0.5, n_threads=300, seed=0)
+    sm = threads.ThreadSmoother(switch=True).fit(docs, parents, base=_lda, seed=3, n_boot=100)
+    assert sm.edge_effect["lo"] > 0, sm.edge_effect
+    assert sm.completion["lo"] > 0, sm.completion
+    assert min(sm.completion["by_length"]["gain"]) > 0
+    replies = np.array(parents) >= 0
+    w = sm.inherit_weights[replies]
+    assert w.shape[1] == 3 and np.allclose(w.sum(1), 1.0)
+    assert abs(w[:, :2].sum(1).mean() - 0.5) < 0.15      # tracks the planted rate
+    assert set(sm.rho) == {"parent", "thread", "new"}
+    assert np.isclose(sum(sm.rho.values()), 1.0)
+    assert all(lo <= sm.rho[k] <= hi for k, (lo, hi) in sm.rho_ci.items())
+    th = sm.theta_tilde[~np.isnan(sm.theta_tilde[:, 0])]
+    assert np.allclose(th.sum(1), 1.0) and (th >= 0).all()
+
+
+def test_switch_finds_no_edge_effect_without_inheritance():
+    docs, parents, _, _ = _simulate(inherit=0.0, seed=1)
+    sm = threads.ThreadSmoother(switch=True).fit(docs, parents, base=_lda, seed=3, n_boot=100,
+                                                 final=False)
+    assert sm.edge_effect["lo"] <= 0 <= sm.edge_effect["hi"], sm.edge_effect
+    assert sm.rho["new"] > 0.8
+
+
+def test_switch_weights_rise_with_inheritance(inherited):
+    docs, parents, *_ = inherited[1:3]
+    sm = threads.ThreadSmoother(switch=True).fit(docs, parents, base=_lda, seed=3, n_boot=50)
+    w = sm.inherit_weights[np.array(parents) >= 0]
+    assert w[:, :2].sum(1).mean() > 0.75                  # planted rate 0.9
+
+
+def test_switch_rejects_groups():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=20, seed=15)
+    with pytest.raises(ValueError, match="groups"):
+        threads.ThreadSmoother(switch=True).fit(docs, parents, base=_lda,
+                                                groups=[0] * len(docs))

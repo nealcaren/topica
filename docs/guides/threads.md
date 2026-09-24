@@ -81,6 +81,47 @@ report; `replicates` lists each calibration's point estimates. `draws` holds the
 bootstrap draws, for intervals on derived quantities such as the difference in parent share
 between two corpora.
 
+## When only some replies inherit: `switch=True`
+
+One pseudo-count per context borrows the same amount for every reply of a given length. When
+some replies take up their parent's topics and others turn to different ones, that single
+weight helps the first group and hurts the second, and it can settle near zero even though
+many replies inherit. `switch=True` lets each reply's own words decide how much it borrows:
+
+```python
+model = topica.ThreadTM(20, seed=13, switch=True).fit(docs, parents, iters=1000)
+model.rho               # prior weights: {"parent": ..., "thread": ..., "new": ...}
+model.inherit_weights   # (D, 3) per-reply posterior weights, same column order
+```
+
+Each reply's topic mix gets a mixture prior with three components: one centered on its parent,
+one on the rest of its thread, and an innovate component centered on the corpus mean mix. The
+weights $(w_{\mathrm{par}}, w_{\mathrm{thr}}, w_{\mathrm{new}})$ are the posterior
+probabilities of the three components given the reply's observed tokens, and
+
+$$
+\tilde\theta_d = w_{\mathrm{par}}\,\frac{n_d\theta_d + a_p\theta_{\mathrm{par}(d)}}{n_d + a_p}
+  + w_{\mathrm{thr}}\,\frac{n_d\theta_d + a_t\theta_{\mathrm{thr}(d)}}{n_d + a_t}
+  + w_{\mathrm{new}}\,\theta_d .
+$$
+
+The component probabilities use the Dirichlet-multinomial marginal likelihood of the reply's
+tokens with the topics held fixed, computed token by token, so the reply's own fitted
+$\theta_d$ never scores the words it was fit to. (A likelihood ratio built from $\theta_d$
+would always favor "innovate".) The pseudo-counts and the prior weights $\rho$ are chosen by
+held-out log likelihood on validation threads, and `completion` and `edge_effect` are reported
+on test threads, exactly as in the pooled fit.
+
+Under the switch, `parent_share` is $\rho_{\mathrm{par}} / (\rho_{\mathrm{par}} +
+\rho_{\mathrm{thr}})$: among replies that inherit, the share that take up their parent rather
+than the rest of the thread. The mean of `inherit_weights[:, :2].sum(1)` over replies estimates
+the share of replies that inherit at all. On the planted simulator in `tests/test_threads.py`
+it is 0.44 when half the replies inherit and 0.90 when nine in ten do; the pooled fit borrows
+nothing at 50%, while the switch recovers a positive edge effect.
+
+The switch costs more than the pooled fit (roughly three to five times on a
+few-thousand-comment community) and does not yet support `groups=`.
+
 ## Strip quotes first
 
 Quoted text makes a reply look like its parent for reasons that have nothing to do with topical
@@ -111,11 +152,12 @@ estimates it jointly; it was topica's earlier threaded model under the name `Thr
 
 ## Limits
 
-- One pseudo-count per context borrows for every reply alike. When only some replies take up
-  their parent's topics and the others turn to sharply different ones, borrowing can cost the
-  second group as much as it helps the first, and the fit returns little or no borrowing. Read
-  a small pseudo-count as "borrowing does not help on average", not "no reply follows its
-  parent". `completion["by_length"]` shows where borrowing helps and hurts.
+- Without `switch=True`, one pseudo-count per context borrows for every reply alike. When
+  only some replies take up their parent's topics and the others turn to sharply different
+  ones, borrowing can cost the second group as much as it helps the first, and the fit returns
+  little or no borrowing. Read a small pseudo-count as "borrowing does not help on average",
+  not "no reply follows its parent". `completion["by_length"]` shows where borrowing helps and
+  hurts; a negative tercile is a sign to try the switch.
 - Pseudo-counts are calibrated on leaf replies and applied to every document. For an internal
   comment, the thread mix includes its own replies.
 - `doc_topic` is a topic measure. Reuse of the parent's own words is a separate construct and
