@@ -194,6 +194,38 @@ correlated: on one Ask community we tested, the pooled fit moved all the weight 
 post and set $a_p$ to zero, while the switch kept both. Compare `alpha` with and without `"op"`
 before reading a drop in $a_p$ as a finding.
 
+## A semantic context from embeddings
+
+A topic model knows only the vocabulary it was fit on, so a three-word reply such as "What
+about the CBO?" gives it little to go on. A pretrained sentence encoder knows what those words
+relate to. The `"semantic"` context brings that in: each document's semantic mix is the
+similarity-weighted mean topic mix of its `semantic_k` nearest neighbors in embedding space,
+using the sum of the document's and its parent's embeddings as the query (the document and
+its parent are never their own neighbors).
+
+```python
+from sentence_transformers import SentenceTransformer
+
+encoder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+model = topica.ThreadTM(20, seed=13, contexts=("parent", "thread", "semantic"))
+model.fit(docs, parents, embed=encoder)            # or embed=lambda texts: array (n, dim)
+model.alpha                                         # includes a pseudo-count for "semantic"
+```
+
+`embed` receives each document's kept tokens joined by spaces and must return one row per
+text. During calibration the texts come from the masked corpus, so held-out words are never
+embedded; embeddings are cached by text. The semantic context is a context like the others:
+its pseudo-count is estimated on held-out replies, it works with and without `switch=True`,
+and the placebo trees rebuild it from the shuffled parent, so `edge_effect` still measures what
+the specific parent adds beyond the semantic neighbors. Neighbors are drawn from documents with
+at least `semantic_min_tokens` tokens (default 30).
+
+On the truncation benchmark in the threadtm-paper project (long replies cut to a few words,
+scored against the topic mix of their held-back words), adding the semantic context improves
+recovery over the plain switch on the shortest replies, and a pooled fit with
+`("parent", "thread", "semantic")` no longer collapses to zero borrowing where the parent-only
+fit did. It needs an embedding model, which topica does not ship; any encoder works.
+
 ## Strip quotes first
 
 Quoted text makes a reply look like its parent for reasons that have nothing to do with topical

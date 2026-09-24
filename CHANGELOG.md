@@ -8,6 +8,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **A semantic context for `ThreadSmoother` / `ThreadTM`** (experimental).
+  `contexts=(..., "semantic")` with `fit(..., embed=encoder)` adds each document's
+  embedding-neighbor topic mix (the similarity-weighted mean mix of its `semantic_k` nearest
+  neighbors, queried with the document's plus its parent's embedding) as a context with its
+  own pseudo-count, estimated on held-out replies like the others. Calibration embeds only the
+  masked corpus, embeddings are cached by text, and the placebo trees rebuild the context from
+  the shuffled parent. Works with and without `switch=True`.
+
+### Added
+
 - **Per-reply inherit-or-innovate switch for `ThreadSmoother` / `ThreadTM`** (#897,
   experimental). `switch=True` gives each reply a two-component mixture prior: inherit (the
   pooled context shrinkage) or new (centered on the corpus mean mix). The inherit probability

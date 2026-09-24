@@ -600,3 +600,72 @@ def test_zero_borrowing_is_not_at_the_strength_bound():
     sm = threads.ThreadSmoother().fit(docs, parents, base=_lda, seed=3, n_boot=50,
                                       final=False)
     assert sum(sm.alpha.values()) == 0 and sm.strength_at_bound is False
+
+
+# ------------------------------------------------ the semantic (embedding) context
+
+
+def _bow_embed(texts, dim=64):
+    """A deterministic toy embedder: hashed bag of words (stable across runs via crc32)."""
+    import zlib
+    out = np.zeros((len(texts), dim))
+    for i, t in enumerate(texts):
+        for w in t.split():
+            out[i, zlib.crc32(w.encode()) % dim] += 1.0
+    return out
+
+
+def test_semantic_mix_uses_neighbors_but_never_self_or_parent():
+    # Four documents; embeddings chosen so doc 3's nearest pool neighbors are 0 and 1.
+    emb = np.array([[1.0, 0.0], [0.9, 0.1], [0.0, 1.0], [1.0, 0.05]])
+    sem = threads._Semantic(emb, np.array([True, True, True, False]), k=2)
+    theta = np.array([[1.0, 0.0], [0.5, 0.5], [0.0, 1.0], [0.3, 0.7]])
+    idx, w = sem.neighbors([-1, 0, 0, -1])
+    assert set(idx[3]) == {0, 1}
+    assert 1 not in idx[1] and 0 not in idx[1]            # self and parent excluded
+    mix = sem.mix(theta, [-1, 0, 0, -1])
+    expect = (w[3][:, None] * theta[idx[3]]).sum(0) / w[3].sum()
+    assert np.allclose(mix[3], expect)
+
+
+def test_semantic_context_never_embeds_held_out_tokens():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=80, seed=24)
+    seen = []
+
+    def rec(texts):
+        seen.extend(texts)
+        return _bow_embed(texts)
+    threads.ThreadSmoother(contexts=("parent", "semantic"), semantic_min_tokens=8).fit(
+        docs, parents, base=_lda, seed=3, n_boot=20, final=False, embed=rec)
+    _, _, has_child = threads.thread_structure(parents)
+    full = {" ".join(d) for i, d in enumerate(docs)
+            if parents[i] >= 0 and not has_child[i] and len(d) >= 5}
+    assert seen and not (set(seen) & full)                 # masked leaves only, never whole
+
+
+@pytest.mark.parametrize("switch", [False, True])
+def test_semantic_context_fits_and_smooths(switch):
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=120, seed=25)
+    sm = threads.ThreadSmoother(contexts=("parent", "thread", "semantic"), switch=switch,
+                                semantic_min_tokens=8).fit(
+        docs, parents, base=_lda, seed=3, n_boot=20, embed=_bow_embed)
+    assert set(sm.alpha) == {"parent", "thread", "semantic"}
+    th = sm.theta_tilde[~np.isnan(sm.theta_tilde[:, 0])]
+    assert np.allclose(th.sum(1), 1.0)
+
+
+def test_semantic_context_argument_checks():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=20, seed=26)
+    with pytest.raises(ValueError, match="embed"):
+        threads.ThreadSmoother(contexts=("parent", "semantic")).fit(docs, parents, base=_lda)
+    with pytest.raises(ValueError, match="semantic"):
+        threads.ThreadSmoother().fit(docs, parents, base=_lda, embed=_bow_embed)
+
+
+def test_all_four_contexts_fit():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=80, seed=27)
+    for switch in (False, True):
+        sm = threads.ThreadSmoother(contexts=("parent", "op", "thread", "semantic"),
+                                    switch=switch, semantic_min_tokens=8).fit(
+            docs, parents, base=_lda, seed=3, n_boot=10, final=False, embed=_bow_embed)
+        assert set(sm.alpha) == {"parent", "op", "thread", "semantic"}
