@@ -232,15 +232,17 @@ another's neighbor, so deduplicate first. Neighbors are drawn from documents wit
 at least `semantic_min_tokens` tokens (default 30).
 
 On the truncation benchmark in the threadtm-paper project (long replies cut to a few words,
-scored against the topic mix of their held-back words, six corpora), `switch=True` with the
-semantic context recovered short replies' topics better than the plain switch in 22 of 24
-corpus-by-length cells and raised held-out completion in every corpus. Use it with the switch:
+scored against the topic mix of their held-back words, six corpora), `switch=True` with
+`("parent", "thread", "semantic")` recovered short replies' topics better than the plain switch
+in all 24 corpus-by-length cells (18 intervals excluding zero, none below) and raised held-out
+completion in every corpus. Use it with the switch:
 a pooled fit with the semantic context still collapsed to zero borrowing in two communities
 and was worse than the plain switch in a third. `("parent", "semantic")` did as well as
-`("parent", "thread", "semantic")` and is faster. (Benchmark:
-`analysis/validation/truncation_benchmark.py` in threadtm-paper, commit 0090c67, with
-all-MiniLM-L6-v2, K = 30 and an LDA base; these results hold for that setup, not every
-encoder or corpus.) It needs an embedding model, which topica does not ship. The neighbor search
+`("parent", "thread", "semantic")` (23 of 24 cells) and is faster. (Benchmark:
+`analysis/validation/semantic_benchmark.py` and `results/semantic_benchmark.jsonl` in
+threadtm-paper, commit 0e8ac38, built on the truncation design in
+`truncation_benchmark.py`; all-MiniLM-L6-v2, K = 30, an LDA base. These results hold for that
+setup, not every encoder or corpus.) It needs an embedding model, which topica does not ship. The neighbor search
 is exact and its cost grows with documents times pool size, so expect minutes per calibration
 beyond a few tens of thousands of documents.
 
