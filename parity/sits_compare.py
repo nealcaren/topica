@@ -15,15 +15,15 @@ own Java reference:
 Chains of both implementations use different RNGs, so agreement is statistical.
 The metrics are the ones that tell a working sampler from a broken one. Rossiter's
 per-speaker score is dominated by conversation openers (always shifts) and short
-turns (never shifts), so a sampler that never shifts still correlates ~0.9 with it
-(Gate A, Reviewer B). We therefore compare only *eligible* turns:
+turns (never shifts), so it can agree with the reference largely because the forced
+turns agree. We therefore compare only *eligible* turns:
 
   1. each speaker's eligible-turn shift rate (posterior mean per chain), as a
      two-sample z against the pooled chain-to-chain spread of both engines;
   2. the overall eligible shift rate, same test;
-  3. per-turn posterior shift probability on eligible turns: correlation of the
-     topica chain-average with the Java chain-average, against the Java
-     half-vs-half floor (chains 0-2 vs 3-5) minus a margin;
+  3. per-turn posterior shift probability on eligible turns: correlation of a
+     three-chain topica average with a three-chain Java average, against the Java
+     half-vs-half floor (chains 0-2 vs 3-5, also three vs three) minus a margin;
   4. topic-word agreement after Hungarian alignment, against the Java seed-to-seed
      floor minus a margin.
 
@@ -300,7 +300,11 @@ def run(verbose: bool = True) -> dict:
         half = java_p.shape[0] // 2
         floor_corr = float(np.corrcoef(java_p[:half, eligible].mean(0),
                                        java_p[half:, eligible].mean(0))[0, 1])
-        corr = float(np.corrcoef(top_p[:, eligible].mean(0), java_p[:, eligible].mean(0))[0, 1])
+        # like-for-like with the floor: three topica chains vs three Java chains
+        corr = float(np.mean([
+            np.corrcoef(top_p[a, eligible].mean(0), java_p[b, eligible].mean(0))[0, 1]
+            for a in (slice(None, half), slice(half, None))
+            for b in (slice(None, half), slice(half, None))]))
         floor_cos = float(np.mean([_aligned_cosine(java_phi[i], java_phi[j])
                                    for i in range(len(java_phi))
                                    for j in range(i + 1, len(java_phi))]))

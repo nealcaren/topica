@@ -15,12 +15,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   per-speaker score (`shift_propensity`, with posterior draws and intervals), the share of each
   speaker's sampled turns that shift (`eligible_shift_rate`), per-turn shift probabilities,
   segments, and a convergence trace with a Geweke warning. A collapsed Gibbs port of the
-  reference Java sampler, about 8.5x faster, validated against it in `parity/sits_compare.py`.
-  `compat="rossiter2022"` reproduces Rossiter's fork exactly, including a bookkeeping defect
+  reference Java sampler, about 8.5x faster than the Java sampler as run, validated against it in
+  `parity/sits_compare.py`. `compat="rossiter2022"` reproduces the behaviour of Rossiter's fork,
+  including a bookkeeping defect
   (short turns drawn as initial shifts stay segment boundaries and shift counts for the whole
   chain) that raises shift rates in her published fits; the default mode fixes it.
-
-### Added
 
 - **A semantic context for `ThreadSmoother` / `ThreadTM`** (experimental).
   `contexts=(..., "semantic")` with `fit(..., embed=encoder)` adds each document's
