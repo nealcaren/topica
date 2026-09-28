@@ -890,3 +890,44 @@ def test_semantic_masking_holds_across_refits():
               and len(d) >= 5]
     full = {" ".join(d) for d in leaves}
     assert seen and not (set(seen) & full)      # three calibrations, no whole leaf embedded
+
+
+# ------------------------------------------------ switch-calibration kernel (#907)
+
+
+def _sequential_log_ml_numpy(ids, prior_mean, conc_grid, beta):
+    """The pre-#907 numpy implementation of ``threads._sequential_log_ml``, kept as its
+    reference: a Python loop over token positions, vectorized over documents and the grid."""
+    n_docs, k = prior_mean.shape
+    conc = np.asarray(conc_grid, float)[:, None, None]
+    out = np.full((n_docs, conc.shape[0]), np.nan)
+    rows = np.flatnonzero(~np.isnan(prior_mean[:, 0]))
+    lens = np.array([len(ids[r]) for r in rows], int)
+    idm = np.zeros((rows.size, int(lens.max(initial=0))), int)
+    for j, r in enumerate(rows):
+        idm[j, :lens[j]] = ids[r]
+    am = conc * prior_mean[rows][None]
+    counts = np.zeros_like(am)
+    ll = np.zeros((conc.shape[0], rows.size))
+    for i in range(idm.shape[1]):
+        live = np.flatnonzero(lens > i)
+        p = (am[:, live] + counts[:, live]) * beta[:, idm[live, i]].T[None]
+        tot = p.sum(2)
+        ll[:, live] += np.log(tot / (conc[:, :, 0] + i))
+        counts[:, live] += p / tot[:, :, None]
+    out[rows] = ll.T
+    return out
+
+
+def test_sequential_log_ml_matches_numpy_reference():
+    rng = np.random.default_rng(13)
+    k, v, d = 6, 40, 60
+    beta = rng.dirichlet(np.full(v, 0.2), k)
+    ids = [rng.integers(0, v, rng.integers(0, 30)) for _ in range(d)]   # includes empty docs
+    prior = rng.dirichlet(np.ones(k), d)
+    prior[::5] = np.nan                                                   # no context
+    got = threads._sequential_log_ml(ids, prior, threads.CONC_GRID, beta)
+    want = _sequential_log_ml_numpy(ids, prior, threads.CONC_GRID, beta)
+    assert got.shape == (d, len(threads.CONC_GRID))
+    assert np.array_equal(np.isnan(got), np.isnan(want))
+    np.testing.assert_allclose(got, want, rtol=1e-12, atol=1e-12)

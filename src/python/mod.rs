@@ -20,7 +20,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 
 use numpy::ndarray::{Array1, Array2, Array3};
-use numpy::{PyArray1, PyArray2, PyArray3, PyReadonlyArray2, ToPyArray};
+use numpy::{PyArray1, PyArray2, PyArray3, PyReadonlyArray1, PyReadonlyArray2, ToPyArray};
 
 use crate::bertopic;
 use crate::cvb0_ext::Cvb0ToModel; // re-adds Cvb0::to_topic_model (TopicModel lives in topica)
@@ -9746,6 +9746,49 @@ fn thread_tm_fit(
     })
 }
 
+/// Switch-calibration kernel of `topica.threads.ThreadSmoother` (#907): the log marginal
+/// likelihood of each document's tokens under a Dirichlet prior `a * prior_mean[d]` for every
+/// `a` in `conc_grid`, topics fixed (see `crate::thread_smoother::sequential_log_ml`).
+/// `tokens`/`offsets` are the documents' word ids back to back and their `D + 1`
+/// boundaries; `prior_mean` is `D x K` (NaN first entry = no prior, NaN row out) and `beta`
+/// the `K x V` topic-word matrix. Returns `D x G`. Internal: called from `threads.py`.
+#[pyfunction]
+fn _thread_sequential_log_ml<'py>(
+    py: Python<'py>,
+    tokens: PyReadonlyArray1<'py, i64>,
+    offsets: PyReadonlyArray1<'py, i64>,
+    prior_mean: PyReadonlyArray2<'py, f64>,
+    conc_grid: Vec<f64>,
+    beta: PyReadonlyArray2<'py, f64>,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let (n_docs, k) = prior_mean.as_array().dim();
+    let (kb, v) = beta.as_array().dim();
+    let offs: Vec<usize> = offsets.as_array().iter().map(|&o| o as usize).collect();
+    if kb != k
+        || offs.len() != n_docs + 1
+        || offs.last().copied().unwrap_or(0) != tokens.as_array().len()
+    {
+        return Err(PyValueError::new_err(
+            "sequential_log_ml: prior_mean, beta, offsets and tokens disagree in shape",
+        ));
+    }
+    let toks: Vec<u32> = tokens.as_array().iter().map(|&t| t as u32).collect();
+    if toks.iter().any(|&t| t as usize >= v) || offs.windows(2).any(|w| w[0] > w[1]) {
+        return Err(PyValueError::new_err(
+            "sequential_log_ml: token id or offset out of range",
+        ));
+    }
+    let pm: Vec<f64> = prior_mean.as_array().iter().copied().collect();
+    let bt: Vec<f64> = beta.as_array().t().iter().copied().collect();
+    let g = conc_grid.len();
+    let out = py.allow_threads(move || {
+        crate::thread_smoother::sequential_log_ml(&toks, &offs, &pm, k, &conc_grid, &bt)
+    });
+    Ok(Array2::from_shape_vec((n_docs, g), out)
+        .expect("D x G output")
+        .to_pyarray_bound(py))
+}
+
 /// stm-faithful FREX score matrix (K×V) from the `topica-core` `inspect` module
 /// (the same port faSTM and the Stata plugin use). `beta` is the K×V topic-word
 /// probability matrix as a list of lists; `word_counts` (length V) enables stm's
@@ -17317,6 +17360,7 @@ fn _topica(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tokenize_many, m)?)?;
     m.add_function(wrap_pyfunction!(window_cooccurrence, m)?)?;
     m.add_function(wrap_pyfunction!(thread_tm_fit, m)?)?;
+    m.add_function(wrap_pyfunction!(_thread_sequential_log_ml, m)?)?;
     m.add_function(wrap_pyfunction!(inspect_frex_scores, m)?)?;
     m.add_function(wrap_pyfunction!(inspect_lift_scores, m)?)?;
     m.add_function(wrap_pyfunction!(inspect_score_scores, m)?)?;

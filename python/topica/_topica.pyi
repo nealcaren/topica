@@ -82,6 +82,23 @@ def project(
     ...
 
 
+def _thread_sequential_log_ml(
+    tokens: numpy.typing.NDArray[numpy.int64],
+    offsets: numpy.typing.NDArray[numpy.int64],
+    prior_mean: numpy.typing.NDArray[numpy.float64],
+    conc_grid: list[float],
+    beta: numpy.typing.NDArray[numpy.float64],
+) -> numpy.typing.NDArray[numpy.float64]:
+    """Switch-calibration kernel of topica.threads.ThreadSmoother (internal, #907).
+
+    Log marginal likelihood of each document's tokens under a Dirichlet prior
+    `a * prior_mean[d]` for every `a` in `conc_grid`, topics `beta` (K x V) fixed.
+    `tokens` (int64) holds the documents' word ids back to back and `offsets`
+    (int64, D + 1) their boundaries. Returns (D, len(conc_grid)); NaN rows where
+    `prior_mean`'s first entry is NaN.
+    """
+    ...
+
 def inspect_frex_scores(
     beta: list[list[float]],
     word_counts: list[int],

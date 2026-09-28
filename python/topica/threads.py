@@ -424,29 +424,15 @@ def _sequential_log_ml(ids, prior_mean, conc_grid, beta):
     where ``c`` accumulates each earlier token's topic responsibilities. The document's own
     fitted mix never enters, so a reply's words cannot vouch for a component by having been
     fit to it."""
-    n_docs, k = prior_mean.shape
-    conc = np.asarray(conc_grid, float)[:, None, None]
-    out = np.full((n_docs, conc.shape[0]), np.nan)
-    rows_all = np.flatnonzero(~np.isnan(prior_mean[:, 0]))
-    for start in range(0, rows_all.size, 1000):          # chunks bound the (G, R, K) state
-        rows = rows_all[start:start + 1000]
-        lens = np.array([len(ids[r]) for r in rows], int)
-        width = int(lens.max(initial=0))
-        idm = np.zeros((rows.size, width), int)
-        for j, r in enumerate(rows):
-            idm[j, :lens[j]] = ids[r]
-        am = conc * prior_mean[rows][None]                # (G, R, K)
-        counts = np.zeros_like(am)
-        ll = np.zeros((conc.shape[0], rows.size))
-        for i in range(width):
-            live = np.flatnonzero(lens > i)
-            bw = beta[:, idm[live, i]].T[None]            # (1, R_live, K)
-            p = (am[:, live] + counts[:, live]) * bw
-            tot = p.sum(2)
-            ll[:, live] += np.log(tot / (conc[:, :, 0] + i))
-            counts[:, live] += p / tot[:, :, None]
-        out[rows] = ll.T
-    return out
+    from ._topica import _thread_sequential_log_ml
+
+    lens = np.fromiter((len(x) for x in ids), np.int64, len(ids))
+    offsets = np.concatenate([[0], np.cumsum(lens)]).astype(np.int64)
+    tokens = (np.concatenate([np.asarray(x, np.int64) for x in ids]) if len(ids)
+              else np.zeros(0, np.int64))
+    return _thread_sequential_log_ml(tokens, offsets, np.ascontiguousarray(prior_mean, float),
+                                     [float(a) for a in conc_grid],
+                                     np.ascontiguousarray(beta, float))
 
 
 def _interp_cols(table, x, grid):
