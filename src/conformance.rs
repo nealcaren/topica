@@ -241,6 +241,14 @@ pub const RUST_ESTIMATORS: &[RegistryEntry] = &[
         family: ModelFamily::Dirichlet,
         exempt: &[],
     },
+    // SITS: collapsed Gibbs over topic shifts and topics. doc_topic rows are the
+    // mixtures of conversation segments (shared across turns), not one Dirichlet
+    // posterior per document, so None_ (as MGLDA).
+    RegistryEntry {
+        name: "SITS",
+        family: ModelFamily::None_,
+        exempt: &[],
+    },
     // MG-LDA: two-grain collapsed Gibbs. doc_topic is an empirical prevalence over
     // [global|local] topics (rows sum to 1 but not one Dirichlet posterior — global is
     // doc-level, local window-level), so None_ (skips the Dirichlet/simplex contract).

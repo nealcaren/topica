@@ -40,6 +40,9 @@ _OBJECTIVE_LABEL = {
     "LDA": _LL, "PT": _LL, "KeyATM": _LL, "SeededLDA": _LL, "FactorialLDA": _LL,
     "AuthorTopic": _LL, "MGLDA": _LL, "TopicsOverTime": _LL, "DMR": _LL, "GDMR": _LL,
     "LabeledLDA": _LL, "SAGE": _LL,
+    # SITS: collapsed log joint (speaker, topic-word and segment terms), as the
+    # reference's loglikelihood.txt
+    "SITS": "collapsed log joint",
     # sLDA records only the Gaussian likelihood of the response y, not of the tokens
     "SupervisedLDA": "response log-likelihood",
     # Wordfish's Poisson log-likelihood drops the -log(y!) constant

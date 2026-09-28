@@ -8,6 +8,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
 
 ### Added
 
+- **`SITS`, parametric Speaker Identity for Topic Segmentation** (#906; Nguyen, Boyd-Graber &
+  Resnik 2012), the agenda-setting measure of Rossiter (2022, *AJPS*). Conversations are
+  sequences of speaking turns; each turn continues or shifts the topic segment, with a
+  per-speaker shift probability. `fit(turns, speakers, conversations=...)` reports Rossiter's
+  per-speaker score (`shift_propensity`, with posterior draws and intervals), the share of each
+  speaker's sampled turns that shift (`eligible_shift_rate`), per-turn shift probabilities,
+  segments, and a convergence trace with a Geweke warning. A collapsed Gibbs port of the
+  reference Java sampler, about 8.5x faster, validated against it in `parity/sits_compare.py`.
+  `compat="rossiter2022"` reproduces Rossiter's fork exactly, including a bookkeeping defect
+  (short turns drawn as initial shifts stay segment boundaries and shift counts for the whole
+  chain) that raises shift rates in her published fits; the default mode fixes it.
+
+### Added
+
 - **A semantic context for `ThreadSmoother` / `ThreadTM`** (experimental).
   `contexts=(..., "semantic")` with `fit(..., embed=encoder)` adds each document's
   embedding-neighbor topic mix (the similarity-weighted mean mix of its `semantic_k` nearest

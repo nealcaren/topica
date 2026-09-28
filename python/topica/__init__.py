@@ -108,6 +108,7 @@ from ._topica import (
     GuidedNMF,
     CorEx,
     AuthorTopic,
+    SITS,
     MGLDA,
     TopicalNGrams,
     TopicsOverTime,
