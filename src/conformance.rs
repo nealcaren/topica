@@ -402,10 +402,10 @@ mod registry_tests {
         }
         // Mirror of the Python REGISTRY size (user-facing models with an
         // Estimator-backed Rust struct). Bumped to 37 when KeyNMF was added, 38
-        // when CSATM was added.
+        // when CSATM was added, 39 when SITS was added.
         assert_eq!(
             RUST_ESTIMATORS.len(),
-            38,
+            39,
             "registry size drifted from the Python REGISTRY"
         );
     }
