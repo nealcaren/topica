@@ -166,12 +166,12 @@ _REGISTRY = {
         "filename": "reddit_threads.csv",
         "sha256": "318206f6b9c64fddcedc42954c32abcf72b1b865d0e521237b8e4800cf94398f",
         "text_col": "text",
-        "n_docs": 5042,
+        "n_docs": 5022,
         "summary": (
-            "Two-subreddit threaded Reddit corpus (5,042 comments in 171 reply "
+            "Two-subreddit threaded Reddit corpus (5,022 comments in 171 reply "
             "trees): 'askscience' (technical Q&A, replies answer their parent) and "
             "'pokemontrades' (the deepest trees in the source, but replies "
-            "coordinate trades rather than respond on-topic). The TreeFieldTM reply-"
+            "coordinate trades rather than respond on-topic). The ThreadTM reply-"
             "tree vignette. Columns 'doc_id', 'thread_root', 'parent' (0-based row "
             "index of the comment replied to, -1 for a root), 'subreddit', "
             "'timestamp', raw 'text'. Source: ConvoKit reddit-corpus-small "
@@ -501,11 +501,37 @@ def load_ng20_minilm(*, return_path: bool = False):
     return bunch
 
 
-def load_threads(*, return_path: bool = False):
-    """Load the two-subreddit threaded Reddit corpus (5,042 comments, 171 trees).
+def _dedupe_replies(df):
+    """Drop rows that repeat an earlier row's (text, parent) pair (double posts).
 
-    The :class:`~topica.TreeFieldTM` reply-tree vignette. Two subreddits, chosen to
-    make the model's point honestly:
+    Replies to a dropped row are reattached to the copy that is kept, and the
+    ``parent`` column is renumbered to the new row order. Parents precede their
+    children, so one forward pass suffices.
+    """
+    new_of = {}  # old row -> new row
+    seen = {}  # (text, new parent) -> new row
+    keep, new_parents = [], []
+    for i, (text, par) in enumerate(zip(df["text"].tolist(), df["parent"].tolist())):
+        par = int(par)
+        new_par = new_of[par] if par >= 0 else -1
+        key = (str(text), new_par)
+        if new_par >= 0 and key in seen:
+            new_of[i] = seen[key]
+            continue
+        new_of[i] = seen[key] = len(keep)
+        keep.append(i)
+        new_parents.append(new_par)
+    out = df.iloc[keep].reset_index(drop=True)
+    out["parent"] = new_parents
+    return out
+
+
+def load_threads(*, return_path: bool = False):
+    """Load the two-subreddit threaded Reddit corpus (5,022 comments, 171 trees).
+
+    A small reply-tree corpus for :class:`~topica.ThreadTM` and
+    :class:`~topica.TreeFieldTM`. Two subreddits, chosen to make the point
+    honestly:
 
     - ``askscience`` — technical Q&A; replies genuinely answer their parent, so
       the reply tree carries topic structure and persistence is *identifiable*.
@@ -519,19 +545,26 @@ def load_threads(*, return_path: bool = False):
     turnkey::
 
         b = topica.datasets.load_threads()
-        topica.enable_experimental()  # TreeFieldTM is experimental
-        model = topica.TreeFieldTM(8, coupling="parent").fit(
-            b.documents, parents=b.parents, covariates=b.subreddit
-        )
-        model.persistence()   # read `reliability` before claiming persistence
+        topica.enable_experimental()  # ThreadTM is experimental
+        model = topica.ThreadTM(8, seed=13).fit(b.documents, b.parents)
+
+    The loader cleans the two things that would inflate parent uptake. Quoted
+    text is removed from ``documents``: lines starting with ``>`` go first
+    (:func:`topica.threads.strip_quotes`), then any run of five or more tokens
+    copied verbatim from the parent (:func:`topica.threads.strip_copied_runs`).
+    Double posts, rows that repeat an earlier row's text under the same parent,
+    are dropped (20 rows in the source file), and their replies are reattached to
+    the copy that is kept. A duplicate sibling would otherwise predict its twin
+    perfectly through the thread context.
 
     The Bunch carries:
 
-    - ``documents`` — token lists (lowercased, letters-only, min length 3, English
-      stopwords removed), one per row and in row order (empty rows are kept so
-      ``parents`` stays valid).
-    - ``texts`` — the raw, untokenized comment text (retokenize this yourself for
-      a different vocabulary; keep every row to preserve the ``parents`` index).
+    - ``documents`` — token lists (quotes removed, lowercased, letters-only, min
+      length 3, English stopwords removed), one per row and in row order (empty
+      rows are kept so ``parents`` stays valid).
+    - ``texts`` — the raw comment text, quotes included (retokenize this yourself
+      for a different vocabulary; keep every row to preserve the ``parents``
+      index).
     - ``parents`` — list of ints: the 0-based row index of the comment each row
       replies to, or ``-1`` for a thread root. A parent's index is always smaller
       than its child's, so the array is safe to pass straight to ``fit``.
@@ -548,18 +581,20 @@ def load_threads(*, return_path: bool = False):
     if return_path:
         return path
     from .. import ENGLISH_STOPWORDS, tokenize
+    from ..threads import strip_copied_runs, strip_quotes
 
-    df = _read_csv(path)
+    df = _dedupe_replies(_read_csv(path))
     texts = [str(t) for t in df["text"].tolist()]
+    parents = [int(p) for p in df["parent"].tolist()]
     stop = set(ENGLISH_STOPWORDS)
     # Letters-only so curly-apostrophe contractions ("i’d", "it’s") don't survive
     # as tokens; min length 3 drops the short residue. Raw text is in `texts` for
     # anyone who wants a different vocabulary.
     documents = [
-        tokenize(t, stopwords=stop, token_regex=r"[A-Za-z]+", min_length=3)
+        tokenize(strip_quotes(t), stopwords=stop, token_regex=r"[A-Za-z]+", min_length=3)
         for t in texts
     ]
-    parents = [int(p) for p in df["parent"].tolist()]
+    documents = strip_copied_runs(documents, parents, n=5)
     return Bunch(
         df=df,
         documents=documents,

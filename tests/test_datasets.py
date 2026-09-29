@@ -298,7 +298,7 @@ def test_threads_registered():
     rec = datasets._REGISTRY["threads"]
     assert rec["remote"].endswith("reddit_threads.csv")
     assert rec["text_col"] == "text"
-    assert rec["n_docs"] == 5042
+    assert rec["n_docs"] == 5022
     assert len(rec["sha256"]) == 64
     # the summary names both subreddits and credits the source
     assert "askscience" in rec["summary"] and "pokemontrades" in rec["summary"]
@@ -381,3 +381,38 @@ def test_threads_parents_align_and_fit(tmp_path, monkeypatch):
         b.documents, parents=b.parents, min_count=1
     )
     assert m.topic_word.shape[0] == 2
+
+
+_THREADS_DIRTY_CSV = (
+    "doc_id,thread_root,parent,subreddit,timestamp,text\n"
+    "r1,r1,-1,askscience,100,Why does volcanic ash cool the planet so quickly\n"
+    'c1,r1,0,askscience,101,"&gt;volcanic ash\n\nSulfate aerosols reflect sunlight"\n'
+    "c2,r1,0,askscience,102,East or west\n"
+    "c3,r1,0,askscience,103,East or west\n"
+    "c4,r1,3,askscience,104,Westward drift matters\n"
+    "c5,r1,0,askscience,105,why does volcanic ash cool the planet so quickly indeed\n"
+).encode()
+
+
+def test_threads_strips_quotes_and_double_posts(tmp_path, monkeypatch):
+    """#903: quoted text leaves `documents` (raw `texts` keep it), and a double post
+    is dropped with its reply reattached to the copy that is kept."""
+    monkeypatch.setenv("TOPICA_DATA_HOME", str(tmp_path / "cache"))
+    monkeypatch.setattr(
+        datasets.urllib.request,
+        "urlopen",
+        lambda url, timeout=None: io.BytesIO(_THREADS_DIRTY_CSV),
+    )
+    monkeypatch.setitem(
+        datasets._REGISTRY["threads"], "sha256", _sha256_bytes(_THREADS_DIRTY_CSV)
+    )
+    b = datasets.load_threads()
+    # c3 (a repeat of c2 under the same parent) is gone; its reply c4 now answers c2
+    assert b.df["doc_id"].tolist() == ["r1", "c1", "c2", "c4", "c5"]
+    assert b.parents == [-1, 0, 0, 2, 0]
+    assert len(b.documents) == len(b.texts) == len(b.subreddit) == 5
+    # the `>` quote line is removed from the tokens but kept in the raw text
+    assert b.documents[1] == ["sulfate", "aerosols", "reflect", "sunlight"]
+    assert b.texts[1].startswith("&gt;volcanic")
+    # an unmarked verbatim copy of the parent (5+ tokens) is removed too
+    assert b.documents[4] == ["indeed"]
