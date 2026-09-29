@@ -151,16 +151,22 @@ def test_short_turn_warning():
         topica.SITS(3, seed=0).fit(turns, speakers, conversations=convs, iters=20)
 
 
-def test_convergence_warning_on_a_short_chain():
-    turns, speakers, convs = _planted(num_convs=30)
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        m = topica.SITS(3, init_shift_rate=1.0, seed=0).fit(
-            turns, speakers, conversations=convs, iters=400)
-    # a chain started with every turn a shift drifts down; Geweke should flag it
-    assert m.geweke_z is not None
-    if abs(m.geweke_z) > 2:
-        assert any("Geweke" in str(x.message) for x in w)
+def test_too_short_chain_warns_instead_of_staying_silent():
+    turns, speakers, convs = _planted()
+    with pytest.warns(UserWarning, match="too few to check convergence"):
+        m = topica.SITS(3, seed=0).fit(turns, speakers, conversations=convs, iters=100)
+    assert m.geweke_z is None
+
+
+def test_five_token_turns_are_eligible_four_are_not():
+    """Rossiter's test is len >= min_shift_tokens (the original code used > 5)."""
+    turns = [["a"] * 6, ["b"] * 5, ["c"] * 4, ["d"] * 5, ["e"] * 5]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        m = topica.SITS(2, seed=0).fit(turns, [0, 1, 0, 1, 0],
+                                       conversations=[0, 0, 0, 0, 0], iters=30)
+    assert m.eligible.tolist() == [False, True, False, True, True]
+    assert m.short_turn_share == 0.25
 
 
 def test_compat_reproduces_phantom_boundaries():
@@ -187,8 +193,15 @@ def test_compat_requires_integer_init_denominator():
         topica.SITS(3, compat="rossiter2022", init_shift_rate=0.3)
     topica.SITS(3, compat="rossiter2022", init_shift_rate=0.0)  # I = 1: never
     topica.SITS(3, compat="rossiter2022", init_shift_rate=0.25)
-    with pytest.raises(ValueError, match="compat"):
-        topica.SITS(3, compat="rossiter")
+    with pytest.raises(ValueError, match="compat must be"):
+        topica.SITS(3, compat="rossiter", init_shift_rate=0.25)
+
+
+def test_compat_requires_an_explicit_init_rate():
+    """The default 0.1 would silently replicate an I = 10 run Rossiter never made."""
+    with pytest.raises(ValueError, match="explicit init_shift_rate"):
+        topica.SITS(3, compat="rossiter2022")
+    assert topica.SITS(3).settings["init_shift_rate"] == 0.1
 
 
 def test_argument_checks():
@@ -228,8 +241,61 @@ def test_authors_alias_and_int_labels():
         warnings.simplefilter("ignore")
         a = topica.SITS(3, seed=1).fit(turns, authors=ids, conversations=conv_ids, iters=40)
         b = topica.SITS(3, seed=1).fit(turns, ids, conversations=conv_ids, iters=40)
-    assert a.speakers == ["0", "1"]
+    assert a.speakers == [0, 1]
     assert np.array_equal(a.shift_prob, b.shift_prob)
+
+
+def test_integer_speakers_sort_numerically_and_align():
+    turns, _, convs = _planted(num_convs=3)
+    ids = [i % 12 for i in range(len(turns))]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        m = topica.SITS(3, seed=1).fit(turns, ids, conversations=convs, iters=30)
+    assert m.speakers == list(range(12))
+    np.testing.assert_array_equal(m.speaker_turn_counts, np.bincount(ids))
+    np.testing.assert_array_equal(np.asarray(m.speakers)[m.speaker_index], ids)
+
+
+@pytest.mark.parametrize("bad", [
+    lambda s: [1 if x == "shifter" else "1" for x in s],   # 1 and "1" would merge
+    lambda s: [None] + s[1:],
+    lambda s: [True] + s[1:],
+    lambda s: [1.5] + s[1:],
+])
+def test_ambiguous_labels_are_rejected(bad):
+    turns, speakers, convs = _planted(num_convs=2)
+    with pytest.raises(ValueError):
+        topica.SITS(3).fit(turns, bad(speakers), conversations=convs, iters=5)
+
+
+def test_a_bare_string_is_not_split_into_speakers():
+    with pytest.raises(ValueError, match="single string"):
+        topica.SITS(2).fit([["a"], ["b"]], "ab", conversations=[0, 0], iters=5)
+
+
+def test_a_pruned_corpus_is_refused():
+    turns, speakers, convs = _planted(num_convs=2)
+    turns[3] = ["a_rare_word"]  # emptied by min_doc_freq=2, so the Corpus drops it
+    corpus = topica.Corpus.from_documents(turns, min_doc_freq=2)
+    assert len(corpus.kept_indices) < len(turns)
+    with pytest.raises(ValueError, match="dropped turns"):
+        topica.SITS(3).fit(corpus, speakers, conversations=convs, iters=5)
+
+
+def test_speaker_table_pools_chains():
+    a = _fit(seed=1, iters=300)
+    b = _fit(seed=2, iters=300)
+    t = topica.sits.speaker_table([a, b], level=0.9)
+    assert list(t["speaker"]) == a.speakers
+    assert (t["openers"] + t["short_turns"] + t["eligible"] == t["turns"]).all()
+    assert (t["shift_propensity_lo"] <= t["shift_propensity_hi"]).all()
+    assert np.isfinite(t["rhat_propensity"]).all()
+    assert t.attrs["chains"] == 2
+    one = topica.sits.speaker_table(a)
+    assert np.isnan(one["rhat_propensity"]).all()
+    c = _fit(seed=1, iters=300, gamma=2.0)
+    with pytest.raises(ValueError, match="gamma"):
+        topica.sits.speaker_table([a, c])
 
 
 def test_single_turn_conversations_and_k1():

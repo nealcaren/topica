@@ -191,7 +191,7 @@ REGISTRY: dict[str, ModelInfo] = {
            "Author-Recipient-Topic (McCallum et al. 2007): topics conditioned on the (sender, recipient) pair, for the language of a directed social network (who talks to whom about what). Realized over the AuthorTopic engine.",
            "guides/models.md#authorrecipienttopic"),
         _m("SITS", "covariates", ("text", "metadata"), "gibbs", "seed-reproducible", (),
-           "SITS (Nguyen, Boyd-Graber & Resnik 2012): conversations as sequences of speaking turns; each turn continues the current topic segment or shifts to a new one, with a per-speaker shift probability. That probability is Rossiter's (2022) agenda-setting measure (who changes the topic). Ported from the reference Java sampler, with an exact-replication mode for Rossiter's fork.",
+           "SITS (Nguyen, Boyd-Graber & Resnik 2012): conversations as sequences of speaking turns; each turn continues the current topic segment or shifts to a new one, with a per-speaker shift probability. That probability is Rossiter's (2022) agenda-setting measure (who changes the topic). Ported from the reference Java sampler, with a replication mode for Rossiter's fork.",
            "guides/models.md#sits"),
         _m("MGLDA", "general-purpose", ("text",), "gibbs", "seed-reproducible", (),
            "Multi-Grain LDA: global (document-level) + local (sliding-window aspect) topics with a per-token grain switch. For reviews / aspect extraction.",

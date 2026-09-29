@@ -6011,7 +6011,7 @@ class SITS:
         beta: float = 0.1,
         gamma: float = 1.0,
         min_shift_tokens: int = 5,
-        init_shift_rate: float = 0.1,
+        init_shift_rate: float | None = None,
         compat: str | None = None,
         seed: int = 13,
     ) -> None:
@@ -6019,12 +6019,13 @@ class SITS:
         1/K, Rossiter's setting); beta the topic-word Dirichlet (default 0.1); gamma
         the symmetric Beta prior on each speaker's shift probability (default 1.0,
         Rossiter's setting). min_shift_tokens (default 5): a turn with fewer tokens is
-        never sampled as a shift. init_shift_rate (default 0.1): probability an
-        eligible turn starts the chain as a shift. compat="rossiter2022" reproduces
-        Rossiter's fork exactly, including its bookkeeping defect (short turns drawn
-        as initial shifts stay segment boundaries and stay counted as shifts, which
-        inflates shift rates); use it only to replicate published results, with
-        init_shift_rate = 1/I for her I (or 0)."""
+        never sampled as a shift; tokens are counted on what you pass to fit (after
+        your preprocessing). init_shift_rate: probability an eligible turn starts the
+        chain as a shift (default 0.1). compat="rossiter2022" reproduces the behaviour
+        of Rossiter's fork, including its bookkeeping defect (short turns drawn as
+        initial shifts stay segment boundaries and stay counted as shifts, which
+        inflates shift rates); use it only to replicate published results, and pass
+        init_shift_rate = 1/I for the run being replicated (required)."""
         ...
     def fit(
         self,
@@ -6045,8 +6046,11 @@ class SITS:
         sweeps (default 50,000; the chain mixes slowly), of which ``burn_in``
         (default iters // 2) are discarded; every later sweep is a draw.
         ``sample_interval`` thins only the stored per-speaker draws used for
-        intervals (default: keep at most 2,000). Warns when many turns are too
-        short to shift and when the shift trace fails a Geweke check."""
+        intervals (default: keep at most 2,000). Labels must be all integers or all
+        strings. A Corpus that dropped turns during pruning is refused. Warns when
+        many turns are too short to shift and when the shift trace fails (or is too
+        short for) a Geweke check. Pool several seeds with
+        ``topica.sits.speaker_table``."""
         ...
     @property
     def num_topics(self) -> int: ...
@@ -6058,7 +6062,9 @@ class SITS:
     @property
     def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
         """(num_turns, num_topics): each turn's segment topic mixture in the
-        terminal state. Turns in one segment share a row. Rows sum to 1."""
+        terminal Gibbs state (turns in one terminal segment share a row; this
+        segmentation can differ from ``segments``). Rows sum to 1. Use
+        ``turn_topic`` to rank turns, e.g. for find_thoughts."""
         ...
     @property
     def turn_topic(self) -> numpy.typing.NDArray[numpy.float64]:
@@ -6086,8 +6092,18 @@ class SITS:
         """(num_turns,) conversation number of each turn, from 0 in order."""
         ...
     @property
-    def speakers(self) -> list[str]:
-        """Sorted speaker labels (as strings) indexing every per-speaker array."""
+    def speakers(self) -> list[int] | list[str]:
+        """Speaker labels indexing every per-speaker array: integers sorted
+        numerically when the speakers were integers, else strings sorted."""
+        ...
+    @property
+    def speaker_index(self) -> numpy.typing.NDArray[numpy.int64]:
+        """(num_turns,) each turn's speaker as a position in ``speakers``."""
+        ...
+    @property
+    def short_turn_share(self) -> float:
+        """Share of non-first turns too short to be sampled as shifts (counted on
+        the tokens passed to fit). Report it with the scores."""
         ...
     @property
     def speaker_turn_counts(self) -> numpy.typing.NDArray[numpy.int64]:

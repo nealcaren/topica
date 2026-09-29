@@ -34,6 +34,8 @@ pub struct SITS {
     seed: u64,
     fitted: bool,
     speaker_names: Vec<String>,
+    speaker_is_int: bool,
+    turn_speaker: Vec<u32>,
     conv_start: Vec<bool>,
     topic_names: Vec<String>,
     burn_in: usize,
@@ -55,6 +57,8 @@ struct SitsState {
     seed: u64,
     fitted: bool,
     speaker_names: Vec<String>,
+    speaker_is_int: bool,
+    turn_speaker: Vec<u32>,
     conv_start: Vec<bool>,
     topic_names: Vec<String>,
     burn_in: usize,
@@ -81,15 +85,50 @@ fn compat_init_every(rate: f64) -> PyResult<u32> {
     Ok(i as u32)
 }
 
-/// Labels of a per-turn Python sequence as strings (ints and strings both work).
-fn labels_as_strings(obj: &Bound<'_, PyAny>, what: &str) -> PyResult<Vec<String>> {
+/// Per-turn labels: all integers (Python or numpy ints) or all strings. Returns the
+/// labels as strings plus whether they were integers. Mixed types, bools, `None`
+/// and floats are rejected, so `1` and `"1"` can never merge into one speaker.
+fn labels_checked(obj: &Bound<'_, PyAny>, what: &str) -> PyResult<(Vec<String>, bool)> {
+    if obj.is_instance_of::<pyo3::types::PyString>() {
+        return Err(PyValueError::new_err(format!(
+            "{what} must be a sequence of labels, one per turn, not a single string"
+        )));
+    }
     let items: Vec<Bound<'_, PyAny>> = obj
         .iter()
         .map_err(|_| {
             PyValueError::new_err(format!("{what} must be a sequence (one entry per turn)"))
         })?
         .collect::<PyResult<_>>()?;
-    items.iter().map(|x| Ok(x.str()?.to_string())).collect()
+    let mut out = Vec::with_capacity(items.len());
+    let (mut n_int, mut n_str) = (0usize, 0usize);
+    for (t, x) in items.iter().enumerate() {
+        if x.is_instance_of::<pyo3::types::PyBool>() {
+            return Err(PyValueError::new_err(format!(
+                "{what}[{t}] is a bool; use integer or string labels"
+            )));
+        }
+        if x.is_instance_of::<pyo3::types::PyString>() {
+            out.push(x.extract::<String>()?);
+            n_str += 1;
+        } else if x.hasattr("__index__")? {
+            let v: i64 = x.call_method0("__index__")?.extract()?;
+            out.push(v.to_string());
+            n_int += 1;
+        } else {
+            return Err(PyValueError::new_err(format!(
+                "{what}[{t}] = {} is neither an integer nor a string label",
+                x.repr()?
+            )));
+        }
+    }
+    if n_int > 0 && n_str > 0 {
+        return Err(PyValueError::new_err(format!(
+            "{what} mixes integer and string labels ({n_int} integers, {n_str} strings); \
+             use one type so that 1 and \"1\" cannot be confused"
+        )));
+    }
+    Ok((out, n_int > 0))
 }
 
 /// Quantile of a sorted slice by linear interpolation.
@@ -175,17 +214,21 @@ impl SITS {
     /// probability (default 1.0, Rossiter's setting; the Java command line defaults
     /// to 0.25). ``min_shift_tokens`` (default 5, Rossiter's threshold): a turn with
     /// fewer tokens is never sampled as a shift and always continues the current
-    /// segment. ``init_shift_rate`` (default 0.1) is the probability an eligible turn
-    /// starts the chain as a shift.
+    /// segment. Tokens are counted on what you pass to ``fit``, after your own
+    /// stopword removal and pruning (Rossiter counted after hers), so the share of
+    /// ineligible turns depends on preprocessing. ``min_shift_tokens=0`` makes every
+    /// non-first turn eligible, empty turns included. ``init_shift_rate`` (default
+    /// 0.1) is the probability an eligible turn starts the chain as a shift.
     ///
-    /// ``compat="rossiter2022"`` reproduces Rossiter's fork exactly, including a
-    /// bookkeeping defect: short turns drawn as initial shifts stay segment
-    /// boundaries and stay counted as shifts for the whole chain, which raises every
-    /// speaker's shift rate. Use it only to replicate published results; its
-    /// ``init_shift_rate`` must be ``1/I`` for her ``I`` (or 0).
+    /// ``compat="rossiter2022"`` reproduces the behaviour of Rossiter's fork,
+    /// including a bookkeeping defect: short turns drawn as initial shifts stay
+    /// segment boundaries and stay counted as shifts for the whole chain, which
+    /// raises every speaker's shift rate. Use it only to replicate published
+    /// results. It requires an explicit ``init_shift_rate = 1/I`` for the run being
+    /// replicated (or 0).
     #[new]
     #[pyo3(signature = (num_topics, *, alpha=None, beta=0.1, gamma=1.0, min_shift_tokens=5,
-                        init_shift_rate=0.1, compat=None, seed=13))]
+                        init_shift_rate=None, compat=None, seed=13))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
@@ -193,10 +236,20 @@ impl SITS {
         beta: f64,
         gamma: f64,
         min_shift_tokens: usize,
-        init_shift_rate: f64,
+        init_shift_rate: Option<f64>,
         compat: Option<String>,
         seed: u64,
     ) -> PyResult<Self> {
+        let init_shift_rate =
+            match (init_shift_rate, compat.as_deref()) {
+                (Some(r), _) => r,
+                (None, None) => 0.1,
+                (None, Some(_)) => return Err(PyValueError::new_err(
+                    "compat='rossiter2022' needs an explicit init_shift_rate = 1/I for the run \
+                     being replicated (Rossiter used I = 3 to 7, e.g. init_shift_rate=1/3); \
+                     the default 0.1 would replicate an I = 10 run she never made",
+                )),
+            };
         if num_topics < 1 {
             return Err(PyValueError::new_err("num_topics must be >= 1"));
         }
@@ -233,6 +286,8 @@ impl SITS {
             seed,
             fitted: false,
             speaker_names: Vec::new(),
+            speaker_is_int: false,
+            turn_speaker: Vec::new(),
             conv_start: Vec::new(),
             topic_names: Vec::new(),
             burn_in: 0,
@@ -326,6 +381,15 @@ impl SITS {
         }
 
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
+            if c.kept_indices.iter().enumerate().any(|(i, &k)| i != k) {
+                return Err(PyValueError::new_err(
+                    "this Corpus dropped turns during pruning (see corpus.kept_indices); SITS \
+                     needs every turn in order, because a dropped turn changes its speaker's \
+                     counts and the segment structure. Do not realign speakers to \
+                     kept_indices: rebuild the Corpus so empty turns are kept, or pass the \
+                     token lists (filter tokens to corpus.vocabulary yourself)",
+                ));
+            }
             c.inner
         } else {
             let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
@@ -345,15 +409,17 @@ impl SITS {
         if nt == 0 {
             return Err(PyValueError::new_err("corpus contains no turns"));
         }
-        let spk_labels = labels_as_strings(speakers, "speakers")?;
-        let conv_labels = labels_as_strings(conversations, "conversations")?;
+        let (spk_labels, speaker_is_int) = labels_checked(speakers, "speakers")?;
+        let (conv_labels, _) = labels_checked(conversations, "conversations")?;
         for (name, len) in [
             ("speakers", spk_labels.len()),
             ("conversations", conv_labels.len()),
         ] {
             if len != nt {
                 return Err(PyValueError::new_err(format!(
-                    "{name} has {len} entries but there are {nt} turns"
+                    "{name} has {len} entries but there are {nt} turns; pass one label per \
+                     turn, keeping empty turns (if a Corpus pruned turns, rebuild it rather \
+                     than realigning the labels)"
                 )));
             }
         }
@@ -372,13 +438,16 @@ impl SITS {
                 conv_start[t] = true;
             }
         }
-        // Speaker vocabulary (sorted).
-        let names: Vec<String> = spk_labels
+        // Speaker vocabulary: sorted numerically for integer labels, else as strings.
+        let mut names: Vec<String> = spk_labels
             .iter()
             .cloned()
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
+        if speaker_is_int {
+            names.sort_by_key(|s| s.parse::<i64>().unwrap_or(0));
+        }
         let id: HashMap<&str, u32> = names
             .iter()
             .enumerate()
@@ -393,6 +462,9 @@ impl SITS {
             _ => Compat::None,
         };
         let num_draws = iters - burn_in;
+        if sample_interval == Some(0) {
+            return Err(PyValueError::new_err("sample_interval must be >= 1"));
+        }
         let sample_interval = sample_interval.unwrap_or(num_draws.div_ceil(2000)).max(1);
         let cfg = SitsConfig {
             num_topics: slf.num_topics,
@@ -431,6 +503,7 @@ impl SITS {
         let num_speakers = names.len();
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
         let progress = resolve_progress(py, progress, "SITS")?;
+        let turn_speaker = spk_ids.clone();
         let (model, corpus, conv_start) = py.allow_threads(move || {
             let mut on_progress = on_progress_bare(&progress);
             let data = SitsData {
@@ -453,6 +526,17 @@ impl SITS {
             .map(|&x| x as f64)
             .collect();
         let gz = crate::sits::geweke_z(&kept, 0.1, 0.5);
+        if gz.is_none() {
+            let warnings = py.import_bound("warnings")?;
+            warnings.call_method1(
+                "warn",
+                (format!(
+                    "SITS: only {} post-burn-in sweeps, too few to check convergence \
+                     (need at least 200); these results are not usable estimates",
+                    kept.len()
+                ),),
+            )?;
+        }
         if let Some(z) = gz {
             if z.abs() > 2.0 {
                 let warnings = py.import_bound("warnings")?;
@@ -484,6 +568,8 @@ impl SITS {
         slf.model = Some(model);
         slf.corpus = Some(corpus);
         slf.speaker_names = names;
+        slf.speaker_is_int = speaker_is_int;
+        slf.turn_speaker = turn_speaker;
         slf.conv_start = conv_start;
         slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
         slf.burn_in = burn_in;
@@ -506,9 +592,12 @@ impl SITS {
     }
 
     /// Turn-topic matrix θ (num_turns, num_topics): each turn's *segment* mixture in
-    /// the terminal state, (n_seg,k + α)/(n_seg + Kα). Turns in the same segment
-    /// share a row; this is the model's θ. For each turn's own smoothed topic mix
-    /// (the reference's ``theta.txt``) see :attr:`turn_topic`.
+    /// the terminal Gibbs state, (n_seg,k + α)/(n_seg + Kα); turns in one terminal
+    /// segment share a row. The terminal segmentation can differ from
+    /// :attr:`segments` (the posterior-majority segmentation), and in compat mode it
+    /// includes the phantom boundaries. For each turn's own topic mix (the
+    /// reference's ``theta.txt``, and the right input for ``find_thoughts``) see
+    /// :attr:`turn_topic`.
     #[getter]
     fn doc_topic<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         Ok(vecs_to_arr2(&self.fitted_model()?.doc_topic).to_pyarray_bound(py))
@@ -572,12 +661,44 @@ impl SITS {
         Ok(Array1::from(v).to_pyarray_bound(py))
     }
 
-    /// The speaker vocabulary (sorted labels, as strings), indexing every
-    /// per-speaker array.
+    /// The speaker labels indexing every per-speaker array: integers sorted
+    /// numerically when the speakers were integers, else strings sorted.
     #[getter]
-    fn speakers(&self) -> PyResult<Vec<String>> {
+    fn speakers(&self, py: Python<'_>) -> PyResult<PyObject> {
         self.fitted_model()?;
-        Ok(self.speaker_names.clone())
+        if self.speaker_is_int {
+            let v: Vec<i64> = self
+                .speaker_names
+                .iter()
+                .map(|s| s.parse::<i64>().unwrap_or(0))
+                .collect();
+            Ok(v.into_py(py))
+        } else {
+            Ok(self.speaker_names.clone().into_py(py))
+        }
+    }
+
+    /// Each turn's speaker as a position in :attr:`speakers` (num_turns,).
+    #[getter]
+    fn speaker_index<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<i64>>> {
+        self.fitted_model()?;
+        let v: Vec<i64> = self.turn_speaker.iter().map(|&x| x as i64).collect();
+        Ok(Array1::from(v).to_pyarray_bound(py))
+    }
+
+    /// Share of non-first turns too short to be sampled as shifts (fewer than
+    /// ``min_shift_tokens`` tokens, counted on the tokens passed to ``fit``). Report
+    /// it with the agenda-setting scores.
+    #[getter]
+    fn short_turn_share(&self) -> PyResult<f64> {
+        let m = self.fitted_model()?;
+        let non_first = self.conv_start.iter().filter(|&&s| !s).count();
+        let elig = m.eligible.iter().filter(|&&e| e).count();
+        Ok(if non_first == 0 {
+            f64::NAN
+        } else {
+            (non_first - elig) as f64 / non_first as f64
+        })
     }
 
     /// Number of turns per speaker, aligned to :attr:`speakers`.
@@ -861,6 +982,8 @@ impl SITS {
                 seed: self.seed,
                 fitted: self.fitted,
                 speaker_names: self.speaker_names.clone(),
+                speaker_is_int: self.speaker_is_int,
+                turn_speaker: self.turn_speaker.clone(),
                 conv_start: self.conv_start.clone(),
                 topic_names: self.topic_names.clone(),
                 burn_in: self.burn_in,
@@ -887,6 +1010,8 @@ impl SITS {
             seed: s.seed,
             fitted: s.fitted,
             speaker_names: s.speaker_names,
+            speaker_is_int: s.speaker_is_int,
+            turn_speaker: s.turn_speaker,
             conv_start: s.conv_start,
             topic_names: s.topic_names,
             burn_in: s.burn_in,

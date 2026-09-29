@@ -895,6 +895,20 @@ mod tests {
     }
 
     #[test]
+    fn geweke_flags_a_trend_and_passes_noise() {
+        let mut rng = ChaCha8Rng::seed_from_u64(9);
+        let noise: Vec<f64> = (0..4000).map(|_| rng.gen::<f64>()).collect();
+        let z = geweke_z(&noise, 0.1, 0.5).unwrap();
+        assert!(z.abs() < 3.0, "white noise z = {z}");
+        let trend: Vec<f64> = (0..4000)
+            .map(|i| i as f64 / 400.0 + rng.gen::<f64>())
+            .collect();
+        let z = geweke_z(&trend, 0.1, 0.5).unwrap();
+        assert!(z < -3.0, "rising trend z = {z}");
+        assert!(geweke_z(&noise[..100], 0.1, 0.5).is_none());
+    }
+
+    #[test]
     fn draw_shift_is_overflow_safe() {
         let mut rng = ChaCha8Rng::seed_from_u64(0);
         assert_eq!(draw_shift(0.0, 1000.0, &mut rng), 1);

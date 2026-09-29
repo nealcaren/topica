@@ -93,7 +93,7 @@ pub struct Corpus {
     pub(crate) inner: corpus::Corpus,
     // Original document indices that survived pruning (parallel to the rows of
     // the corpus). Lets callers realign external covariate/metadata arrays.
-    kept_indices: Vec<usize>,
+    pub(crate) kept_indices: Vec<usize>,
     // Optional per-document metadata (e.g. a pandas DataFrame), already filtered
     // to the surviving rows. Round-tripped as a plain Python object.
     metadata: Option<PyObject>,

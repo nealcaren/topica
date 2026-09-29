@@ -240,6 +240,7 @@ from .embedding_regression import (  # noqa: E402  (conText embedding regression
     compute_transform,
 )
 from . import keyatm  # noqa: E402  (keyATM-specific workflow helpers)
+from . import sits  # noqa: E402  (SITS agenda-setting tables)
 from . import threads  # noqa: E402  (thread-context shrinkage over any fitted model, #895)
 from .threads import ThreadTM  # noqa: E402  (threaded topic model: base model + thread shrinkage, #895)
 from . import effects  # noqa: E402  (model-neutral prevalence analysis)

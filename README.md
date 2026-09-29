@@ -138,7 +138,7 @@ The right first choice when your design calls for one: short text, change over t
 | `FactorialLDA` | text | gibbs | seed-reproducible | Factorial LDA (Paul & Dredze 2012): each token is a K-tuple of latent factors (e.g. topic x sentiment); structured word priors tie tuples sharing a component and a sparsity prior deactivates unsupported tuples. |
 | `AuthorTopic` | text, metadata | gibbs | seed-reproducible | Author-Topic Model: each author has a topic distribution; documents mix their authors. Answers what an author writes about. |
 | `AuthorRecipientTopic` | text, metadata | gibbs | seed-reproducible | Author-Recipient-Topic (McCallum et al. 2007): topics conditioned on the (sender, recipient) pair, for the language of a directed social network (who talks to whom about what). Realized over the AuthorTopic engine. |
-| `SITS` | text, metadata | gibbs | seed-reproducible | SITS (Nguyen, Boyd-Graber & Resnik 2012): conversations as sequences of speaking turns; each turn continues the current topic segment or shifts to a new one, with a per-speaker shift probability. That probability is Rossiter's (2022) agenda-setting measure (who changes the topic). Ported from the reference Java sampler, with an exact-replication mode for Rossiter's fork. |
+| `SITS` | text, metadata | gibbs | seed-reproducible | SITS (Nguyen, Boyd-Graber & Resnik 2012): conversations as sequences of speaking turns; each turn continues the current topic segment or shifts to a new one, with a per-speaker shift probability. That probability is Rossiter's (2022) agenda-setting measure (who changes the topic). Ported from the reference Java sampler, with a replication mode for Rossiter's fork. |
 
 #### Guided & supervised
 
