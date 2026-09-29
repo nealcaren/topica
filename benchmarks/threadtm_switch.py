@@ -114,8 +114,9 @@ def main():
     if prof:
         stats = pstats.Stats(prof).stats
         print("\n| function | cum time | calls |\n|---|---|---|")
-        hot = [(fn[2], v[3], v[1]) for fn, v in stats.items()
-               if fn[2] in HOT and ("threads.py" in fn[0] or fn[2] == "fit")]
+        hot = [(fn[2] if fn[2] != "fit" else f"fit ({fn[0].rsplit('/', 1)[-1]}:{fn[1]})",
+                v[3], v[1]) for fn, v in stats.items()
+               if fn[2] in HOT and "threads.py" in fn[0]]
         for name, cum, calls in sorted(hot, key=lambda r: -r[1]):
             print(f"| `{name}` | {cum:.1f} s | {calls:,} |")
 

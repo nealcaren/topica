@@ -9763,20 +9763,33 @@ fn _thread_sequential_log_ml<'py>(
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
     let (n_docs, k) = prior_mean.as_array().dim();
     let (kb, v) = beta.as_array().dim();
-    let offs: Vec<usize> = offsets.as_array().iter().map(|&o| o as usize).collect();
-    if kb != k
+    let range_err = || PyValueError::new_err("sequential_log_ml: token id or offset out of range");
+    let offs = offsets
+        .as_array()
+        .iter()
+        .map(|&o| usize::try_from(o).map_err(|_| range_err()))
+        .collect::<PyResult<Vec<usize>>>()?;
+    if k == 0
+        || kb != k
         || offs.len() != n_docs + 1
         || offs.last().copied().unwrap_or(0) != tokens.as_array().len()
     {
         return Err(PyValueError::new_err(
-            "sequential_log_ml: prior_mean, beta, offsets and tokens disagree in shape",
+            "sequential_log_ml: prior_mean, beta, offsets and tokens disagree in shape (or K = 0)",
         ));
     }
-    let toks: Vec<u32> = tokens.as_array().iter().map(|&t| t as u32).collect();
-    if toks.iter().any(|&t| t as usize >= v) || offs.windows(2).any(|w| w[0] > w[1]) {
-        return Err(PyValueError::new_err(
-            "sequential_log_ml: token id or offset out of range",
-        ));
+    let toks = tokens
+        .as_array()
+        .iter()
+        .map(|&t| {
+            u32::try_from(t)
+                .ok()
+                .filter(|&t| (t as usize) < v)
+                .ok_or_else(range_err)
+        })
+        .collect::<PyResult<Vec<u32>>>()?;
+    if offs.windows(2).any(|w| w[0] > w[1]) {
+        return Err(range_err());
     }
     let pm: Vec<f64> = prior_mean.as_array().iter().copied().collect();
     let bt: Vec<f64> = beta.as_array().t().iter().copied().collect();

@@ -65,6 +65,10 @@ CONTEXTS = ("parent", "thread")
 ALL_CONTEXTS = ("parent", "op", "thread", "semantic")
 OP_SHARE_STEPS = 13
 SWITCH_SHARE_STEPS = (25, 7)     # inherit-share lattice: two contexts, three (per axis)
+# Memory cap on the switch calibration's likelihood memo (one float64 per evaluation thread
+# per cached point). A point past the cap is recomputed, not stored: results do not depend
+# on it.
+SWITCH_MEMO_BYTES = 256 * 2**20
 DEFAULT_STRENGTH_GRID = np.geomspace(0.1, 1000.0, 40)
 MAX_PSEUDOCOUNT = 1e4
 
@@ -1083,16 +1087,21 @@ class ThreadSmoother:
         hi = np.array([np.log(CONC_GRID[-1])] * 2 + [8.0])
         starts = [np.array([la, 0.0, 0.0]) for la in (0.0, np.log(10.0), np.log(100.0))]
 
+        memo_room = [max(0, SWITCH_MEMO_BYTES // (8 * n_threads))]   # entries left
+
         def val_ll(tabs_j, memo):
             """Per-thread validation log likelihood at a parameter vector, memoized by its
             exact bytes: the coordinate searches (the bootstrap draws' above all, which all
             start from the same full-sample optima) revisit points, and a draw's objective
-            is only a reweighting of this vector."""
+            is only a reweighting of this vector. Stores stop at ``SWITCH_MEMO_BYTES``."""
             def g(x):
                 key = x.tobytes()
                 v = memo.get(key)
                 if v is None:
-                    v = memo[key] = thread_ll(x, tabs_j, sel_val)
+                    v = thread_ll(x, tabs_j, sel_val)
+                    if memo_room[0] > 0:
+                        memo[key] = v
+                        memo_room[0] -= 1
                 return v
             return g
 
@@ -1145,6 +1154,8 @@ class ThreadSmoother:
                     best = (int(j), x, v)
             boot_j.append(best[0])
             boot_x.append(best[1])
+        memo_room[0] += sum(map(len, true_memos))       # the placebo arms never read it
+        true_memos = boot_ll = f = None                  # f holds the last share's memo
 
         def rate(num, idx):
             return num[idx].sum() / tok_t[idx].sum()
