@@ -1042,7 +1042,10 @@ def _fit_record(model) -> dict[str, Any] | None:
         "num_turns": int(len(conv)),
         "num_speakers": len(model.speakers),
         "num_conversations": int(conv.max()) + 1 if len(conv) else 0,
-        "geweke_z": None if geweke is None else float(geweke),
+        # JSON has no infinity: a constant-window drift (|z| = inf) is recorded as
+        # the string "inf" / "-inf".
+        "geweke_z": (None if geweke is None else float(geweke) if np.isfinite(geweke)
+                     else ("inf" if geweke > 0 else "-inf")),
         "short_turn_share": short if np.isfinite(short) else None,
         "num_phantom": int(model.num_phantom),
     }

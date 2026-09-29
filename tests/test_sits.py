@@ -485,3 +485,39 @@ def test_find_thoughts_treats_a_dataframe_as_a_matrix():
     frame = pd.DataFrame({"turn_topic": [0.1, 0.9], "other": [0.9, 0.1]})
     out = topica.inspect.find_thoughts(frame, topic=0, n=1)
     assert out[0][0] == 1  # column 0 ("turn_topic") peaks at row 1
+
+
+def test_prep_documents_keeps_an_unknown_history_unknown(tmp_path):
+    from topica.frames import prep_documents
+    path = tmp_path / "turns.txt"
+    path.write_text("apple apple apple apple apple\nrare\napple apple apple apple apple\n")
+    corpus = topica.Corpus.from_text_file(str(path), min_doc_freq=2)
+    assert corpus.dropped_documents is None
+    derived = prep_documents(corpus, lower_thresh=1)
+    derived = derived[0] if isinstance(derived, tuple) else derived
+    assert derived.dropped_documents is None
+    with pytest.warns(UserWarning, match="cannot check"):
+        topica.SITS(1).fit(derived, ["A", "B"], conversations=[0, 0], iters=5)
+
+
+def test_speaker_table_pools_equivalent_warmups():
+    turns, speakers, convs = _planted()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        a = topica.SITS(3, seed=1).fit(turns, speakers, conversations=convs, iters=400,
+                                       burn_in=200)
+        b = topica.SITS(3, seed=2, warmup=200).fit(turns, speakers, conversations=convs,
+                                                   iters=400, burn_in=200)
+        topica.sits.speaker_table([a, b])
+
+
+def test_record_fit_json_survives_an_infinite_geweke():
+    import json
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        m = topica.SITS(1, init="random", gamma=1e-3, seed=7).fit(
+            [["x"] * 5] * 3, ["A", "B", "B"], conversations=[0, 0, 0], iters=1000)
+    assert m.geweke_z == float("inf")
+    man = topica.provenance.record_fit(m, [["x"] * 5] * 3)
+    json.loads(man.to_json())
+    assert man.model["fit_record"]["geweke_z"] == "inf"

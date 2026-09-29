@@ -632,6 +632,13 @@ impl Corpus {
         self.pruned_upstream = true;
     }
 
+    /// Mark this Corpus as derived from one whose drop history is unknown, so
+    /// ``dropped_documents`` reports None rather than False (used by
+    /// ``prep_documents``; not part of the public API).
+    fn _mark_history_unknown(&mut self) {
+        self.num_input_docs = None;
+    }
+
     /// Optional per-document metadata, already aligned to the surviving rows
     /// (set by :func:`topica.from_dataframe`, or assign your own). ``None`` if
     /// unset. Persisted across :meth:`save`/:meth:`load` inside the corpus file

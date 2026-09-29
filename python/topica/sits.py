@@ -27,7 +27,9 @@ def _as_list(models):
 def _check_poolable(ms):
     """Refuse chains that do not share data and settings (the seed may differ)."""
     first = ms[0]
-    ref = {k: v for k, v in first.settings.items() if k != "seed"}
+    # Compare the warm-up actually run, not the constructor value (None and an
+    # explicit value that resolves to the same count are the same chain).
+    ref = {k: v for k, v in first.settings.items() if k not in ("seed", "warmup")}
     arrays = ("speaker_index", "conversation_index", "eligible")
     for i, m in enumerate(ms[1:], start=1):
         if list(m.speakers) != list(first.speakers):
@@ -45,7 +47,14 @@ def _check_poolable(ms):
                 f"chain {i} was fitted on different turns from chain 0 (data_fingerprint "
                 f"{m.data_fingerprint} vs {first.data_fingerprint}); speaker_table pools "
                 "chains fitted on the same data only")
-        run = ("iters", "burn_in")
+        other = {k: v for k, v in m.settings.items() if k not in ("seed", "warmup")}
+        diff = sorted(k for k in set(ref) | set(other) if ref.get(k) != other.get(k))
+        if diff:
+            detail = ", ".join(f"{k}: {ref.get(k)!r} vs {other.get(k)!r}" for k in diff)
+            raise ValueError(
+                f"chain {i} was fitted with different settings from chain 0 ({detail}); "
+                "pool only chains that differ in their seed")
+        run = ("iters", "burn_in", "warmup_used")
         for name in run:
             if getattr(m, name) != getattr(first, name):
                 raise ValueError(
@@ -56,13 +65,6 @@ def _check_poolable(ms):
                 f"chain {i} stored {len(m.shift_propensity_draws)} draws, chain 0 "
                 f"{len(first.shift_propensity_draws)}; pass the same sample_interval to "
                 "every chain so each contributes equally to the pooled intervals")
-        other = {k: v for k, v in m.settings.items() if k != "seed"}
-        diff = sorted(k for k in set(ref) | set(other) if ref.get(k) != other.get(k))
-        if diff:
-            detail = ", ".join(f"{k}: {ref.get(k)!r} vs {other.get(k)!r}" for k in diff)
-            raise ValueError(
-                f"chain {i} was fitted with different settings from chain 0 ({detail}); "
-                "pool only chains that differ in their seed")
     seeds = [m.settings["seed"] for m in ms]
     dup = sorted({s for s in seeds if seeds.count(s) > 1})
     if dup:
