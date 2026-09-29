@@ -282,6 +282,13 @@ class Corpus:
         of this corpus. Use to realign an external covariate array/DataFrame:
         ``X = X[corpus.kept_indices]`` (see :func:`topica.align`)."""
         ...
+    @property
+    def dropped_documents(self) -> bool | None:
+        """Whether building this Corpus dropped any input document: True, False,
+        or None when unknown (loaded from disk or read from a text file). A Corpus
+        derived from one that dropped documents (prep_documents) reports True."""
+        ...
+    def _mark_pruned_upstream(self) -> None: ...
 
     metadata: object | None
     """Optional per-document metadata aligned to the surviving rows (a pandas
@@ -6162,8 +6169,17 @@ class SITS:
         """Number of post-burn-in sweeps averaged into posterior means."""
         ...
     @property
+    def warmup_used(self) -> int:
+        """Warm-up sweeps (shifts frozen) run by the last fit; 0 under init='random'."""
+        ...
+    @property
     def iters(self) -> int:
         """Gibbs sweeps run by the last fit."""
+        ...
+    @property
+    def data_fingerprint(self) -> str:
+        """Hex digest of the fitted turns (vocabulary and every turn's word ids);
+        chains fitted on the same data share it."""
         ...
     @property
     def burn_in(self) -> int:

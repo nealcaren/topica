@@ -332,9 +332,11 @@ def test_settings_round_trip():
         assert topica.SITS(**m.settings).settings == m.settings
     assert topica.SITS(2).settings["init_shift_rate"] is None
     m = _fit(seed=1, iters=300)
-    assert m.settings["warmup"] == 150  # min(1000, burn_in) as actually run
+    assert m.settings["warmup"] is None  # as passed, so a refit resolves it afresh
+    assert m.warmup_used == 150          # min(1000, burn_in) as actually run
     assert m.iters == 300
     topica.SITS(**m.settings)
+    assert topica.SITS(2, init="random", warmup=0).settings["warmup"] is None
 
 
 def test_speaker_table_pools_chains():
@@ -417,3 +419,69 @@ def test_analysis_surface(fitted):
     assert len(topica.topic_table(fitted)) == 3
     assert fitted.coherence(5).shape == (3,)
     assert np.isfinite(topica.coherence(fitted, turns)).all()
+
+
+def test_speaker_table_refuses_chains_on_other_texts_or_lengths():
+    turns, speakers, convs = _planted()
+    other = [[w for w in t if w != "a0"] or ["b0"] * 10 for t in turns]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        a = topica.SITS(3, seed=1).fit(turns, speakers, conversations=convs, iters=300)
+        b = topica.SITS(3, seed=2).fit(other, speakers, conversations=convs, iters=300)
+        c = topica.SITS(3, seed=3).fit(turns, speakers, conversations=convs, iters=400,
+                                       burn_in=150)
+        d = topica.SITS(3, seed=4).fit(turns, speakers, conversations=convs, iters=300,
+                                       sample_interval=10)
+    assert np.array_equal(a.eligible, b.eligible)
+    with pytest.raises(ValueError, match="different turns"):
+        topica.sits.speaker_table([a, b])
+    with pytest.raises(ValueError, match="iters"):
+        topica.sits.speaker_table([a, c])
+    with pytest.raises(ValueError, match="stored"):
+        topica.sits.speaker_table([a, d])
+
+
+def test_speaker_table_warns_on_infinite_rhat():
+    turns = [["x"] * 5] * 3
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ms = [topica.SITS(1, init="random", gamma=1e-10, seed=s).fit(
+            turns, ["A", "B", "B"], conversations=[0, 0, 0], iters=40) for s in (0, 5)]
+    # a near-zero gamma freezes the two chains at opposite extremes: R-hat is inf
+    assert sorted(m.eligible_shift_rate[1] for m in ms) == [0.0, 1.0]
+    with pytest.warns(UserWarning, match="R-hat"):
+        topica.sits.speaker_table(ms)
+
+
+def test_spearman_handles_ties_and_constants():
+    from topica.sits import _spearman
+    assert _spearman(np.array([1., 1., 2.]), np.array([2., 1., 3.])) == pytest.approx(0.8660254)
+    assert np.isnan(_spearman(np.array([1., 1., 1.]), np.array([1., 2., 3.])))
+
+
+def test_prep_documents_keeps_the_record_of_dropped_turns():
+    from topica.frames import prep_documents
+    docs = [["x"] * 5, ["rare"], ["x"] * 5, ["x"] * 5]
+    pruned = topica.Corpus.from_documents(docs, min_doc_freq=2)
+    assert pruned.dropped_documents is True
+    assert topica.Corpus.from_documents(docs).dropped_documents is False
+    derived = prep_documents(pruned, lower_thresh=1)
+    derived = derived[0] if isinstance(derived, tuple) else derived
+    assert derived.dropped_documents is True
+    with pytest.raises(ValueError, match="dropped turns"):
+        topica.SITS(2).fit(derived, ["A"] * 3, conversations=[0] * 3, iters=5)
+
+
+def test_manifest_verifies_shift_propensity(fitted):
+    turns, _, _ = _planted()
+    man = topica.provenance.record_fit(fitted, turns)
+    other = _fit(seed=2)
+    res = man.verify(model=other)
+    assert "model_shift_propensity" in str(res)
+
+
+def test_find_thoughts_treats_a_dataframe_as_a_matrix():
+    pd = pytest.importorskip("pandas")
+    frame = pd.DataFrame({"turn_topic": [0.1, 0.9], "other": [0.9, 0.1]})
+    out = topica.inspect.find_thoughts(frame, topic=0, n=1)
+    assert out[0][0] == 1  # column 0 ("turn_topic") peaks at row 1

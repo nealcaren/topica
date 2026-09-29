@@ -273,8 +273,11 @@ def _z(a, b):
     exactly: identical means give 0, any difference gives inf (a failing gate)."""
     se = np.sqrt(a.var(axis=0, ddof=1) / len(a) + b.var(axis=0, ddof=1) / len(b))
     diff = a.mean(axis=0) - b.mean(axis=0)
+    if len(a) < 2 or len(b) < 2:
+        raise ValueError("_z needs at least two chains per side")
     with np.errstate(divide="ignore", invalid="ignore"):
-        return np.where(se > 0, diff / se, np.where(diff == 0, 0.0, np.inf))
+        z = np.where(se > 0, diff / se, np.where(diff == 0, 0.0, np.inf))
+    return np.where(np.isfinite(se) & np.isfinite(diff), z, np.inf)
 
 
 def run(verbose: bool = True) -> dict:

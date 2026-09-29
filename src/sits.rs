@@ -659,7 +659,8 @@ fn log_joint(
 
 /// Geweke z-score of a trace: mean of the first `first` fraction vs the last `last`
 /// fraction, with batch-means variances (20 batches per window). Returns `None` when
-/// a window is too short or constant.
+/// a window is too short. When both windows are constant it returns 0 for equal
+/// means and a signed infinity for different ones.
 pub fn geweke_z(trace: &[f64], first: f64, last: f64) -> Option<f64> {
     let n = trace.len();
     let na = ((n as f64) * first) as usize;
@@ -685,10 +686,12 @@ pub fn geweke_z(trace: &[f64], first: f64, last: f64) -> Option<f64> {
     let (mb, vb) = bm(b);
     let s = (va + vb).sqrt();
     if s <= 0.0 || !s.is_finite() {
+        // Both windows constant: equal means is no drift; different means is
+        // drift with no within-window noise, an infinite z (not "too short").
         return if (ma - mb).abs() < 1e-12 {
             Some(0.0)
         } else {
-            None
+            Some(f64::INFINITY.copysign(ma - mb))
         };
     }
     Some((ma - mb) / s)
@@ -954,6 +957,10 @@ mod tests {
         let z = geweke_z(&trend, 0.1, 0.5).unwrap();
         assert!(z < -3.0, "rising trend z = {z}");
         assert!(geweke_z(&noise[..100], 0.1, 0.5).is_none());
+        // constant windows: equal means pass, different means are infinite drift
+        assert_eq!(geweke_z(&[3.0; 500], 0.1, 0.5), Some(0.0));
+        let step: Vec<f64> = (0..500).map(|i| if i < 250 { 2.0 } else { 0.0 }).collect();
+        assert_eq!(geweke_z(&step, 0.1, 0.5), Some(f64::INFINITY));
     }
 
     #[test]

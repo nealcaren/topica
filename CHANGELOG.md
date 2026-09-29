@@ -16,18 +16,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   suggested headline measure), Rossiter's per-speaker score (`shift_propensity`, with posterior
   draws and intervals), per-turn shift probabilities, segments, and a convergence trace with a
   Geweke warning. `topica.sits.speaker_table` pools chains that differ only in their seed
-  (anything else raises), reports each speaker's forced turns, and warns on R-hat above 1.01,
-  on a forced share above 0.5, and when the two measures rank speakers differently. The default `init="lda"` warm start (per-turn LDA for the first sweeps, shifts frozen)
-  reaches the posterior far sooner than the reference start. A collapsed Gibbs port of the
-  reference Java sampler, about 8.5x faster than the Java sampler as run, validated against it in
+  (a mismatch in settings or layout raises), reports each speaker's forced turns, and warns on R-hat above 1.01, on
+  a forced share above 0.5, and when the two measures rank speakers differently. The default
+  `init="lda"` warm start (per-turn LDA for the first sweeps, shifts frozen) reaches the
+  posterior far sooner than the reference start; chains on real conversations still settle at
+  somewhat different levels (as the Java sampler's do), so the default `iters` is 200,000 and
+  the docs ask for at least four pooled chains. A collapsed Gibbs port of the reference Java
+  sampler, about 8.5x faster than the Java sampler as run, validated against it in
   `parity/sits_compare.py`. `compat="rossiter2022"` reproduces the behaviour of Rossiter's fork,
-  including a bookkeeping defect
-  (short turns drawn as initial shifts stay segment boundaries and shift counts for the whole
-  chain); the default mode fixes it. The defect was active in all of her fits, and her archived
-  Section 4.2, 4.3, and 5.1 fits carry phantom shifts. On the Section 4.3 corpus (for which the
-  paper reports no per-speaker scores), fork scores run about 0.04 to 0.05 above our default
-  chains, a comparison that also carries a mixing error of similar size; her published
-  per-speaker results (Sections 5.2 and 5.3) are not in her archive and could not be checked.
+  including a bookkeeping defect (short turns drawn as initial shifts stay segment boundaries
+  and shift counts for the whole chain); the default mode fixes it. The defect affects every fit
+  of hers with a nonzero length threshold, and her archived Section 4.2, 4.3, and 5.1 fits carry
+  phantom shifts. On the Section 4.3 corpus (for which the paper reports no per-speaker scores),
+  fork scores run about 0.04 to 0.05 above our default chains, a comparison that also carries a
+  mixing error of similar size; her published per-speaker results (Sections 5.2 and 5.3) are not
+  in her archive and could not be checked.
 - `Corpus` records how many documents it was given, so a model can tell that pruning dropped
   documents even when only trailing ones went (`kept_indices` alone looks like an identity).
 - `record_fit` refuses a list of models, and for `SITS` records the run length, data layout,

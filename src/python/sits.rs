@@ -379,10 +379,13 @@ impl SITS {
         d.set_item("init", self.init.clone())?;
         // After a fit, the warm-up actually run (the default resolves to
         // min(1000, burn_in)); before, what was passed.
-        let warmup = if self.fitted && self.init == "lda" {
-            Some(self.warmup_used)
-        } else {
+        // What was passed (None = the default min(1000, burn_in)), so a refit at
+        // another length resolves it afresh; None under init='random', which runs
+        // no warm-up. The warm-up actually run is `warmup_used`.
+        let warmup = if self.init == "lda" {
             self.warmup
+        } else {
+            None
         };
         d.set_item("warmup", warmup)?;
         d.set_item("seed", self.seed)?;
@@ -465,35 +468,46 @@ impl SITS {
             )));
         }
 
-        let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
-            // A drop anywhere (trailing ones included) shows as a non-identity
-            // `kept_indices` or fewer kept rows than input documents.
-            let dropped = c.kept_indices.iter().enumerate().any(|(i, &k)| i != k)
-                || c.num_input_docs.is_some_and(|n| n != c.kept_indices.len());
-            if dropped {
-                return Err(PyValueError::new_err(
-                    "this Corpus dropped turns during pruning (see corpus.kept_indices); SITS \
+        let corpus: corpus::Corpus =
+            if let Ok(c) = data.extract::<Corpus>() {
+                // A drop anywhere (trailing ones included) shows as a non-identity
+                // `kept_indices` or fewer kept rows than input documents.
+                let dropped = c.pruned_upstream
+                    || c.kept_indices.iter().enumerate().any(|(i, &k)| i != k)
+                    || c.num_input_docs.is_some_and(|n| n != c.kept_indices.len());
+                if dropped {
+                    return Err(PyValueError::new_err(
+                        "this Corpus dropped turns during pruning (see corpus.kept_indices); SITS \
                      needs every turn in order, because a dropped turn changes its speaker's \
                      counts and the segment structure. Do not realign speakers to \
                      kept_indices: rebuild the Corpus so empty turns are kept, or pass the \
                      token lists (filter tokens to corpus.vocabulary yourself)",
-                ));
-            }
-            c.inner
-        } else {
-            let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
-                PyValueError::new_err("fit() expects a Corpus or a list of token lists")
-            })?;
-            let n = docs.len();
-            let (cp, kept) =
-                build_corpus_from_docs(docs, None, None, HashSet::new(), 1, 1.0, 0, 0)?;
-            if kept.len() != n {
-                return Err(PyValueError::new_err(
-                    "internal error: the corpus builder dropped turns; SITS needs every turn",
-                ));
-            }
-            cp
-        };
+                    ));
+                }
+                if c.num_input_docs.is_none() {
+                    py.import_bound("warnings")?.call_method1(
+                    "warn",
+                    ("SITS: this Corpus was loaded from disk or a text file, so it does not \
+                      record whether pruning dropped any turns, and SITS cannot check. A \
+                      dropped turn shifts its speaker's scores; if unsure, pass the token \
+                      lists instead.",),
+                )?;
+                }
+                c.inner
+            } else {
+                let docs: Vec<Vec<String>> = data.extract().map_err(|_| {
+                    PyValueError::new_err("fit() expects a Corpus or a list of token lists")
+                })?;
+                let n = docs.len();
+                let (cp, kept) =
+                    build_corpus_from_docs(docs, None, None, HashSet::new(), 1, 1.0, 0, 0)?;
+                if kept.len() != n {
+                    return Err(PyValueError::new_err(
+                        "internal error: the corpus builder dropped turns; SITS needs every turn",
+                    ));
+                }
+                cp
+            };
         let nt = corpus.num_docs();
         if nt == 0 {
             return Err(PyValueError::new_err("corpus contains no turns"));
@@ -947,6 +961,14 @@ impl SITS {
         Ok(self.fitted_model()?.num_draws)
     }
 
+    /// Warm-up sweeps (shifts frozen) actually run by the last fit: 0 under
+    /// ``init='random'``.
+    #[getter]
+    fn warmup_used(&self) -> PyResult<usize> {
+        self.fitted_model()?;
+        Ok(self.warmup_used)
+    }
+
     /// Gibbs sweeps run by the last fit.
     #[getter]
     fn iters(&self) -> PyResult<usize> {
@@ -981,6 +1003,33 @@ impl SITS {
     #[getter]
     fn num_phantom(&self) -> PyResult<usize> {
         Ok(self.fitted_model()?.num_phantom)
+    }
+
+    /// Hex digest (64-bit FNV-1a) of the fitted turns: the vocabulary and every
+    /// turn's word ids, in order. Chains fitted on the same data share it;
+    /// ``topica.sits.speaker_table`` uses it to refuse chains fitted on other data.
+    #[getter]
+    fn data_fingerprint(&self) -> PyResult<String> {
+        self.fitted_model()?;
+        let c = self.corpus.as_ref().unwrap();
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut eat = |bytes: &[u8]| {
+            for &b in bytes {
+                h ^= b as u64;
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        };
+        for w in &c.id_to_word {
+            eat(w.as_bytes());
+            eat(&[0xff]);
+        }
+        for turn in &c.docs {
+            eat(&(turn.len() as u64).to_le_bytes());
+            for &id in turn {
+                eat(&id.to_le_bytes());
+            }
+        }
+        Ok(format!("{h:016x}"))
     }
 
     #[getter]

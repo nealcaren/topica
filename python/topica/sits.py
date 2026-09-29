@@ -40,6 +40,22 @@ def _check_poolable(ms):
                 raise ValueError(
                     f"chain {i} differs from chain 0 in {name}; speaker_table pools "
                     "chains fitted on the same turns, speakers and conversations only")
+        if m.data_fingerprint != first.data_fingerprint:
+            raise ValueError(
+                f"chain {i} was fitted on different turns from chain 0 (data_fingerprint "
+                f"{m.data_fingerprint} vs {first.data_fingerprint}); speaker_table pools "
+                "chains fitted on the same data only")
+        run = ("iters", "burn_in")
+        for name in run:
+            if getattr(m, name) != getattr(first, name):
+                raise ValueError(
+                    f"chain {i} ran with {name}={getattr(m, name)}, chain 0 with "
+                    f"{getattr(first, name)}; pool chains of the same length")
+        if len(m.shift_propensity_draws) != len(first.shift_propensity_draws):
+            raise ValueError(
+                f"chain {i} stored {len(m.shift_propensity_draws)} draws, chain 0 "
+                f"{len(first.shift_propensity_draws)}; pass the same sample_interval to "
+                "every chain so each contributes equally to the pooled intervals")
         other = {k: v for k, v in m.settings.items() if k != "seed"}
         diff = sorted(k for k in set(ref) | set(other) if ref.get(k) != other.get(k))
         if diff:
@@ -57,12 +73,23 @@ def _check_poolable(ms):
             stacklevel=3)
 
 
+def _avg_ranks(x):
+    """Ranks with ties given their average rank (as scipy.stats.rankdata)."""
+    order = _np.argsort(x, kind="mergesort")
+    ranks = _np.empty(len(x))
+    ranks[order] = _np.arange(len(x), dtype=float)
+    _, inv, counts = _np.unique(x, return_inverse=True, return_counts=True)
+    sums = _np.bincount(inv, weights=ranks)
+    return (sums / counts)[inv]
+
+
 def _spearman(a, b):
     ok = _np.isfinite(a) & _np.isfinite(b)
     if ok.sum() < 3:
         return _np.nan
-    ra = _np.argsort(_np.argsort(a[ok])).astype(float)
-    rb = _np.argsort(_np.argsort(b[ok])).astype(float)
+    ra, rb = _avg_ranks(a[ok]), _avg_ranks(b[ok])
+    if ra.std() == 0 or rb.std() == 0:
+        return _np.nan  # a constant measure has no ranking
     return float(_np.corrcoef(ra, rb)[0, 1])
 
 
@@ -72,9 +99,11 @@ def speaker_table(models, level: float = 0.9):
     Parameters
     ----------
     models : SITS or sequence of SITS
-        Fitted chains that differ only in their seed. They must share the turns,
-        speakers, conversations and every other setting (K, the priors,
-        ``min_shift_tokens``, ``compat``, ``init``); anything else raises.
+        Fitted chains that differ only in their seed. They must share the turns
+        (``data_fingerprint``), speakers, conversation layout, eligibility, run
+        length (``iters``, ``burn_in``, number of stored draws), and every other
+        setting (K, the priors, ``min_shift_tokens``, ``compat``, ``init``,
+        ``warmup``); a mismatch in any of these raises.
     level : float, default 0.9
         Coverage of the equal-tailed intervals, taken over the stored posterior
         draws of every chain pooled.
@@ -175,14 +204,16 @@ def speaker_table(models, level: float = 0.9):
     df.attrs["min_shift_tokens"] = first.settings["min_shift_tokens"]
     df.attrs["rank_correlation"] = rank_corr
 
-    bad = [str(s) for s, r in zip(speakers, rhats) if _np.isfinite(r) and r > _RHAT_WARN]
+    bad = [str(s) for s, r in zip(speakers, rhats) if not _np.isnan(r) and r > _RHAT_WARN]
     if bad:
         _warnings.warn(
             f"speaker_table: R-hat above {_RHAT_WARN} for {len(bad)} of {nspk} speakers "
             f"(max {_np.nanmax(rhats):.2f}). SITS chains on real conversations settle at "
-            "somewhat different levels, and longer runs do not remove this; the pooled "
-            "intervals include that variation. Check that the chains have at least "
-            "200,000 sweeps each, and add chains until the pooled means stop moving.",
+            "somewhat different levels, and longer runs do not remove this. The pooled "
+            "intervals include that variation, but pooling summarizes the disagreement "
+            "rather than resolving it: check that the chains have at least 200,000 "
+            "sweeps each, add chains until the pooled means stop moving, and report "
+            "the spread between chains.",
             stacklevel=2)
     heavy = [str(s) for s, f in zip(speakers, forced) if f > _FORCED_WARN]
     if heavy:

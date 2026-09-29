@@ -464,7 +464,11 @@ class AnalysisManifest:
         stored = self.model.get("output_fingerprints", {})
         determinism = self.model.get("determinism")
         out: dict[str, str] = {}
-        for name in ("topic_word", "doc_topic"):
+        # topic_word/doc_topic always (unverifiable when absent), then any other
+        # recorded output such as SITS's shift_propensity.
+        names = ["topic_word", "doc_topic"]
+        names += [n for n in stored if n not in names]
+        for name in names:
             want = stored.get(name)
             have = getattr(model, name, None)
             if want is None or have is None:
@@ -497,6 +501,8 @@ class AnalysisManifest:
         f["num_topics"] = _cmp_value(self.model.get("num_topics"), other.model.get("num_topics"))
         f["model_settings"] = _cmp_value(self.model.get("settings"), other.model.get("settings"))
         f["fit_settings"] = _cmp_value(self.model.get("fit_settings"), other.model.get("fit_settings"))
+        if "fit_record" in self.model or "fit_record" in other.model:
+            f["fit_record"] = _cmp_value(self.model.get("fit_record"), other.model.get("fit_record"))
 
         a_out = self.model.get("output_fingerprints", {})
         b_out = other.model.get("output_fingerprints", {})
@@ -1031,6 +1037,7 @@ def _fit_record(model) -> dict[str, Any] | None:
     return {
         "iters": int(model.iters),
         "burn_in": int(model.burn_in),
+        "warmup": int(model.warmup_used),
         "num_draws": int(model.num_draws),
         "num_turns": int(len(conv)),
         "num_speakers": len(model.speakers),

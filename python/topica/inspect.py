@@ -688,7 +688,7 @@ def _thoughts_theta(obj):
     """The per-document topic rows to rank exemplars by. SITS's ``doc_topic`` gives
     every turn of a segment the same row, so its exemplars rank by ``turn_topic``
     (each turn's own mix) instead."""
-    if not isinstance(obj, np.ndarray) and hasattr(obj, "turn_topic"):
+    if not hasattr(obj, "shape") and hasattr(obj, "turn_topic"):
         return np.asarray(obj.turn_topic, dtype=np.float64)
     return _as_doc_topic(obj)
 
