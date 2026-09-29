@@ -64,8 +64,9 @@ on the full corpus and smooths that fit.
 | `alpha`, `alpha_ci` | the pseudo-counts $a_p$ and $a_t$, with 95% intervals |
 | `parent_share`, `parent_share_ci` | $a_p / (a_p + a_t)$: how dyadic the conversation is |
 | `edge_effect` | held-out gain of the true parent over a shuffled parent, nats per token |
-| `completion` | held-out gain over the base, overall and by reply-length tercile |
+| `completion` | held-out gain over the base, overall and by reply-length tercile, with intervals |
 | `alpha_by_group` | per-community pseudo-counts when `groups=` is passed |
+| `by_group` | per-community estimates with intervals when `groups=` is passed (see below) |
 
 `edge_effect` is the placebo-netted measure of what the *specific* parent adds. The placebo
 permutes parent assignments within (thread, depth), which keeps every reply's depth and thread
@@ -90,20 +91,30 @@ so an effect and its interval describe the same pooled distribution. The paramet
 applies; their intervals pool every calibration. `fit` warns when the calibration rests on fewer than 200 evaluation
 leaves or 2,000 held-out test tokens; `summary()["settings"]` has the counts.
 
-`draws` is a dict of NumPy arrays (`alpha`, `parent_share`, `completion`, `edge_effect`, and
-`rho` and `op_effect` when they apply). To compare two communities, fit each separately and
-difference the draws:
+`draws` is a dict of NumPy arrays (`alpha`, `parent_share`, `completion`, `edge_effect`,
+`by_length` (draws x 3 terciles), and `rho`, `op_effect` and `inherit_rate` when they apply).
+`completion["by_length"]` carries `lo` and `hi` per tercile from those draws.
+
+## Comparing communities
+
+To compare communities, fit them together and pass `groups=`. The communities then share one
+base model, and so one topic space. Each group's pseudo-counts are chosen on its own validation
+tokens and its effects are scored on its own test tokens. Every group's draws come from the same
+resampled threads, so the difference of two groups' draws is a paired contrast:
 
 ```python
-a = topica.ThreadTM(20, seed=13).fit(docs_a, parents_a, n_refit=4)
-b = topica.ThreadTM(20, seed=13).fit(docs_b, parents_b, n_refit=4)
-diff = a.draws["edge_effect"] - b.draws["edge_effect"]
-np.percentile(diff, [2.5, 50, 97.5])
-# parent_share draws are NaN where a draw chose no borrowing: drop those first.
+model = topica.ThreadTM(20, seed=13).fit(docs, parents, groups=community, n_refit=4)
+model.by_group["askscience"]["edge_effect"]     # {"estimate", "lo", "hi"}
+model.by_group["askscience"]["parent_share"]    # with parent_share_ci, p_no_borrowing
+model.contrast("askscience", "pokemontrades")   # group minus other, with 95% intervals
 ```
 
-The two fits have their own topics, so compare the tree quantities (shares, effects, `rho`),
-not topic-level numbers.
+`by_group[g]` holds `alpha`, `alpha_ci`, `parent_share`, `parent_share_ci`, `p_no_borrowing`,
+`completion`, `edge_effect` and `op_effect` (as they apply); `draws["by_group"][g]` holds their
+draws. `contrast` drops draws where either group is undefined (no borrowing chosen, or none of
+the group's tokens in the resample). `groups=` is not yet supported with `switch=True`; for the
+switch, fit each community separately and difference the draws, keeping in mind that the two
+fits have their own topics, so only the tree quantities (shares, effects, `rho`) compare.
 
 ## When only some replies inherit: `switch=True`
 
@@ -154,7 +165,7 @@ the parent. The mean of `inherit_weights` over replies estimates the share that 
 | `rho`, `rho_ci` | The model's estimate of the share of replies that inherit their context: the prior weight of the inherit component, chosen by held-out fit. Report this, with its interval, as a model-based estimate rather than a count of replies. |
 | `alpha`, `parent_share` | Among replies that inherit, how much of the borrowing comes from the parent (versus the thread or the original post)? A parent share of 0.98 with `rho` of 0.55 means about half the replies inherit, and those that do take up their parent. |
 | `inherit_weights` | Which replies inherit? A ranking, NaN for roots and empty replies. A short reply carries little evidence, so its weight stays near `rho`; only longer replies are classified with confidence. |
-| `inherit_rate` | The mean of `inherit_weights` over replies. It leans toward `rho` in communities of short comments and has no interval. |
+| `inherit_rate`, `inherit_rate_ci` | The mean of `inherit_weights` over replies. It leans toward `rho` in communities of short comments. The interval applies each bootstrap draw's parameters and resamples threads, so it carries both sources of uncertainty. |
 | `strength_at_bound` | A pseudo-count is at the top of its search range: larger values fit about as well, so its size is not identified beyond that. With the switch, inheriting replies then lean heavily on their context, more so the shorter they are. |
 
 The context shares are searched on a coarse lattice, so equal pseudo-counts across contexts

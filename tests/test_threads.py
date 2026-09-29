@@ -961,3 +961,94 @@ def test_switch_memo_cap_does_not_change_results(monkeypatch):
     assert full[0] == capped[0] and full[1] == capped[1] and full[4] == capped[4]
     np.testing.assert_array_equal(full[2], capped[2])
     np.testing.assert_array_equal(full[3], capped[3])
+
+
+# --------------------------------------------------------------------------- #903 Tier 2
+
+
+def _two_communities(n_threads=150):
+    """Group "a" inherits from context, group "b" does not; one reply forest."""
+    da, pa, _, _ = _simulate(inherit=0.9, n_threads=n_threads, seed=0)
+    db, pb, _, _ = _simulate(inherit=0.0, n_threads=n_threads, seed=1)
+    parents = pa + [p + len(da) if p >= 0 else -1 for p in pb]
+    return da + db, parents, ["a"] * len(da) + ["b"] * len(db)
+
+
+@pytest.fixture(scope="module")
+def grouped():
+    docs, parents, groups = _two_communities()
+    sm = threads.ThreadSmoother().fit(docs, parents, base=_lda, groups=groups, seed=3,
+                                      n_boot=200, final=False)
+    return sm
+
+
+def test_group_effects_separate_an_inheriting_community(grouped):
+    sm = grouped
+    a, b = sm.by_group["a"], sm.by_group["b"]
+    assert a["completion"]["lo"] > 0, a["completion"]
+    assert b["completion"]["lo"] <= 0 <= b["completion"]["hi"], b["completion"]
+    c = sm.contrast("a", "b")
+    assert c["completion"]["lo"] > 0, c
+    assert np.isclose(c["completion"]["estimate"],
+                      a["completion"]["estimate"] - b["completion"]["estimate"])
+    assert set(c) == {"parent_share", "completion", "edge_effect"}
+    for g in ("a", "b"):
+        assert sm.by_group[g]["alpha"] == sm.alpha_by_group[g]
+        d = sm.draws["by_group"][g]
+        assert d["alpha"].shape == (200, 2) and d["completion"].shape == (200,)
+        assert 0 <= sm.by_group[g]["p_no_borrowing"] <= 1
+
+
+def test_contrast_is_paired_and_checks_its_arguments(grouped):
+    sm = grouped
+    da, db = sm.draws["by_group"]["a"], sm.draws["by_group"]["b"]
+    d = da["edge_effect"] - db["edge_effect"]
+    lo, hi = np.percentile(d[np.isfinite(d)], [2.5, 97.5])
+    c = sm.contrast("a", "b")["edge_effect"]
+    assert np.isclose(c["lo"], lo) and np.isclose(c["hi"], hi)
+    with pytest.raises(KeyError, match="zzz"):
+        sm.contrast("a", "zzz")
+    docs, parents, _ = _two_communities(n_threads=40)
+    plain = threads.ThreadSmoother().fit(docs, parents, base=_lda, seed=3, n_boot=20,
+                                         final=False)
+    assert plain.by_group is None
+    with pytest.raises(RuntimeError, match="groups="):
+        plain.contrast("a", "b")
+
+
+def test_group_draws_stay_aligned_across_refits():
+    docs, parents, groups = _two_communities(n_threads=60)
+    sm = threads.ThreadSmoother().fit(docs, parents, base=_lda, groups=groups, seed=3,
+                                      n_boot=30, n_refit=1, final=False)
+    for g in sm.by_group:
+        assert sm.draws["by_group"][g]["completion"].shape == (60,)
+        assert sm.draws["by_group"][g]["alpha"].shape == (60, 2)
+
+
+def test_by_length_has_intervals_and_draws(inherited):
+    sm = inherited[0]
+    bl = sm.completion["by_length"]
+    assert sm.draws["by_length"].shape == (300, 3)
+    for t in range(3):
+        assert bl["lo"][t] <= bl["gain"][t] <= bl["hi"][t]
+    assert bl["lo"][0] > 0                    # short replies gain, and the interval says so
+
+
+def test_by_length_draws_match_the_point_estimate_on_the_full_sample():
+    tj = np.array([0, 0, 1, 1, 2, 2])
+    ter = np.array([0, 1, 0, 1, 2, 2])
+    gain = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 7.0])
+    boot = np.array([[0, 1, 2], [2, 2, 2]])
+    d = threads._length_draws(gain, ter, tj, boot, 3)
+    assert np.allclose(d[0], [2.0, 3.0, 6.0])
+    assert np.isnan(d[1, 0]) and np.isnan(d[1, 1]) and d[1, 2] == 6.0
+
+
+def test_switch_inherit_rate_has_an_interval():
+    docs, parents, _, _ = _simulate(inherit=0.5, n_threads=200, seed=0)
+    sm = threads.ThreadSmoother(switch=True).fit(docs, parents, base=_lda, seed=3, n_boot=60)
+    lo, hi = sm.inherit_rate_ci
+    assert lo <= sm.inherit_rate <= hi and hi > lo
+    assert sm.draws["inherit_rate"].shape == (60,)
+    assert sm.summary()["inherit_rate_ci"] == sm.inherit_rate_ci
+    assert sm.completion["by_length"]["lo"][0] <= sm.completion["by_length"]["gain"][0]
