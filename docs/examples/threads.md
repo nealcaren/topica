@@ -37,14 +37,16 @@ import topica
 topica.enable_experimental()          # TreeFieldTM is experimental
 b = topica.datasets.load_threads()
 
-len(b.documents)                      # 5042 comments
+len(b.documents)                      # 5022 comments
 sum(p < 0 for p in b.parents)         # 171 reply trees
 set(b.subreddit)                      # {'askscience', 'pokemontrades'}
 ```
 
 Every non-root `parent` index is smaller than its child's row, so the array is safe
-to pass straight to `fit`. `b.texts` holds the raw comment text if you want a
-different vocabulary; keep every row so `parents` stays valid.
+to pass straight to `fit`. `documents` has quoted text removed and double posts
+dropped (see [Strip quotes first](../guides/threads.md#strip-quotes-first)); `b.texts` holds the raw
+comment text, quotes included, if you want a different vocabulary; keep every row
+so `parents` stays valid.
 
 ## 2. Fit each community on its own reply trees
 

@@ -37,6 +37,12 @@ model.top_words(10)                                  # the base model's topics
 theta = model.doc_topic                              # (D, K) smoothed, one row per document
 ```
 
+`load_threads` returns `documents` already cleaned: quoted text is removed and double posts
+are dropped. Quoting copies the parent's words into the reply, and a duplicate sibling predicts
+its twin perfectly through the thread context, so both inflate exactly the uptake we are
+measuring. On your own data, do the same before fitting (see [Strip quotes
+first](#strip-quotes-first)).
+
 For an STM base, pass the prevalence design with one row per input document; `ThreadTM` keeps
 its rows aligned with the documents the corpus keeps and uses five best-bound restarts by
 default:
