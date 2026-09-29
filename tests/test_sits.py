@@ -181,8 +181,13 @@ def test_compat_reproduces_phantom_boundaries():
     # of the conversation openers
     num_convs = len(set(convs))
     assert m.sampler_shift_counts[:, 1].sum() >= m.num_phantom + num_convs
-    # the recorded shifts never include a short turn
-    assert np.all(m.shift_prob[~m.eligible & (m.shift_prob < 1)] == 0)
+    # the recorded shifts never include a short turn (select short turns by the
+    # conversation boundaries, not by shift_prob, which would hide a phantom at 1)
+    conv = m.conversation_index
+    opener = np.r_[True, conv[1:] != conv[:-1]]
+    short = ~m.eligible & ~opener
+    assert short.sum() > 0
+    assert np.all(m.shift_prob[short] == 0)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         d = topica.SITS(3, init="random", init_shift_rate=1 / 3, seed=3).fit(
@@ -197,6 +202,9 @@ def test_compat_requires_integer_init_denominator():
     topica.SITS(3, compat="rossiter2022", init_shift_rate=0.25)
     with pytest.raises(ValueError, match="compat must be"):
         topica.SITS(3, compat="rossiter", init_shift_rate=0.25)
+    # a typo is reported as a typo, not as a missing init_shift_rate
+    with pytest.raises(ValueError, match="compat must be"):
+        topica.SITS(3, compat="rossiter")
 
 
 def test_compat_requires_an_explicit_init_rate():
@@ -236,7 +244,8 @@ def test_argument_checks():
     with pytest.raises(ValueError):
         topica.SITS(0)
     for bad in [dict(alpha=0.0), dict(beta=-1.0), dict(gamma=float("nan")),
-                dict(init_shift_rate=1.5)]:
+                dict(init_shift_rate=1.5), dict(gamma=1e308), dict(beta=1e-320),
+                dict(alpha=1e12)]:
         with pytest.raises(ValueError):
             topica.SITS(3, **bad)
     m = topica.SITS(3)
@@ -309,20 +318,86 @@ def test_a_pruned_corpus_is_refused():
         topica.SITS(3).fit(corpus, speakers, conversations=convs, iters=5)
 
 
+def test_a_corpus_that_dropped_trailing_turns_is_refused():
+    """Dropping only the last turns leaves kept_indices an identity prefix."""
+    corpus = topica.Corpus.from_documents([["x"] * 5, ["x"] * 5, ["rare"]], min_doc_freq=2)
+    assert corpus.kept_indices == [0, 1]
+    with pytest.raises(ValueError, match="dropped turns"):
+        topica.SITS(2).fit(corpus, ["A", "A"], conversations=[0, 0], iters=5)
+
+
+def test_settings_round_trip():
+    for kw in [{}, dict(init="random"), dict(compat="rossiter2022", init_shift_rate=1 / 3)]:
+        m = topica.SITS(2, **kw)
+        assert topica.SITS(**m.settings).settings == m.settings
+    assert topica.SITS(2).settings["init_shift_rate"] is None
+    m = _fit(seed=1, iters=300)
+    assert m.settings["warmup"] == 150  # min(1000, burn_in) as actually run
+    assert m.iters == 300
+    topica.SITS(**m.settings)
+
+
 def test_speaker_table_pools_chains():
     a = _fit(seed=1, iters=300)
     b = _fit(seed=2, iters=300)
-    t = topica.sits.speaker_table([a, b], level=0.9)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        t = topica.sits.speaker_table([a, b], level=0.9)
+        one = topica.sits.speaker_table(a)
     assert list(t["speaker"]) == a.speakers
     assert (t["openers"] + t["short_turns"] + t["eligible"] == t["turns"]).all()
+    np.testing.assert_allclose(t["forced_share"],
+                               (t["openers"] + t["short_turns"]) / t["turns"])
     assert (t["shift_propensity_lo"] <= t["shift_propensity_hi"]).all()
-    assert np.isfinite(t["rhat_propensity"]).all()
+    assert np.isfinite(t["rhat"]).all()
     assert t.attrs["chains"] == 2
-    one = topica.sits.speaker_table(a)
-    assert np.isnan(one["rhat_propensity"]).all()
-    c = _fit(seed=1, iters=300, gamma=2.0)
-    with pytest.raises(ValueError, match="gamma"):
+    assert np.isnan(one["rhat"]).all()
+
+
+@pytest.mark.parametrize("kw", [dict(gamma=2.0), dict(min_shift_tokens=100),
+                                dict(init="random")])
+def test_speaker_table_refuses_chains_with_other_settings(kw):
+    a = _fit(seed=1, iters=300)
+    c = _fit(seed=2, iters=300, **kw)
+    with pytest.raises(ValueError, match="chain 1 (was fitted with different settings|differs)"):
         topica.sits.speaker_table([a, c])
+
+
+def test_speaker_table_refuses_chains_with_other_conversations():
+    """Same speakers and turn counts but a different conversation split."""
+    turns = [["w"] * 3] * 3
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        a = topica.SITS(2, seed=1).fit(turns, ["A"] * 3, conversations=[0, 0, 0], iters=300)
+        b = topica.SITS(2, seed=2).fit(turns, ["A"] * 3, conversations=[0, 1, 2], iters=300)
+    with pytest.raises(ValueError, match="conversation_index"):
+        topica.sits.speaker_table([a, b])
+
+
+def test_speaker_table_warnings():
+    a = _fit(seed=1, iters=300)
+    with pytest.warns(UserWarning, match="share seed"):
+        topica.sits.speaker_table([a, a])
+    # half of the follower's turns are short: forced share above 0.5 warns
+    turns, speakers, convs = _planted(short_every=2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        m = topica.SITS(3, seed=1).fit(turns, speakers, conversations=convs, iters=300)
+    t = None
+    with pytest.warns(UserWarning, match="forced_share"):
+        t = topica.sits.speaker_table(m)
+    assert (t["forced_share"] > 0.5).any()
+
+
+def test_record_fit_refuses_a_list_and_records_the_run(fitted):
+    turns, _, _ = _planted()
+    with pytest.raises(TypeError, match="one fitted model"):
+        topica.provenance.record_fit([fitted, fitted], turns)
+    man = topica.provenance.record_fit(fitted, turns)
+    rec = man.model["fit_record"]
+    assert rec["iters"] == 3000 and rec["burn_in"] == 1500
+    assert rec["num_speakers"] == 2 and rec["num_conversations"] == 10
+    assert "shift_propensity" in man.model["output_fingerprints"]
 
 
 def test_single_turn_conversations_and_k1():

@@ -42,9 +42,10 @@
 //!   ineligible (short) ones, as `nextInt(I) == 1`. It later overwrites an
 //!   ineligible turn's recorded `l` with 0 but never removes its segment boundary or
 //!   its shift count. Those "phantom" boundaries persist for the whole chain and
-//!   inflate every speaker's shift prior. The default mode keeps the bookkeeping
+//!   raise the shift counts of the speakers who own them, roughly in proportion to
+//!   each speaker's number of short turns. The default mode keeps the bookkeeping
 //!   consistent (ineligible turns start and stay at 0); the compat mode exists so
-//!   published results can be replicated.
+//!   runs of the fork can be replicated.
 //!
 //! Recording follows Rossiter's `sitsr::readSits`: every post-burn-in sweep's `l`
 //! is kept (no thinning) for the per-turn posterior shift probability, and the

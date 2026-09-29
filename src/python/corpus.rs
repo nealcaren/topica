@@ -94,6 +94,10 @@ pub struct Corpus {
     // Original document indices that survived pruning (parallel to the rows of
     // the corpus). Lets callers realign external covariate/metadata arrays.
     pub(crate) kept_indices: Vec<usize>,
+    // Number of input documents before pruning, when the constructor saw them
+    // (None after load or from a text file). With `kept_indices` it tells whether
+    // any document was dropped, including trailing ones.
+    pub(crate) num_input_docs: Option<usize>,
     // Optional per-document metadata (e.g. a pandas DataFrame), already filtered
     // to the surviving rows. Round-tripped as a plain Python object.
     metadata: Option<PyObject>,
@@ -107,6 +111,7 @@ impl Clone for Corpus {
         Python::with_gil(|py| Corpus {
             inner: self.inner.clone(),
             kept_indices: self.kept_indices.clone(),
+            num_input_docs: self.num_input_docs,
             metadata: self.metadata.as_ref().map(|m| m.clone_ref(py)),
             preprocessing: self.preprocessing.clone(),
         })
@@ -246,6 +251,7 @@ impl Corpus {
         Corpus {
             inner,
             kept_indices: (0..n).collect(),
+            num_input_docs: Some(n),
             metadata: None,
             preprocessing: None,
         }
@@ -321,6 +327,7 @@ impl Corpus {
         }
         let used_fixed_vocab = vocabulary.is_some();
         let stop: HashSet<String> = stopwords_set(stopwords)?;
+        let num_input_docs = Some(documents.len());
         let (inner, kept_indices) = build_corpus_from_docs_ext(
             documents,
             doc_names,
@@ -336,6 +343,7 @@ impl Corpus {
         Ok(Corpus {
             inner,
             kept_indices,
+            num_input_docs,
             metadata: None,
             preprocessing: Some(PrepInfo {
                 min_doc_freq,
@@ -369,6 +377,7 @@ impl Corpus {
         doc_names: Option<Vec<String>>,
         doc_labels: Option<Vec<String>>,
     ) -> PyResult<Self> {
+        let num_input_docs = Some(documents.len());
         let (inner, kept_indices) = build_corpus_from_docs_ext(
             documents,
             doc_names,
@@ -384,6 +393,7 @@ impl Corpus {
         Ok(Corpus {
             inner,
             kept_indices,
+            num_input_docs,
             metadata: None,
             preprocessing: Some(PrepInfo {
                 min_doc_freq: 1,
@@ -449,6 +459,7 @@ impl Corpus {
         Ok(Corpus {
             inner,
             kept_indices,
+            num_input_docs: None,
             metadata: None,
             preprocessing: Some(PrepInfo {
                 min_doc_freq,
@@ -475,6 +486,7 @@ impl Corpus {
         Ok(Corpus {
             inner,
             kept_indices,
+            num_input_docs: None,
             metadata: read_metadata_trailer(py, path),
             // Not persisted in the corpus save format; unknown after load.
             preprocessing: None,

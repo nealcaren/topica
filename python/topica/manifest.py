@@ -846,6 +846,10 @@ def record_fit(model, corpus=None, *, prevalence=None, prevalence_names=None,
         provenance. Only JSON-serialisable values are kept; others are dropped
         with a note.
     """
+    if isinstance(model, (list, tuple)):
+        raise TypeError(
+            "record_fit records one fitted model; call it once per model (for several "
+            "chains of one model, once per chain)")
     if privacy not in ("minimal", "aggregate"):
         raise ValueError(
             f"privacy must be 'minimal' or 'aggregate' (got {privacy!r}); "
@@ -912,6 +916,9 @@ def record_fit(model, corpus=None, *, prevalence=None, prevalence_names=None,
         "fit_settings": _allowlist_kwargs(fit_settings),
         "output_fingerprints": _output_fingerprints(model),
     }
+    fit_record = _fit_record(model)
+    if fit_record is not None:
+        model_block["fit_record"] = fit_record
 
     # Opt-in topic identity for manifest-native comparison (issue #415). Off by
     # default (top words are corpus-derived content); when enabled, retain the
@@ -1011,9 +1018,32 @@ def _capture_settings(model) -> tuple[dict[str, Any], str]:
     return {k: _jsonable(v) for k, v in settings.items()}, "full"
 
 
+def _fit_record(model) -> dict[str, Any] | None:
+    """Run facts a model reports about its own fit that its ``settings`` omit, so
+    the manifest carries them without the caller re-passing them. SITS only: its
+    readout depends on the run length, the data layout and its convergence checks.
+    """
+    if type(model).__name__ != "SITS":
+        return None
+    conv = np.asarray(model.conversation_index)
+    geweke = model.geweke_z
+    short = float(model.short_turn_share)
+    return {
+        "iters": int(model.iters),
+        "burn_in": int(model.burn_in),
+        "num_draws": int(model.num_draws),
+        "num_turns": int(len(conv)),
+        "num_speakers": len(model.speakers),
+        "num_conversations": int(conv.max()) + 1 if len(conv) else 0,
+        "geweke_z": None if geweke is None else float(geweke),
+        "short_turn_share": short if np.isfinite(short) else None,
+        "num_phantom": int(model.num_phantom),
+    }
+
+
 def _output_fingerprints(model) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    for name in ("topic_word", "doc_topic"):
+    for name in ("topic_word", "doc_topic", "shift_propensity"):
         arr = getattr(model, name, None)
         if arr is not None:
             out[name] = fingerprint_array(arr)

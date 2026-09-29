@@ -6026,7 +6026,7 @@ class SITS:
         chain as a shift under init="random" (default 0.1). compat="rossiter2022" reproduces the behaviour
         of Rossiter's fork, including its bookkeeping defect (short turns drawn as
         initial shifts stay segment boundaries and stay counted as shifts, which
-        inflates shift rates); use it only to replicate published results, and pass
+        inflates shift rates); use it only to replicate runs of the fork, and pass
         init_shift_rate = 1/I for the run being replicated (required).
         init="lda" (default without compat) starts every eligible turn as a shift and
         freezes the shifts for the first ``warmup`` sweeps (default min(1000, burn_in)), a per-turn
@@ -6040,7 +6040,7 @@ class SITS:
         speakers: Sequence[object] | None = None,
         *,
         conversations: Sequence[object] | None = None,
-        iters: int = 50000,
+        iters: int = 200000,
         burn_in: int | None = None,
         sample_interval: int | None = None,
         progress: Callable[[int, int, dict], object] | None = None,
@@ -6050,7 +6050,7 @@ class SITS:
         ``speakers`` and ``conversations`` are per-turn labels (strings or ints);
         each conversation's turns must be contiguous. ``authors=`` is an alias of
         ``speakers``. Every turn is kept, including empty ones. ``iters`` Gibbs
-        sweeps (default 50,000; the chain mixes slowly), of which ``burn_in``
+        sweeps (default 200,000; chains mix slowly), of which ``burn_in``
         (default iters // 2) are discarded; every later sweep is a draw.
         ``sample_interval`` thins only the stored per-speaker draws used for
         intervals (default: keep at most 2,000). Labels must be all integers or all
@@ -6160,6 +6160,10 @@ class SITS:
     @property
     def num_draws(self) -> int:
         """Number of post-burn-in sweeps averaged into posterior means."""
+        ...
+    @property
+    def iters(self) -> int:
+        """Gibbs sweeps run by the last fit."""
         ...
     @property
     def burn_in(self) -> int:

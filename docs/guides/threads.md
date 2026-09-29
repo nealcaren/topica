@@ -280,6 +280,9 @@ fixed distance decay. `ThreadTM` estimates how much to borrow on held-out replie
 parent from the rest of the thread, and nets the parent's contribution against a placebo.
 [`TreeFieldTM`](models.md#treefieldtm) builds the reply tree into a logistic-normal prior and
 estimates it jointly; it was topica's earlier threaded model under the name `ThreadTM`.
+[`SITS`](models.md#sits) is for a different question. It treats a conversation as a linear
+sequence of speaking turns (a debate or a meeting transcript, not a reply tree) and estimates
+how often each speaker changes the topic, the agenda-setting measure of Rossiter (2022).
 
 ## Limits
 

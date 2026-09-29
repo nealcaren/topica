@@ -15,6 +15,10 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 /// Share of non-first turns that may be ineligible before `fit` warns.
 const INELIGIBLE_WARN_SHARE: f64 = 0.25;
 
+/// Accepted range for the Dirichlet/Beta hyperparameters α, β and γ.
+const HYPER_MIN: f64 = 1e-10;
+const HYPER_MAX: f64 = 1e10;
+
 /// SITS: parametric Speaker Identity for Topic Segmentation (Nguyen, Boyd-Graber &
 /// Resnik, ACL 2012; Nguyen et al., Machine Learning 2014), the agenda-setting
 /// measure of Rossiter (2022, AJPS). Conversations are sequences of speaking turns;
@@ -42,6 +46,7 @@ pub struct SITS {
     topic_names: Vec<String>,
     burn_in: usize,
     iters: usize,
+    warmup_used: usize,
     geweke: Option<f64>,
     model: Option<SitsModel>,
     corpus: Option<corpus::Corpus>,
@@ -67,6 +72,7 @@ struct SitsState {
     topic_names: Vec<String>,
     burn_in: usize,
     iters: usize,
+    warmup_used: usize,
     geweke: Option<f64>,
     model: Option<SitsModel>,
     corpus: Option<corpus::Corpus>,
@@ -228,8 +234,8 @@ impl SITS {
     /// ``compat="rossiter2022"`` reproduces the behaviour of Rossiter's fork,
     /// including a bookkeeping defect: short turns drawn as initial shifts stay
     /// segment boundaries and stay counted as shifts for the whole chain, which
-    /// raises every speaker's shift rate. Use it only to replicate published
-    /// results. It requires an explicit ``init_shift_rate = 1/I`` for the run being
+    /// raises the shift counts of speakers with many short turns. Use it only to
+    /// replicate runs of the fork. It requires an explicit ``init_shift_rate = 1/I`` for the run being
     /// replicated (or 0).
     ///
     /// ``init`` sets the starting state. ``"lda"`` (the default, except with
@@ -258,6 +264,14 @@ impl SITS {
         warmup: Option<usize>,
         seed: u64,
     ) -> PyResult<Self> {
+        match compat.as_deref() {
+            None | Some("rossiter2022") => {}
+            Some(other) => {
+                return Err(PyValueError::new_err(format!(
+                    "compat must be None or 'rossiter2022', got {other:?}"
+                )))
+            }
+        }
         let init =
             init.unwrap_or_else(|| if compat.is_some() { "random" } else { "lda" }.to_string());
         match (init.as_str(), compat.as_deref()) {
@@ -301,20 +315,20 @@ impl SITS {
                     "{name} must be finite and > 0"
                 )));
             }
+            // Outside this range the sampler's sums (2γ, Vβ, Kα) overflow or their
+            // reciprocals do, and the draws degenerate silently.
+            if !(HYPER_MIN..=HYPER_MAX).contains(&x) {
+                return Err(PyValueError::new_err(format!(
+                    "{name} = {x:e} is outside [{HYPER_MIN:e}, {HYPER_MAX:e}]; values that \
+                     extreme overflow the sampler's arithmetic"
+                )));
+            }
         }
         if !(0.0..=1.0).contains(&init_shift_rate) {
             return Err(PyValueError::new_err("init_shift_rate must be in [0, 1]"));
         }
-        match compat.as_deref() {
-            None => {}
-            Some("rossiter2022") => {
-                compat_init_every(init_shift_rate)?;
-            }
-            Some(other) => {
-                return Err(PyValueError::new_err(format!(
-                    "compat must be None or 'rossiter2022', got {other:?}"
-                )))
-            }
+        if compat.is_some() {
+            compat_init_every(init_shift_rate)?;
         }
         Ok(SITS {
             num_topics,
@@ -335,6 +349,7 @@ impl SITS {
             topic_names: Vec::new(),
             burn_in: 0,
             iters: 0,
+            warmup_used: 0,
             geweke: None,
             model: None,
             corpus: None,
@@ -356,10 +371,20 @@ impl SITS {
         d.set_item("beta", self.beta)?;
         d.set_item("gamma", self.gamma)?;
         d.set_item("min_shift_tokens", self.min_shift_tokens)?;
-        d.set_item("init_shift_rate", self.init_shift_rate)?;
+        // Under init='lda' the rate is unused (every eligible turn starts as a
+        // shift), and the constructor refuses one, so export None to round-trip.
+        let rate = (self.init != "lda").then_some(self.init_shift_rate);
+        d.set_item("init_shift_rate", rate)?;
         d.set_item("compat", self.compat.clone())?;
         d.set_item("init", self.init.clone())?;
-        d.set_item("warmup", self.warmup)?;
+        // After a fit, the warm-up actually run (the default resolves to
+        // min(1000, burn_in)); before, what was passed.
+        let warmup = if self.fitted && self.init == "lda" {
+            Some(self.warmup_used)
+        } else {
+            self.warmup
+        };
+        d.set_item("warmup", warmup)?;
         d.set_item("seed", self.seed)?;
         Ok(d)
     }
@@ -372,8 +397,9 @@ impl SITS {
     /// ``authors=`` is accepted as an alias of ``speakers`` (the reference's term).
     /// Every turn is kept, including empty ones: they count toward their speaker.
     ///
-    /// ``iters`` is the number of Gibbs sweeps (default 50,000; the chain mixes
-    /// slowly, and Rossiter ran 100,000 to 500,000). ``burn_in`` sweeps (default
+    /// ``iters`` is the number of Gibbs sweeps (default 200,000; Rossiter ran 100,000
+    /// to 500,000). Chains mix slowly and settle at somewhat different levels, so fit
+    /// several seeds and pool them with ``topica.sits.speaker_table``. ``burn_in`` sweeps (default
     /// ``iters // 2``) are discarded; every later sweep is a draw (no thinning), as
     /// in Rossiter's ``readSits``. ``sample_interval`` thins only the stored
     /// per-speaker draws used for intervals (default: keep at most 2,000); posterior
@@ -382,7 +408,7 @@ impl SITS {
     /// Warns when more than a quarter of the non-first turns are too short to be
     /// shifts, and when the eligible-shift trace fails a Geweke check (see
     /// :attr:`geweke_z`).
-    #[pyo3(signature = (data, speakers=None, *, conversations=None, iters=50_000, burn_in=None,
+    #[pyo3(signature = (data, speakers=None, *, conversations=None, iters=200_000, burn_in=None,
                         sample_interval=None, progress=None, authors=None))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
@@ -440,7 +466,11 @@ impl SITS {
         }
 
         let corpus: corpus::Corpus = if let Ok(c) = data.extract::<Corpus>() {
-            if c.kept_indices.iter().enumerate().any(|(i, &k)| i != k) {
+            // A drop anywhere (trailing ones included) shows as a non-identity
+            // `kept_indices` or fewer kept rows than input documents.
+            let dropped = c.kept_indices.iter().enumerate().any(|(i, &k)| i != k)
+                || c.num_input_docs.is_some_and(|n| n != c.kept_indices.len());
+            if dropped {
                 return Err(PyValueError::new_err(
                     "this Corpus dropped turns during pruning (see corpus.kept_indices); SITS \
                      needs every turn in order, because a dropped turn changes its speaker's \
@@ -568,8 +598,18 @@ impl SITS {
         let mut rng = ChaCha8Rng::seed_from_u64(slf.seed);
         let progress = resolve_progress(py, progress, "SITS")?;
         let turn_speaker = spk_ids.clone();
+        // Report about 1,000 times per fit, not every sweep: a sweep takes a few
+        // milliseconds, so per-sweep callbacks redraw the bar constantly.
+        let stride = iters.div_ceil(1000).max(1);
         let (model, corpus, conv_start) = py.allow_threads(move || {
-            let mut on_progress = on_progress_bare(&progress);
+            let mut bare = on_progress_bare(&progress);
+            let mut on_progress = |it: usize, total: usize| {
+                if it.is_multiple_of(stride) || it == total {
+                    bare(it, total)
+                } else {
+                    true
+                }
+            };
             let data = SitsData {
                 turns: &corpus.docs,
                 speakers: &spk_ids,
@@ -607,10 +647,13 @@ impl SITS {
                 warnings.call_method1(
                     "warn",
                     (format!(
-                        "SITS: the number of topic shifts is still drifting after burn-in \
-                         (Geweke z = {z:.2} on the eligible-shift trace), so the chain has \
-                         probably not converged. Increase iters (and burn_in), and compare \
-                         several seeds before reporting agenda-setting scores."
+                        "SITS: the number of topic shifts differs between the early and late \
+                         draws of this chain (Geweke z = {z:.2} on the eligible-shift trace). \
+                         SITS chains settle at somewhat different levels on real conversations, \
+                         and longer runs do not remove this, so do not report one chain: fit \
+                         at least four seeds (at least 200,000 sweeps each) and pool them with \
+                         topica.sits.speaker_table, whose intervals include the variation \
+                         between chains."
                     ),),
                 )?;
             }
@@ -622,7 +665,7 @@ impl SITS {
                 (format!(
                     "SITS(compat='rossiter2022'): {} short turns started as shifts and will \
                      remain segment boundaries counted as shifts for the whole chain \
-                     (the fork's bookkeeping defect). This reproduces published results but \
+                     (the fork's bookkeeping defect). This reproduces the fork's sampler but \
                      inflates shift rates; use the default mode for new analyses.",
                     model.num_phantom
                 ),),
@@ -638,6 +681,7 @@ impl SITS {
         slf.topic_names = (0..slf.num_topics).map(|i| format!("topic_{i}")).collect();
         slf.burn_in = burn_in;
         slf.iters = iters;
+        slf.warmup_used = warmup;
         slf.geweke = gz;
         slf.fitted = true;
         Ok(slf.into())
@@ -903,6 +947,13 @@ impl SITS {
         Ok(self.fitted_model()?.num_draws)
     }
 
+    /// Gibbs sweeps run by the last fit.
+    #[getter]
+    fn iters(&self) -> PyResult<usize> {
+        self.fitted_model()?;
+        Ok(self.iters)
+    }
+
     /// Burn-in sweeps discarded by the last fit.
     #[getter]
     fn burn_in(&self) -> PyResult<usize> {
@@ -1054,6 +1105,7 @@ impl SITS {
                 topic_names: self.topic_names.clone(),
                 burn_in: self.burn_in,
                 iters: self.iters,
+                warmup_used: self.warmup_used,
                 geweke: self.geweke,
                 model: self.model.clone(),
                 corpus: self.corpus.clone(),
@@ -1084,6 +1136,7 @@ impl SITS {
             topic_names: s.topic_names,
             burn_in: s.burn_in,
             iters: s.iters,
+            warmup_used: s.warmup_used,
             geweke: s.geweke,
             model: s.model,
             corpus: s.corpus,

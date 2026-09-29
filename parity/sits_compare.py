@@ -269,8 +269,12 @@ def regenerate() -> None:
 
 
 def _z(a, b):
+    """Two-sample z per column. With zero spread on both sides the means must agree
+    exactly: identical means give 0, any difference gives inf (a failing gate)."""
     se = np.sqrt(a.var(axis=0, ddof=1) / len(a) + b.var(axis=0, ddof=1) / len(b))
-    return (a.mean(axis=0) - b.mean(axis=0)) / np.where(se > 0, se, np.inf)
+    diff = a.mean(axis=0) - b.mean(axis=0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(se > 0, diff / se, np.where(diff == 0, 0.0, np.inf))
 
 
 def run(verbose: bool = True) -> dict:
