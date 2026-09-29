@@ -299,6 +299,14 @@ class Corpus:
         of this corpus. Use to realign an external covariate array/DataFrame:
         ``X = X[corpus.kept_indices]`` (see :func:`topica.align`)."""
         ...
+    @property
+    def dropped_documents(self) -> bool | None:
+        """Whether building this Corpus dropped any input document: True, False,
+        or None when unknown (loaded from disk or read from a text file). A Corpus
+        derived from one that dropped documents (prep_documents) reports True."""
+        ...
+    def _mark_pruned_upstream(self) -> None: ...
+    def _mark_history_unknown(self) -> None: ...
 
     metadata: object | None
     """Optional per-document metadata aligned to the surviving rows (a pandas
@@ -6000,6 +6008,245 @@ class AuthorTopic:
     def save(self, path: str) -> None: ...
     @staticmethod
     def load(path: str) -> AuthorTopic: ...
+    def __repr__(self) -> str: ...
+
+class SITS:
+    """SITS, parametric Speaker Identity for Topic Segmentation (Nguyen,
+    Boyd-Graber & Resnik, ACL 2012; Nguyen et al., Machine Learning 2014), the
+    agenda-setting measure of Rossiter (2022, AJPS). Conversations are sequences of
+    speaking turns; each turn continues the current topic segment or shifts to a new
+    one, and the probability that speaker m shifts the topic is that speaker's
+    agenda-setting propensity. Collapsed Gibbs, ported from the reference Java sampler
+    (vietansegan/sits and Rossiter's fork erossiter/sits, Apache-2.0)."""
+    @property
+    def settings(self) -> dict:
+        """The constructor configuration as a JSON-serialisable dict, keyword-named
+        to match ``__init__`` (issue #400). ``speakers`` and ``conversations`` are
+        data supplied to ``fit``, not hyperparameters."""
+        ...
+    @property
+    def seed(self) -> int:
+        """The random seed the model was constructed with."""
+        ...
+    def __init__(
+        self,
+        num_topics: int,
+        *,
+        alpha: float | None = None,
+        beta: float = 0.1,
+        gamma: float = 1.0,
+        min_shift_tokens: int = 5,
+        init_shift_rate: float | None = None,
+        compat: str | None = None,
+        init: str | None = None,
+        warmup: int | None = None,
+        seed: int = 13,
+    ) -> None:
+        """num_topics is K. alpha is the symmetric segment-topic Dirichlet (default
+        1/K, Rossiter's setting); beta the topic-word Dirichlet (default 0.1); gamma
+        the symmetric Beta prior on each speaker's shift probability (default 1.0,
+        Rossiter's setting). min_shift_tokens (default 5): a turn with fewer tokens is
+        never sampled as a shift; tokens are counted on what you pass to fit (after
+        your preprocessing). init_shift_rate: probability an eligible turn starts the
+        chain as a shift under init="random" (default 0.1). compat="rossiter2022" reproduces the behaviour
+        of Rossiter's fork, including its bookkeeping defect (short turns drawn as
+        initial shifts stay segment boundaries and stay counted as shifts, which
+        inflates shift rates); use it only to replicate runs of the fork, and pass
+        init_shift_rate = 1/I for the run being replicated (required).
+        init="lda" (default without compat) starts every eligible turn as a shift and
+        freezes the shifts for the first ``warmup`` sweeps (default min(1000, burn_in)), a per-turn
+        LDA warm start that reaches the posterior far sooner than the reference
+        start; init="random" is the reference start (with init_shift_rate, default
+        0.1), required by compat. burn_in must be at least warmup."""
+        ...
+    def fit(
+        self,
+        data: Corpus | Sequence[Sequence[str]],
+        speakers: Sequence[object] | None = None,
+        *,
+        conversations: Sequence[object] | None = None,
+        iters: int = 200000,
+        burn_in: int | None = None,
+        sample_interval: int | None = None,
+        progress: Callable[[int, int, dict], object] | None = None,
+        authors: Sequence[object] | None = None,
+    ) -> "SITS":
+        """Fit on one token list per speaking turn, in conversation order.
+        ``speakers`` and ``conversations`` are per-turn labels (strings or ints);
+        each conversation's turns must be contiguous. ``authors=`` is an alias of
+        ``speakers``. Every turn is kept, including empty ones. ``iters`` Gibbs
+        sweeps (default 200,000; chains mix slowly), of which ``burn_in``
+        (default iters // 2) are discarded; every later sweep is a draw.
+        ``sample_interval`` thins only the stored per-speaker draws used for
+        intervals (default: keep at most 2,000). Labels must be all integers or all
+        strings. A Corpus that dropped turns during pruning is refused. Warns when
+        many turns are too short to shift and when the shift trace fails (or is too
+        short for) a Geweke check. Pool several seeds with
+        ``topica.sits.speaker_table``."""
+        ...
+    @property
+    def num_topics(self) -> int: ...
+    @property
+    def topic_word(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_topics, vocab) topic-word matrix phi from the terminal Gibbs state
+        (the reference's phi.txt). Rows sum to 1."""
+        ...
+    @property
+    def doc_topic(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_turns, num_topics): each turn's segment topic mixture in the
+        terminal Gibbs state (turns in one terminal segment share a row; this
+        segmentation can differ from ``segments``). Rows sum to 1. Use
+        ``turn_topic`` to rank turns, e.g. for find_thoughts."""
+        ...
+    @property
+    def turn_topic(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_turns, num_topics): each turn's own smoothed topic proportions in
+        the terminal state (the reference's theta.txt)."""
+        ...
+    @property
+    def shift_prob(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_turns,) posterior probability that each turn shifts the topic: the
+        mean sampled shift indicator over post-burn-in sweeps. Openers are 1; turns
+        shorter than min_shift_tokens are 0."""
+        ...
+    @property
+    def eligible(self) -> numpy.typing.NDArray[numpy.bool_]:
+        """(num_turns,) whether each turn is sampled as a possible shift (not a
+        conversation opener and at least min_shift_tokens tokens)."""
+        ...
+    @property
+    def segments(self) -> numpy.typing.NDArray[numpy.int64]:
+        """(num_turns,) segment id from the posterior-majority segmentation (a new
+        segment at each opener and each turn with shift_prob >= 0.5)."""
+        ...
+    @property
+    def conversation_index(self) -> numpy.typing.NDArray[numpy.int64]:
+        """(num_turns,) conversation number of each turn, from 0 in order."""
+        ...
+    @property
+    def speakers(self) -> list[int] | list[str]:
+        """Speaker labels indexing every per-speaker array: integers sorted
+        numerically when the speakers were integers, else strings sorted."""
+        ...
+    @property
+    def speaker_index(self) -> numpy.typing.NDArray[numpy.int64]:
+        """(num_turns,) each turn's speaker as a position in ``speakers``."""
+        ...
+    @property
+    def short_turn_share(self) -> float:
+        """Share of non-first turns too short to be sampled as shifts (counted on
+        the tokens passed to fit). Report it with the scores."""
+        ...
+    @property
+    def speaker_turn_counts(self) -> numpy.typing.NDArray[numpy.int64]:
+        """(num_speakers,) number of turns per speaker."""
+        ...
+    @property
+    def speaker_eligible_counts(self) -> numpy.typing.NDArray[numpy.int64]:
+        """(num_speakers,) number of eligible (sampled) turns per speaker."""
+        ...
+    @property
+    def shift_propensity(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_speakers,) Rossiter's (2022) agenda-setting score (sitsr::readSits):
+        posterior mean of (gamma + shifts among the speaker's turns) / (2 gamma +
+        the speaker's turns). Counts all turns, so openers (always shifts) and short
+        turns (never shifts) enter; report eligible_shift_rate beside it."""
+        ...
+    @property
+    def shift_propensity_draws(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_stored_draws, num_speakers) posterior draws of shift_propensity."""
+        ...
+    def shift_propensity_interval(self, level: float = 0.9) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_speakers, 2) equal-tailed posterior interval of shift_propensity
+        (within-chain uncertainty only)."""
+        ...
+    @property
+    def eligible_shift_rate(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_speakers,) posterior mean share of each speaker's eligible turns that
+        shift; NaN for a speaker with none. Excludes openers and short turns."""
+        ...
+    @property
+    def eligible_shift_rate_draws(self) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_stored_draws, num_speakers) posterior draws of eligible_shift_rate."""
+        ...
+    def eligible_shift_rate_interval(self, level: float = 0.9) -> numpy.typing.NDArray[numpy.float64]:
+        """(num_speakers, 2) equal-tailed posterior interval of eligible_shift_rate."""
+        ...
+    @property
+    def shift_trace(self) -> numpy.typing.NDArray[numpy.int64]:
+        """(sweeps,) number of eligible turns sampled as shifts after each sweep:
+        the convergence trace, which should be flat after burn-in."""
+        ...
+    @property
+    def geweke_z(self) -> float | None:
+        """Geweke z of the post-burn-in shift_trace (first 10% vs last 50%);
+        |z| > 2 suggests the chain is still drifting."""
+        ...
+    @property
+    def num_draws(self) -> int:
+        """Number of post-burn-in sweeps averaged into posterior means."""
+        ...
+    @property
+    def warmup_used(self) -> int:
+        """Warm-up sweeps (shifts frozen) run by the last fit; 0 under init='random'."""
+        ...
+    @property
+    def iters(self) -> int:
+        """Gibbs sweeps run by the last fit."""
+        ...
+    @property
+    def data_fingerprint(self) -> str:
+        """Hex digest of the fitted turns (vocabulary and every turn's word ids);
+        chains fitted on the same data share it."""
+        ...
+    @property
+    def burn_in(self) -> int:
+        """Burn-in sweeps discarded by the last fit."""
+        ...
+    @property
+    def sampler_shift_counts(self) -> numpy.typing.NDArray[numpy.int64]:
+        """(num_speakers, 2) the sampler's (non-shift, shift) counts in the terminal
+        state (the reference's pi.txt numerators). In compat mode they include the
+        phantom shifts."""
+        ...
+    @property
+    def num_phantom(self) -> int:
+        """Phantom segment boundaries (compat='rossiter2022' only; else 0)."""
+        ...
+    @property
+    def vocabulary(self) -> list[str]: ...
+    @property
+    def topic_names(self) -> list[str]: ...
+    @topic_names.setter
+    def topic_names(self, names: Sequence[str]) -> None: ...
+    @property
+    def doc_names(self) -> list[str]: ...
+    @property
+    def fit_history(self) -> list[tuple[int, float]]:
+        """(sweep, collapsed log joint) of the state after each recorded sweep (the
+        reference's loglikelihood.txt). A diagnostic; watch shift_trace too."""
+        ...
+    @property
+    def early_stopped(self) -> bool:
+        """Alias of :attr:`converged`: True only on an early stop (issue #755)."""
+        ...
+    @property
+    def converged(self) -> bool:
+        """Always False: SITS runs the full ``iters`` (no early stop). Use geweke_z
+        and several seeds to judge convergence."""
+        ...
+    def top_words(
+        self, n: int = 10, *, topic: int | None = None, weights: bool = False
+    ) -> list | list[list]:
+        """Top words per topic. Bare word strings by default; pass weights=True
+        for (word, phi) pairs."""
+        ...
+    def coherence(self, n: int = 10, *, coherence_type: str = "u_mass", texts: "Corpus | Sequence[Sequence[str]] | None" = None) -> numpy.typing.NDArray[numpy.float64]:
+        """Per-topic coherence over the top ``n`` words, shape (num_topics,)."""
+        ...
+    def save(self, path: str) -> None: ...
+    @staticmethod
+    def load(path: str) -> SITS: ...
     def __repr__(self) -> str: ...
 
 class MGLDA:

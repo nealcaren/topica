@@ -216,6 +216,17 @@ def _fit_model(name: str, factory):
         model.fit(_TOY, authors, iters=10)
         return model
 
+    # SITS: per-turn speakers and conversation ids (turns in conversation order).
+    if name == "SITS":
+        speakers = [f"s{i % 2}" for i in range(len(_TOY))]
+        convs = [i // 3 for i in range(len(_TOY))]
+        import warnings as _warnings
+
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("ignore")
+            model.fit(_TOY, speakers, conversations=convs, iters=10)
+        return model
+
     # MGLDA: sentence-segmented input (list[list[list[str]]]); wrap each toy doc into
     # two sentences.
     if name == "MGLDA":

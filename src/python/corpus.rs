@@ -93,7 +93,15 @@ pub struct Corpus {
     pub(crate) inner: corpus::Corpus,
     // Original document indices that survived pruning (parallel to the rows of
     // the corpus). Lets callers realign external covariate/metadata arrays.
-    kept_indices: Vec<usize>,
+    pub(crate) kept_indices: Vec<usize>,
+    // Number of input documents before pruning, when the constructor saw them
+    // (None after load or from a text file). With `kept_indices` it tells whether
+    // any document was dropped, including trailing ones.
+    pub(crate) num_input_docs: Option<usize>,
+    // Set when this Corpus was derived from one that had already dropped
+    // documents (e.g. `prep_documents` on a pruned Corpus), so a drop upstream is
+    // not lost when the derived Corpus's own `kept_indices` look complete.
+    pub(crate) pruned_upstream: bool,
     // Optional per-document metadata (e.g. a pandas DataFrame), already filtered
     // to the surviving rows. Round-tripped as a plain Python object.
     metadata: Option<PyObject>,
@@ -107,6 +115,8 @@ impl Clone for Corpus {
         Python::with_gil(|py| Corpus {
             inner: self.inner.clone(),
             kept_indices: self.kept_indices.clone(),
+            num_input_docs: self.num_input_docs,
+            pruned_upstream: self.pruned_upstream,
             metadata: self.metadata.as_ref().map(|m| m.clone_ref(py)),
             preprocessing: self.preprocessing.clone(),
         })
@@ -246,6 +256,8 @@ impl Corpus {
         Corpus {
             inner,
             kept_indices: (0..n).collect(),
+            num_input_docs: Some(n),
+            pruned_upstream: false,
             metadata: None,
             preprocessing: None,
         }
@@ -321,6 +333,7 @@ impl Corpus {
         }
         let used_fixed_vocab = vocabulary.is_some();
         let stop: HashSet<String> = stopwords_set(stopwords)?;
+        let num_input_docs = Some(documents.len());
         let (inner, kept_indices) = build_corpus_from_docs_ext(
             documents,
             doc_names,
@@ -336,6 +349,8 @@ impl Corpus {
         Ok(Corpus {
             inner,
             kept_indices,
+            num_input_docs,
+            pruned_upstream: false,
             metadata: None,
             preprocessing: Some(PrepInfo {
                 min_doc_freq,
@@ -369,6 +384,7 @@ impl Corpus {
         doc_names: Option<Vec<String>>,
         doc_labels: Option<Vec<String>>,
     ) -> PyResult<Self> {
+        let num_input_docs = Some(documents.len());
         let (inner, kept_indices) = build_corpus_from_docs_ext(
             documents,
             doc_names,
@@ -384,6 +400,8 @@ impl Corpus {
         Ok(Corpus {
             inner,
             kept_indices,
+            num_input_docs,
+            pruned_upstream: false,
             metadata: None,
             preprocessing: Some(PrepInfo {
                 min_doc_freq: 1,
@@ -449,6 +467,8 @@ impl Corpus {
         Ok(Corpus {
             inner,
             kept_indices,
+            num_input_docs: None,
+            pruned_upstream: false,
             metadata: None,
             preprocessing: Some(PrepInfo {
                 min_doc_freq,
@@ -475,6 +495,8 @@ impl Corpus {
         Ok(Corpus {
             inner,
             kept_indices,
+            num_input_docs: None,
+            pruned_upstream: false,
             metadata: read_metadata_trailer(py, path),
             // Not persisted in the corpus save format; unknown after load.
             preprocessing: None,
@@ -590,6 +612,31 @@ impl Corpus {
     #[getter]
     fn kept_indices(&self) -> Vec<usize> {
         self.kept_indices.clone()
+    }
+
+    /// Whether building this Corpus dropped any input document: ``True``,
+    /// ``False``, or ``None`` when unknown (a Corpus loaded from disk or read from
+    /// a text file does not record its input count). A Corpus derived from one
+    /// that dropped documents (``prep_documents``) reports ``True``.
+    #[getter]
+    fn dropped_documents(&self) -> Option<bool> {
+        if self.pruned_upstream || self.kept_indices.iter().enumerate().any(|(i, &k)| i != k) {
+            return Some(true);
+        }
+        self.num_input_docs.map(|n| n != self.kept_indices.len())
+    }
+
+    /// Mark this Corpus as derived from one that dropped documents (used by
+    /// ``prep_documents``; not part of the public API).
+    fn _mark_pruned_upstream(&mut self) {
+        self.pruned_upstream = true;
+    }
+
+    /// Mark this Corpus as derived from one whose drop history is unknown, so
+    /// ``dropped_documents`` reports None rather than False (used by
+    /// ``prep_documents``; not part of the public API).
+    fn _mark_history_unknown(&mut self) {
+        self.num_input_docs = None;
     }
 
     /// Optional per-document metadata, already aligned to the surviving rows

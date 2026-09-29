@@ -40,6 +40,9 @@ _OBJECTIVE_LABEL = {
     "LDA": _LL, "PT": _LL, "KeyATM": _LL, "SeededLDA": _LL, "FactorialLDA": _LL,
     "AuthorTopic": _LL, "MGLDA": _LL, "TopicsOverTime": _LL, "DMR": _LL, "GDMR": _LL,
     "LabeledLDA": _LL, "SAGE": _LL,
+    # SITS: collapsed log joint (speaker, topic-word and segment terms), as the
+    # reference's loglikelihood.txt
+    "SITS": "collapsed log joint",
     # sLDA records only the Gaussian likelihood of the response y, not of the tokens
     "SupervisedLDA": "response log-likelihood",
     # Wordfish's Poisson log-likelihood drops the -log(y!) constant
@@ -177,6 +180,9 @@ class FitSummary:
     # whether the model has a flat topic-word matrix (scaling models do not), which
     # decides whether the texts= quality tier applies at all
     has_topics: bool = True
+    # model-specific fit diagnostics as (label, value) pairs; when present they
+    # replace the held-out rows unless a held-out number was computed
+    model_rows: tuple = ()
 
     def _shape_rows(self):
         topics = self.num_topics
@@ -195,13 +201,18 @@ class FitSummary:
         converged = self.converged
         if self.sampler == "gibbs" and converged is False:
             converged = "n/a (fixed sweeps)"
-        return [
+        rows = [
             ("converged", converged),
             ("iterations", self.iterations),
             (f"{self.objective_label} (in-sample)", self.objective),
+        ]
+        heldout = [
             ("perplexity (held-out, document-completion)", self.perplexity),
             ("heldout_loglik (mean per-doc)", self.heldout_loglik),
         ]
+        if not self.model_rows or any(v is not None for _, v in heldout):
+            rows += heldout
+        return rows + list(self.model_rows)
 
     def _health_rows(self):
         weak = self.weak_topics
@@ -438,6 +449,21 @@ def _build_summary(model, *, texts=None, heldout=None, assume_unseen=False, n=10
         coherence=coherence,
         exclusivity=exclusivity,
         has_topics=_topic_word(model) is not None,
+        model_rows=_model_rows(model),
+    )
+
+
+def _model_rows(model) -> tuple:
+    """Fit diagnostics specific to one model class (SITS: its convergence check and
+    the facts that shape its speaker scores)."""
+    if type(model).__name__ != "SITS":
+        return ()
+    z = model.geweke_z
+    return (
+        ("posterior draws", int(model.num_draws)),
+        ("Geweke z (eligible shifts)", "n/a (too few draws)" if z is None else float(z)),
+        ("speakers", len(model.speakers)),
+        ("short-turn share", float(model.short_turn_share)),
     )
 
 

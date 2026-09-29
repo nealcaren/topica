@@ -187,6 +187,10 @@ AuthorRecipientTopic(num_topics: 'int', *, alpha: 'float | None' = None, beta: '
     Author-Recipient-Topic (McCallum et al. 2007): topics conditioned on the (sender, recipient) pair, for the language of a directed social network (who talks to whom about what). Realized over the AuthorTopic engine.
     .fit(docs: 'Sequence[Sequence[str]]', *, authors: 'Sequence', recipients: 'Sequence[Sequence]', iters: 'int' = 1000, progress=None)
 
+SITS(num_topics, *, alpha=None, beta=0.1, gamma=1.0, min_shift_tokens=5, init_shift_rate=None, compat=None, init=None, warmup=None, seed=13)
+    SITS (Nguyen, Boyd-Graber & Resnik 2012): conversations as sequences of speaking turns; each turn continues the current topic segment or shifts to a new one, with a per-speaker shift probability. That probability is Rossiter's (2022) agenda-setting measure (who changes the topic). Ported from the reference Java sampler, with a replication mode for Rossiter's fork.
+    .fit(data, speakers=None, *, conversations=None, iters=200000, burn_in=None, sample_interval=None, progress=None, authors=None)
+
 ### Guided & supervised
 
 KeyATM(keywords, *, num_topics=None, alpha=None, beta=0.01, beta_keyword=0.1, gamma1=1.0, gamma2=1.0, seed=13, estimate_alpha=True, sampler='sparse', num_threads=1)

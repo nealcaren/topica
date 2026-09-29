@@ -403,6 +403,14 @@ def prep_documents(
         rm_top=rm_top,
     )
 
+    # A drop in the input corpus is invisible in `filtered`'s own kept_indices;
+    # carry it forward so models that need every row (SITS) can refuse it.
+    upstream = getattr(corpus, "dropped_documents", False)
+    if upstream:
+        filtered._mark_pruned_upstream()
+    elif upstream is None and not filtered.dropped_documents:
+        filtered._mark_history_unknown()
+
     # filtered.kept_indices are positions into `docs` (= the input corpus docs).
     # Subset meta to those positions.
     idx = filtered.kept_indices

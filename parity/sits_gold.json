@@ -1,0 +1,24 @@
+{
+  "chains": 6,
+  "corpus": "simulated from the SITS generative process: 40 conversations x 30 turns, 6 speakers with pi=[0.05, 0.1, 0.2, 0.35, 0.5, 0.7], 30% short turns (never shift), K=6, V=120",
+  "date": "2026-09-28",
+  "java_seconds_per_chain": {
+    "fixed": 20.992306518833335,
+    "published": 20.798335674
+  },
+  "kind": "cross-implementation (Java, Rossiter's fork of Nguyen's SITS)",
+  "model": "parametric SITS",
+  "pass_bar": "per-speaker and overall eligible shift rate: |z| <= 3.0 against the pooled chain spread; per-turn eligible shift-prob correlation >= Java half-vs-half - 0.05; aligned phi cosine >= Java seed-to-seed - 0.05. topica default vs the fixed fork, compat vs the published fork.",
+  "reference": "erossiter/sits @ 067e9e6 (AuthorShiftSampler), via parity/SITSDriver.java",
+  "reference_fixed": "same, with the one-line init fix: int rand_l = (words[t].length >= 5) ? rand.nextInt(I) : 0;",
+  "settings": {
+    "I": 3,
+    "K": 6,
+    "alpha": 0.3,
+    "beta": 0.1,
+    "burn_in": 3000,
+    "gamma": 1.0,
+    "iters": 6000,
+    "min_shift_tokens": 5
+  }
+}

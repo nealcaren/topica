@@ -85,6 +85,7 @@ REGISTRY: list[tuple[str, object, str]] = [
     ("KeyNMF",       lambda: _topica.KeyNMF(2),                                  "none"),
     ("CorEx",        lambda: _topica.CorEx(2),                                   "none"),
     ("AuthorTopic",  lambda: _topica.AuthorTopic(2),                             "none"),
+    ("SITS",         lambda: _topica.SITS(2),                                    "none"),
     ("MGLDA",        lambda: _topica.MGLDA(2, 3),                                "none"),
     ("TopicsOverTime", lambda: _topica.TopicsOverTime(2),                        "none"),
     ("GaussianLDA",  lambda: _topica.GaussianLDA(2),                             "none"),

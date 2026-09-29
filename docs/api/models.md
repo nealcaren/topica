@@ -69,6 +69,10 @@ for the full grouped table.
 
 ::: topica.PA
 
+::: topica.SITS
+
+::: topica.sits.speaker_table
+
 ::: topica.HLDA
 
 ::: topica.NMF

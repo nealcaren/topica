@@ -355,6 +355,21 @@ def _fit_author_topic(iters=300):
     return m.doc_topic, m.topic_word, m.num_topics
 
 
+def _fit_sits(iters=300):
+    # Each planted document is a speaking turn; conversations of 10 consecutive
+    # turns, two alternating speakers. Consecutive turns come from different blocks,
+    # so the sampler shifts at most turns and each segment's theta is concentrated.
+    import warnings as _warnings
+
+    docs, vocab = _planted_blocks(k=K, seed=0)
+    speakers = [f"s{d % 2}" for d in range(len(docs))]
+    convs = [d // 10 for d in range(len(docs))]
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("ignore")
+        m = topica.SITS(K, seed=1).fit(docs, speakers, conversations=convs, iters=iters)
+    return m.doc_topic, m.topic_word, m.num_topics
+
+
 def _fit_art(iters=300):
     # One (sender, recipient) pair per block, so each pair owns one topic; doc_topic
     # is the empirical per-document topic simplex, like LDA / AuthorTopic.
@@ -771,6 +786,7 @@ FIT_ADAPTERS = {
     "SeededLDA": _fit_seededlda,
     "LabeledLDA": _fit_labeledlda,
     "AuthorTopic": _fit_author_topic,
+    "SITS": _fit_sits,
     "AuthorRecipientTopic": _fit_art,
     "MGLDA": _fit_mglda,
     "TopicsOverTime": _fit_tot,

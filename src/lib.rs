@@ -74,6 +74,7 @@ pub mod saveformat;
 pub mod scholar;
 pub mod seeded;
 pub mod sentence_ideal;
+pub mod sits;
 pub mod slda;
 pub mod sts;
 pub mod tbip;

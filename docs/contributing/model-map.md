@@ -71,6 +71,7 @@ Column meanings:
 | `TreeFieldTM` | `src/thread_tm.rs` | `src/python/thread_tm.rs` | variational EM: logistic-normal per-doc bound (crate::ctm) + Gaussian tree-field belief propagation (crate::tree_field) | default | `tests/test_tree_field_tm.py` |
 | `AuthorTopic` | `src/author_topic.rs` | `src/python/author_topic.rs` | collapsed Gibbs (author×topic + word×topic counts) | default | `parity/author_topic_gold.py` |
 | `AuthorRecipientTopic` | `python/topica/art.py` | — _(Python)_ | ART as (sender,recipient)-pair isomorphism over the AuthorTopic Gibbs core (Python) | default | `tests/test_art.py` |
+| `SITS` | `src/sits.rs` | `src/python/sits.rs` | collapsed Gibbs over per-turn shift indicators (segment Dirichlet-multinomial) + LDA word side | default | `parity/sits_compare.py`, `tests/test_sits_gold.py`, `tests/test_sits.py` |
 
 ### Guided & supervised
 

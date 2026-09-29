@@ -684,20 +684,30 @@ def topic_correlation(doc_topic, *, threshold=0.05):
 # findThoughts: representative documents per topic
 # ---------------------------------------------------------------------------
 
+def _thoughts_theta(obj):
+    """The per-document topic rows to rank exemplars by. SITS's ``doc_topic`` gives
+    every turn of a segment the same row, so its exemplars rank by ``turn_topic``
+    (each turn's own mix) instead."""
+    if not hasattr(obj, "shape") and hasattr(obj, "turn_topic"):
+        return np.asarray(obj.turn_topic, dtype=np.float64)
+    return _as_doc_topic(obj)
+
+
 def find_thoughts(doc_topic, texts=None, *, topic, n=3):
     """The `n` documents most associated with `topic` (≈ stm's ``findThoughts``).
 
     Returns a list of ``(doc_index, proportion, text)`` sorted by descending
     topic proportion; ``text`` is ``None`` when ``texts`` is not supplied.
 
-    `doc_topic` is a fitted model (uses its ``doc_topic``) or a ``(D, K)`` array.
+    `doc_topic` is a fitted model (uses its ``doc_topic``; for SITS, its
+    ``turn_topic``) or a ``(D, K)`` array.
     `texts` is a sequence of the documents' texts, or a :class:`~topica.Corpus`.
     A Corpus only retains tokens, so its ``text`` field comes back as the
     space-joined *processed* tokens (lowercased, stopword-stripped), not the
     original prose; to read the raw documents, pass your original text sequence
     indexed by ``corpus.kept_indices`` (pruning may have dropped some rows).
     """
-    theta = _as_doc_topic(doc_topic)
+    theta = _thoughts_theta(doc_topic)
     # Accept a Corpus for `texts` (recover its token lists), so the natural
     # find_thoughts(model, corpus, topic=...) call works instead of raising an
     # opaque "not subscriptable" error. Join the tokens back into a display string
@@ -949,7 +959,7 @@ def find_thoughts_html(
     string (HTML unless ``markdown=True``).
     """
     phi = _as_topic_word(model)
-    theta = _as_doc_topic(model)
+    theta = _thoughts_theta(model)
     vocab = list(model.vocabulary)
     # Accept a Corpus for `texts`: use its tokenized documents (joined for the
     # highlighter) rather than crashing on the natural (model, corpus) call (#717).
