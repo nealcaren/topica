@@ -14,12 +14,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   per-speaker shift probability. `fit(turns, speakers, conversations=...)` reports Rossiter's
   per-speaker score (`shift_propensity`, with posterior draws and intervals), the share of each
   speaker's sampled turns that shift (`eligible_shift_rate`), per-turn shift probabilities,
-  segments, and a convergence trace with a Geweke warning. A collapsed Gibbs port of the
+  segments, a convergence trace with a Geweke warning, and `topica.sits.speaker_table` to pool
+  chains. The default `init="lda"` warm start (per-turn LDA for the first sweeps, shifts frozen)
+  reaches the posterior far sooner than the reference start. A collapsed Gibbs port of the
   reference Java sampler, about 8.5x faster than the Java sampler as run, validated against it in
   `parity/sits_compare.py`. `compat="rossiter2022"` reproduces the behaviour of Rossiter's fork,
   including a bookkeeping defect
   (short turns drawn as initial shifts stay segment boundaries and shift counts for the whole
-  chain) that raises shift rates in her published fits; the default mode fixes it.
+  chain) that raises shift rates in her published fits (agenda-setting scores about 0.05 higher on
+  average on her Section 4.3 corpus, speaker ordering preserved); the default mode fixes it.
 
 - **A semantic context for `ThreadSmoother` / `ThreadTM`** (experimental).
   `contexts=(..., "semantic")` with `fit(..., embed=encoder)` adds each document's

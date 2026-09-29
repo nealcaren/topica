@@ -189,7 +189,8 @@ def _topica_chain(turns, speakers, convs, compat, seed):
         warnings.simplefilter("ignore")
         t0 = time.perf_counter()
         m = topica.SITS(K, alpha=ALPHA, beta=BETA, gamma=GAMMA, min_shift_tokens=5,
-                        init_shift_rate=1 / I_INIT, compat=compat, seed=seed).fit(
+                        init="random", init_shift_rate=1 / I_INIT, compat=compat,
+                        seed=seed).fit(
             toks, speakers.tolist(), conversations=convs.tolist(),
             iters=ITERS, burn_in=BURN_IN)
         secs = time.perf_counter() - t0

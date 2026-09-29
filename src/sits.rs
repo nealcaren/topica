@@ -70,19 +70,6 @@ pub enum Compat {
     Rossiter2022 { init_every: u32 },
 }
 
-/// How the shift indicators are resampled.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Sampler {
-    /// The reference sampler: one turn's shift indicator at a time, with π
-    /// integrated out (`AuthorShiftSampler`).
-    Single,
-    /// Block sampler: draw each speaker's π from its Beta posterior, then draw each
-    /// conversation's whole segmentation at once from its exact conditional given
-    /// the topic assignments (forward filtering, backward sampling over segment
-    /// starts). Same posterior over (l, z), much faster mixing.
-    Block,
-}
-
 /// Sampler configuration.
 #[derive(Clone, Debug)]
 pub struct SitsConfig {
@@ -94,10 +81,11 @@ pub struct SitsConfig {
     /// Initial shift probability for eligible turns (default mode only).
     pub init_shift_rate: f64,
     pub compat: Compat,
-    pub sampler: Sampler,
-    /// Sweeps at the start during which the shift indicators are frozen at their
-    /// initial values (topics only). With `init_shift_rate = 1` this is a per-turn
-    /// LDA warm start: topics form before the segmentation is sampled.
+    /// Sweeps at the start during which the shift indicators stay frozen at their
+    /// initial values and only topics are sampled. With `init_shift_rate = 1` this is
+    /// a per-turn LDA warm start: the topics form before the segmentation is sampled,
+    /// which lets the chain reach the posterior far sooner than the reference start
+    /// (the stationary distribution is unchanged; keep `burn_in >= warmup`).
     pub warmup: usize,
     pub iters: usize,
     pub burn_in: usize,
@@ -309,62 +297,17 @@ pub fn fit<R: Rng, F: FnMut(usize, usize) -> bool>(
     let mut inv_den: Vec<f64> = nk.iter().map(|&c| 1.0 / (c as f64 + beta_sum)).collect();
     let mut sweeps_run = 0usize;
 
-    // End (exclusive) of the conversation starting at each opener.
-    let mut conv_end = vec![nt; nt];
-    {
-        let mut end = nt;
-        for t in (0..nt).rev() {
-            if data.conv_start[t] {
-                conv_end[t] = end;
-                end = t;
-            }
-        }
-    }
-    let block = cfg.sampler == Sampler::Block;
-    let mut log_pi = vec![[0.0f64; 2]; nm];
-
     for it in 0..cfg.iters {
         let frozen = it < cfg.warmup;
-        if block && !frozen {
-            // π_m | l ~ Beta(γ + c_{m,1}, γ + c_{m,0}), counts over all turns.
-            for (mm, c) in spk.iter().enumerate() {
-                let x = crate::hdp::sample_gamma(gamma + c[1] as f64, rng);
-                let y = crate::hdp::sample_gamma(gamma + c[0] as f64, rng);
-                let p1 = (x / (x + y)).clamp(1e-300, 1.0 - 1e-16);
-                log_pi[mm] = [(1.0 - p1).ln(), p1.ln()];
-            }
-        }
         let mut cur_start = 0usize;
         let mut pre_n = 0u32;
         for t in 0..nt {
             let m = data.speakers[t] as usize;
             if data.conv_start[t] {
-                if block && !frozen {
-                    block_resample(
-                        t,
-                        conv_end[t],
-                        BlockState {
-                            turn_counts: &turn_counts,
-                            seg_counts: &mut seg_counts,
-                            seg_n: &mut seg_n,
-                            l: &mut l,
-                            boundary: &mut boundary,
-                            spk: &mut spk,
-                        },
-                        data,
-                        &eligible,
-                        &log_pi,
-                        k,
-                        dm_const,
-                        &lg_a,
-                        &lg_ka,
-                        rng,
-                    );
-                }
                 cur_start = t;
                 pre.iter_mut().for_each(|x| *x = 0);
                 pre_n = 0;
-            } else if eligible[t] && !block && !frozen {
+            } else if eligible[t] && !frozen {
                 // `pre` holds the visited turns [cur_start, t) of the current segment.
                 let cur = l[t];
                 spk[m][usize::from(cur)] -= 1;
@@ -411,8 +354,8 @@ pub fn fit<R: Rng, F: FnMut(usize, usize) -> bool>(
                     pre_n = 0;
                 }
             } else if boundary[t] {
-                // A segment start not resampled here: a compat phantom boundary, or a
-                // boundary the block sampler drew for this conversation.
+                // A segment start not resampled here: a compat phantom boundary, or
+                // an initial boundary frozen during warm-up.
                 cur_start = t;
                 pre.iter_mut().for_each(|x| *x = 0);
                 pre_n = 0;
@@ -617,199 +560,6 @@ pub fn fit<R: Rng, F: FnMut(usize, usize) -> bool>(
     }
 }
 
-/// Mutable sampler state the block step rewrites for one conversation.
-struct BlockState<'s> {
-    turn_counts: &'s [u32],
-    seg_counts: &'s mut [u32],
-    seg_n: &'s mut [u32],
-    l: &'s mut [u8],
-    boundary: &'s mut [bool],
-    spk: &'s mut [[u32; 2]],
-}
-
-#[inline]
-fn log_add(a: f64, b: f64) -> f64 {
-    if a == f64::NEG_INFINITY {
-        return b;
-    }
-    if b == f64::NEG_INFINITY {
-        return a;
-    }
-    let m = a.max(b);
-    m + ((a - m).exp() + (b - m).exp()).ln()
-}
-
-/// Log weights `w[r]` of every candidate start `r < end` for the segment that ends
-/// just before `end` (turns `[r, end)`): `base[r] + DM(turns r..end) + Σ log(1-π)`
-/// over the eligible turns strictly inside. Segment DMs are built by extending the
-/// segment backwards one turn at a time, updating only the topics each turn uses.
-#[allow(clippy::too_many_arguments)]
-fn segment_weights(
-    s0: usize,
-    end: usize,
-    base: &[f64],
-    is_start: &[bool],
-    nonzero: &[Vec<(usize, u32)>],
-    turn_len: &[u32],
-    log_no: &[f64],
-    k: usize,
-    dm_const: f64,
-    lg_a: &LgTable,
-    lg_ka: &LgTable,
-    acc: &mut [u32],
-    out: &mut [f64],
-) {
-    acc.iter_mut().for_each(|x| *x = 0);
-    let mut sum_lg = k as f64 * lg_a.get(0);
-    let mut n = 0u32;
-    let mut inside_no = 0.0; // Σ log(1-π) over eligible turns in (r, end)
-    for u in (s0..end).rev() {
-        let i = u - s0;
-        for &(kk, c) in &nonzero[i] {
-            sum_lg += lg_a.get(acc[kk] + c) - lg_a.get(acc[kk]);
-            acc[kk] += c;
-        }
-        n += turn_len[i];
-        out[i] = if is_start[i] && base[i] > f64::NEG_INFINITY {
-            base[i] + dm_const + sum_lg - lg_ka.get(n) + inside_no
-        } else {
-            f64::NEG_INFINITY
-        };
-        // turn u is inside every longer segment [r, end) with r < u
-        inside_no += log_no[i];
-    }
-}
-
-/// Resample the whole segmentation of the conversation `[s0, e)` from its exact
-/// conditional given the topic assignments and π (forward filtering over segment
-/// starts, then backward sampling), and rebuild its segment totals.
-#[allow(clippy::too_many_arguments)]
-fn block_resample<R: Rng>(
-    s0: usize,
-    e: usize,
-    st: BlockState<'_>,
-    data: &SitsData<'_>,
-    eligible: &[bool],
-    log_pi: &[[f64; 2]],
-    k: usize,
-    dm_const: f64,
-    lg_a: &LgTable,
-    lg_ka: &LgTable,
-    rng: &mut R,
-) {
-    let len = e - s0;
-    let mut is_start = vec![false; len];
-    let mut log_yes = vec![0.0f64; len];
-    let mut log_no = vec![0.0f64; len];
-    let mut nonzero: Vec<Vec<(usize, u32)>> = Vec::with_capacity(len);
-    let mut turn_len = vec![0u32; len];
-    for i in 0..len {
-        let t = s0 + i;
-        is_start[i] = i == 0 || eligible[t];
-        if i > 0 && eligible[t] {
-            let m = data.speakers[t] as usize;
-            log_yes[i] = log_pi[m][1];
-            log_no[i] = log_pi[m][0];
-        }
-        let row = &st.turn_counts[t * k..t * k + k];
-        nonzero.push(
-            row.iter()
-                .enumerate()
-                .filter(|(_, &c)| c > 0)
-                .map(|(kk, &c)| (kk, c))
-                .collect(),
-        );
-        turn_len[i] = data.turns[t].len() as u32;
-    }
-    // Forward: alpha[i] = log p(turns before i, a segment starts at i).
-    let mut alpha = vec![f64::NEG_INFINITY; len];
-    alpha[0] = 0.0;
-    let mut acc = vec![0u32; k];
-    let mut w = vec![f64::NEG_INFINITY; len];
-    for j in 1..len {
-        if !is_start[j] {
-            continue;
-        }
-        segment_weights(
-            s0,
-            s0 + j,
-            &alpha,
-            &is_start,
-            &nonzero,
-            &turn_len,
-            &log_no,
-            k,
-            dm_const,
-            lg_a,
-            lg_ka,
-            &mut acc,
-            &mut w,
-        );
-        let mut tot = f64::NEG_INFINITY;
-        for &x in &w[..j] {
-            tot = log_add(tot, x);
-        }
-        alpha[j] = tot + log_yes[j];
-    }
-    // Backward: sample the last segment start, then the one before it, ...
-    let mut new_boundary = vec![false; len];
-    let mut end = e;
-    loop {
-        let j = end - s0;
-        segment_weights(
-            s0, end, &alpha, &is_start, &nonzero, &turn_len, &log_no, k, dm_const, lg_a, lg_ka,
-            &mut acc, &mut w,
-        );
-        let mx = w[..j].iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        let tot: f64 = w[..j].iter().map(|&x| (x - mx).exp()).sum();
-        let mut u = rng.gen::<f64>() * tot;
-        let mut r = 0usize;
-        for (i, &x) in w[..j].iter().enumerate().rev() {
-            let p = (x - mx).exp();
-            if p > 0.0 {
-                r = i;
-                u -= p;
-                if u <= 0.0 {
-                    break;
-                }
-            }
-        }
-        if r == 0 {
-            break;
-        }
-        new_boundary[r] = true;
-        end = s0 + r;
-    }
-    // Commit: shift indicators, speaker counts, segment totals.
-    for i in 1..len {
-        let t = s0 + i;
-        if !eligible[t] {
-            continue;
-        }
-        let m = data.speakers[t] as usize;
-        let old = st.l[t];
-        let new = u8::from(new_boundary[i]);
-        if old != new {
-            st.spk[m][usize::from(old)] -= 1;
-            st.spk[m][usize::from(new)] += 1;
-            st.l[t] = new;
-        }
-        st.boundary[t] = new_boundary[i];
-    }
-    st.seg_n[s0..e].iter_mut().for_each(|x| *x = 0);
-    st.seg_counts[s0 * k..e * k].iter_mut().for_each(|x| *x = 0);
-    let mut start = s0;
-    for t in s0..e {
-        if t == s0 || st.boundary[t] {
-            start = t;
-        }
-        for kk in 0..k {
-            st.seg_counts[start * k + kk] += st.turn_counts[t * k + kk];
-        }
-        st.seg_n[start] += data.turns[t].len() as u32;
-    }
-}
-
 /// Test-only: recompute segment totals and speaker counts from scratch and compare
 /// with the incremental bookkeeping.
 #[cfg(test)]
@@ -1003,7 +753,6 @@ mod tests {
             min_shift_tokens: 5,
             init_shift_rate: 0.1,
             compat,
-            sampler: Sampler::Single,
             warmup: 0,
             iters,
             burn_in: iters / 2,
@@ -1066,7 +815,8 @@ mod tests {
     /// the collapsed joint (written independently here, counting forced turns in the
     /// speaker term as the reference does), and compare posterior shift marginals and
     /// a topic co-assignment probability with long-run sampler frequencies.
-    fn check_exact_enumeration(sampler: Sampler) {
+    #[test]
+    fn matches_exact_enumeration() {
         let turns: Vec<Vec<u32>> = vec![vec![0, 0], vec![1, 1], vec![0, 1], vec![1, 0], vec![0]];
         let spk: Vec<u32> = vec![0, 1, 0, 1, 0];
         let start = vec![true, false, false, true, false];
@@ -1142,7 +892,6 @@ mod tests {
             min_shift_tokens: min_tokens,
             init_shift_rate: 0.5,
             compat: Compat::None,
-            sampler,
             warmup: 0,
             iters: 200_000,
             burn_in: 1_000,
@@ -1155,10 +904,7 @@ mod tests {
             (m.shift_prob[1], exact_l1, "P(l1)"),
             (m.shift_prob[2], exact_l2, "P(l2)"),
         ] {
-            assert!(
-                (got - want).abs() < 0.01,
-                "{sampler:?} {name}={got} exact {want}"
-            );
+            assert!((got - want).abs() < 0.01, "{name}={got} exact {want}");
         }
         assert_eq!(m.shift_prob[0], 1.0);
         assert_eq!(m.shift_prob[3], 1.0);
@@ -1168,18 +914,31 @@ mod tests {
             .expect("test build records co-assignment");
         assert!(
             (got_same - exact_same).abs() < 0.01,
-            "{sampler:?} P(z0 == z6)={got_same} exact {exact_same}"
+            "P(z0 == z6)={got_same} exact {exact_same}"
         );
     }
 
     #[test]
-    fn matches_exact_enumeration() {
-        check_exact_enumeration(Sampler::Single);
-    }
-
-    #[test]
-    fn block_sampler_matches_exact_enumeration() {
-        check_exact_enumeration(Sampler::Block);
+    fn warmup_freezes_shifts_then_releases_them() {
+        let (turns, spk, start) = planted(1);
+        let data = SitsData {
+            turns: &turns,
+            speakers: &spk,
+            conv_start: &start,
+            num_speakers: 2,
+            num_types: 20,
+        };
+        let mut c = cfg(200, Compat::None);
+        c.init_shift_rate = 1.0;
+        c.warmup = 50;
+        c.burn_in = 100;
+        let mut rng = ChaCha8Rng::seed_from_u64(2);
+        let m = fit(&data, &c, |_, _| true, &mut rng);
+        let n_elig = m.eligible.iter().filter(|&&e| e).count() as u32;
+        assert!(m.shift_trace[..50].iter().all(|&x| x == n_elig));
+        // speaker 1 never shifts in the planted data: released shifts fall away
+        let r1 = m.speaker_eligible_shift_mean[1] / m.speaker_eligible[1] as f64;
+        assert!(r1 < 0.2, "follower rate after warm-up {r1}");
     }
 
     #[test]

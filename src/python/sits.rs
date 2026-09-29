@@ -5,7 +5,7 @@
 //! save/load, array adapters, topic_words_helper, …).
 
 use super::*;
-use crate::sits::{Compat, Sampler, SitsConfig, SitsData, SitsModel};
+use crate::sits::{Compat, SitsConfig, SitsData, SitsModel};
 use numpy::{PyArray1, PyArray2};
 use pyo3::types::PyDict;
 use rand_chacha::rand_core::SeedableRng;
@@ -31,7 +31,8 @@ pub struct SITS {
     min_shift_tokens: usize,
     init_shift_rate: f64,
     compat: Option<String>,
-    sampler: String,
+    init: String,
+    warmup: Option<usize>,
     seed: u64,
     fitted: bool,
     speaker_names: Vec<String>,
@@ -55,7 +56,8 @@ struct SitsState {
     min_shift_tokens: usize,
     init_shift_rate: f64,
     compat: Option<String>,
-    sampler: String,
+    init: String,
+    warmup: Option<usize>,
     seed: u64,
     fitted: bool,
     speaker_names: Vec<String>,
@@ -220,7 +222,8 @@ impl SITS {
     /// stopword removal and pruning (Rossiter counted after hers), so the share of
     /// ineligible turns depends on preprocessing. ``min_shift_tokens=0`` makes every
     /// non-first turn eligible, empty turns included. ``init_shift_rate`` (default
-    /// 0.1) is the probability an eligible turn starts the chain as a shift.
+    /// 0.1, ``init="random"`` only) is the probability an eligible turn starts the
+    /// chain as a shift.
     ///
     /// ``compat="rossiter2022"`` reproduces the behaviour of Rossiter's fork,
     /// including a bookkeeping defect: short turns drawn as initial shifts stay
@@ -229,15 +232,19 @@ impl SITS {
     /// results. It requires an explicit ``init_shift_rate = 1/I`` for the run being
     /// replicated (or 0).
     ///
-    /// ``sampler`` chooses how shift indicators are resampled. ``"single"``
-    /// (default) is the reference sampler: one turn at a time, π integrated out.
-    /// ``"block"`` draws each speaker's π from its Beta posterior and then each
-    /// conversation's whole segmentation at once from its exact conditional given
-    /// the topic assignments. Both target the same posterior; the block sampler
-    /// moves whole segment boundaries in one step and so mixes much faster.
+    /// ``init`` sets the starting state. ``"lda"`` (the default, except with
+    /// ``compat``) starts every eligible turn as a shift and freezes the shifts for
+    /// the first ``warmup`` sweeps (default ``min(1000, burn_in)``), so the sampler
+    /// fits per-turn LDA
+    /// topics before it samples the segmentation. The reference start
+    /// (``"random"``, with ``init_shift_rate``) leaves the topics unformed while
+    /// segments are sampled, and on real conversations the chain then needs several
+    /// hundred thousand sweeps to approach the posterior; the warm start gets there
+    /// in far fewer. Both samplers target the same posterior; ``burn_in`` must be at
+    /// least ``warmup``.
     #[new]
     #[pyo3(signature = (num_topics, *, alpha=None, beta=0.1, gamma=1.0, min_shift_tokens=5,
-                        init_shift_rate=None, compat=None, sampler="single".to_string(), seed=13))]
+                        init_shift_rate=None, compat=None, init=None, warmup=None, seed=13))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
@@ -247,20 +254,30 @@ impl SITS {
         min_shift_tokens: usize,
         init_shift_rate: Option<f64>,
         compat: Option<String>,
-        sampler: String,
+        init: Option<String>,
+        warmup: Option<usize>,
         seed: u64,
     ) -> PyResult<Self> {
-        match (sampler.as_str(), compat.as_deref()) {
-            ("single", _) | ("block", None) => {}
-            ("block", Some(_)) => {
+        let init =
+            init.unwrap_or_else(|| if compat.is_some() { "random" } else { "lda" }.to_string());
+        match (init.as_str(), compat.as_deref()) {
+            ("random", _) => {}
+            ("lda", None) => {
+                if init_shift_rate.is_some() {
+                    return Err(PyValueError::new_err(
+                        "init_shift_rate applies to init='random'; init='lda' starts every \
+                         eligible turn as a shift",
+                    ));
+                }
+            }
+            ("lda", Some(_)) => {
                 return Err(PyValueError::new_err(
-                    "compat='rossiter2022' replicates the reference sampler; use \
-                     sampler='single' with it",
+                    "compat='rossiter2022' replicates the reference start; use init='random'",
                 ))
             }
             (other, _) => {
                 return Err(PyValueError::new_err(format!(
-                    "sampler must be 'single' or 'block', got {other:?}"
+                    "init must be 'lda' or 'random', got {other:?}"
                 )))
             }
         }
@@ -307,7 +324,8 @@ impl SITS {
             min_shift_tokens,
             init_shift_rate,
             compat,
-            sampler,
+            init,
+            warmup,
             seed,
             fitted: false,
             speaker_names: Vec::new(),
@@ -340,7 +358,8 @@ impl SITS {
         d.set_item("min_shift_tokens", self.min_shift_tokens)?;
         d.set_item("init_shift_rate", self.init_shift_rate)?;
         d.set_item("compat", self.compat.clone())?;
-        d.set_item("sampler", self.sampler.clone())?;
+        d.set_item("init", self.init.clone())?;
+        d.set_item("warmup", self.warmup)?;
         d.set_item("seed", self.seed)?;
         Ok(d)
     }
@@ -400,6 +419,20 @@ impl SITS {
             return Err(PyValueError::new_err("iters must be >= 1"));
         }
         let burn_in = burn_in.unwrap_or(iters / 2);
+        let warmup = if slf.init == "lda" {
+            match slf.warmup {
+                Some(w) if w > burn_in => {
+                    return Err(PyValueError::new_err(format!(
+                        "burn_in ({burn_in}) must be at least warmup ({w}): the warm-up \
+                         sweeps hold the shifts fixed and are not posterior draws"
+                    )))
+                }
+                Some(w) => w,
+                None => burn_in.min(1000),
+            }
+        } else {
+            0
+        };
         if burn_in >= iters {
             return Err(PyValueError::new_err(format!(
                 "burn_in ({burn_in}) must be smaller than iters ({iters})"
@@ -498,17 +531,13 @@ impl SITS {
             beta: slf.beta,
             gamma: slf.gamma,
             min_shift_tokens: slf.min_shift_tokens,
-            init_shift_rate: slf.init_shift_rate,
-            compat,
-            sampler: if slf.sampler == "block" {
-                Sampler::Block
+            init_shift_rate: if slf.init == "lda" {
+                1.0
             } else {
-                Sampler::Single
+                slf.init_shift_rate
             },
-            warmup: std::env::var("TOPICA_SITS_WARMUP")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(0),
+            compat,
+            warmup,
             iters,
             burn_in,
             sample_interval,
@@ -1014,7 +1043,8 @@ impl SITS {
                 min_shift_tokens: self.min_shift_tokens,
                 init_shift_rate: self.init_shift_rate,
                 compat: self.compat.clone(),
-                sampler: self.sampler.clone(),
+                init: self.init.clone(),
+                warmup: self.warmup,
                 seed: self.seed,
                 fitted: self.fitted,
                 speaker_names: self.speaker_names.clone(),
@@ -1043,7 +1073,8 @@ impl SITS {
             min_shift_tokens: s.min_shift_tokens,
             init_shift_rate: s.init_shift_rate,
             compat: s.compat,
-            sampler: s.sampler,
+            init: s.init,
+            warmup: s.warmup,
             seed: s.seed,
             fitted: s.fitted,
             speaker_names: s.speaker_names,

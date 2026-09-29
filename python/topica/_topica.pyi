@@ -6013,7 +6013,8 @@ class SITS:
         min_shift_tokens: int = 5,
         init_shift_rate: float | None = None,
         compat: str | None = None,
-        sampler: str = "single",
+        init: str | None = None,
+        warmup: int | None = None,
         seed: int = 13,
     ) -> None:
         """num_topics is K. alpha is the symmetric segment-topic Dirichlet (default
@@ -6022,14 +6023,16 @@ class SITS:
         Rossiter's setting). min_shift_tokens (default 5): a turn with fewer tokens is
         never sampled as a shift; tokens are counted on what you pass to fit (after
         your preprocessing). init_shift_rate: probability an eligible turn starts the
-        chain as a shift (default 0.1). compat="rossiter2022" reproduces the behaviour
+        chain as a shift under init="random" (default 0.1). compat="rossiter2022" reproduces the behaviour
         of Rossiter's fork, including its bookkeeping defect (short turns drawn as
         initial shifts stay segment boundaries and stay counted as shifts, which
         inflates shift rates); use it only to replicate published results, and pass
         init_shift_rate = 1/I for the run being replicated (required).
-        sampler="single" (default) is the reference one-turn-at-a-time sampler;
-        sampler="block" draws each conversation's whole segmentation at once from its
-        exact conditional (same posterior, much faster mixing; not with compat)."""
+        init="lda" (default without compat) starts every eligible turn as a shift and
+        freezes the shifts for the first ``warmup`` sweeps (default min(1000, burn_in)), a per-turn
+        LDA warm start that reaches the posterior far sooner than the reference
+        start; init="random" is the reference start (with init_shift_rate, default
+        0.1), required by compat. burn_in must be at least warmup."""
         ...
     def fit(
         self,

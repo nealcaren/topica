@@ -34,7 +34,7 @@ def _planted(num_convs=10, turns_per_conv=24, seed=0, short_every=0):
     return turns, speakers, convs
 
 
-def _fit(seed=1, iters=600, **kw):
+def _fit(seed=1, iters=3000, **kw):
     turns, speakers, convs = _planted()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -59,8 +59,10 @@ def test_shapes_and_normalization(fitted):
     assert m.shift_propensity.shape == (2,)
     assert m.shift_propensity_interval(0.9).shape == (2, 2)
     assert m.shift_propensity_draws.shape[1] == 2
-    assert m.num_draws == 300 and m.burn_in == 300
-    assert len(m.shift_trace) == 600
+    assert m.num_draws == 1500 and m.burn_in == 1500
+    assert len(m.shift_trace) == 3000
+    # the default warm start holds every eligible turn as a shift for 1,000 sweeps
+    assert np.all(m.shift_trace[:1000] == m.eligible.sum())
     assert m.speaker_turn_counts.sum() == t
 
 
@@ -183,7 +185,7 @@ def test_compat_reproduces_phantom_boundaries():
     assert np.all(m.shift_prob[~m.eligible & (m.shift_prob < 1)] == 0)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        d = topica.SITS(3, init_shift_rate=1 / 3, seed=3).fit(
+        d = topica.SITS(3, init="random", init_shift_rate=1 / 3, seed=3).fit(
             turns, speakers, conversations=convs, iters=100)
     assert d.num_phantom == 0
 
@@ -201,7 +203,32 @@ def test_compat_requires_an_explicit_init_rate():
     """The default 0.1 would silently replicate an I = 10 run Rossiter never made."""
     with pytest.raises(ValueError, match="explicit init_shift_rate"):
         topica.SITS(3, compat="rossiter2022")
-    assert topica.SITS(3).settings["init_shift_rate"] == 0.1
+    assert topica.SITS(3, init="random").settings["init_shift_rate"] == 0.1
+    assert topica.SITS(3).settings["init"] == "lda"
+    assert topica.SITS(3, compat="rossiter2022", init_shift_rate=0.25).settings["init"] == "random"
+
+
+def test_init_and_warmup_arguments():
+    with pytest.raises(ValueError, match="init_shift_rate applies"):
+        topica.SITS(3, init_shift_rate=0.2)
+    with pytest.raises(ValueError, match="init='random'"):
+        topica.SITS(3, compat="rossiter2022", init="lda", init_shift_rate=0.25)
+    with pytest.raises(ValueError, match="init must be"):
+        topica.SITS(3, init="warm")
+    turns, speakers, convs = _planted(num_convs=2)
+    with pytest.raises(ValueError, match="at least warmup"):
+        topica.SITS(3, warmup=500).fit(turns, speakers, conversations=convs, iters=600)
+
+
+def test_lda_warm_start_holds_shifts_during_warmup():
+    turns, speakers, convs = _planted()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        m = topica.SITS(3, warmup=100, seed=4).fit(
+            turns, speakers, conversations=convs, iters=400, burn_in=200)
+    assert np.all(m.shift_trace[:100] == m.eligible.sum())
+    rate = dict(zip(m.speakers, m.eligible_shift_rate))
+    assert rate["shifter"] > 0.85 and rate["follower"] < 0.1
 
 
 def test_argument_checks():
