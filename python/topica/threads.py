@@ -51,6 +51,7 @@ import html
 import re
 from collections import defaultdict
 from itertools import product
+from types import SimpleNamespace
 from typing import Callable, Sequence
 
 import numpy as np
@@ -64,6 +65,10 @@ CONTEXTS = ("parent", "thread")
 ALL_CONTEXTS = ("parent", "op", "thread", "semantic")
 OP_SHARE_STEPS = 13
 SWITCH_SHARE_STEPS = (25, 7)     # inherit-share lattice: two contexts, three (per axis)
+# Memory cap on the switch calibration's likelihood memo (one float64 per evaluation thread
+# per cached point). A point past the cap is recomputed, not stored: results do not depend
+# on it.
+SWITCH_MEMO_BYTES = 256 * 2**20
 DEFAULT_STRENGTH_GRID = np.geomspace(0.1, 1000.0, 40)
 MAX_PSEUDOCOUNT = 1e4
 
@@ -423,29 +428,15 @@ def _sequential_log_ml(ids, prior_mean, conc_grid, beta):
     where ``c`` accumulates each earlier token's topic responsibilities. The document's own
     fitted mix never enters, so a reply's words cannot vouch for a component by having been
     fit to it."""
-    n_docs, k = prior_mean.shape
-    conc = np.asarray(conc_grid, float)[:, None, None]
-    out = np.full((n_docs, conc.shape[0]), np.nan)
-    rows_all = np.flatnonzero(~np.isnan(prior_mean[:, 0]))
-    for start in range(0, rows_all.size, 1000):          # chunks bound the (G, R, K) state
-        rows = rows_all[start:start + 1000]
-        lens = np.array([len(ids[r]) for r in rows], int)
-        width = int(lens.max(initial=0))
-        idm = np.zeros((rows.size, width), int)
-        for j, r in enumerate(rows):
-            idm[j, :lens[j]] = ids[r]
-        am = conc * prior_mean[rows][None]                # (G, R, K)
-        counts = np.zeros_like(am)
-        ll = np.zeros((conc.shape[0], rows.size))
-        for i in range(width):
-            live = np.flatnonzero(lens > i)
-            bw = beta[:, idm[live, i]].T[None]            # (1, R_live, K)
-            p = (am[:, live] + counts[:, live]) * bw
-            tot = p.sum(2)
-            ll[:, live] += np.log(tot / (conc[:, :, 0] + i))
-            counts[:, live] += p / tot[:, :, None]
-        out[rows] = ll.T
-    return out
+    from ._topica import _thread_sequential_log_ml
+
+    lens = np.fromiter((len(x) for x in ids), np.int64, len(ids))
+    offsets = np.concatenate([[0], np.cumsum(lens)]).astype(np.int64)
+    tokens = (np.concatenate([np.asarray(x, np.int64) for x in ids]) if len(ids)
+              else np.zeros(0, np.int64))
+    return _thread_sequential_log_ml(tokens, offsets, np.ascontiguousarray(prior_mean, float),
+                                     [float(a) for a in conc_grid],
+                                     np.ascontiguousarray(beta, float))
 
 
 def _interp_cols(table, x, grid):
@@ -1062,47 +1053,77 @@ class ThreadSmoother:
                             tot[:, 0]))
             return out
 
-        def token_mix(x, p_inh, lml, frac, m):
+        def select(m):
+            """A token mask's indices, the leaves it touches, and the per-token arrays it
+            selects, so the inherit probability is interpolated for those leaves only."""
+            idx = np.flatnonzero(m)
+            rows, loc = np.unique(tl[idx], return_inverse=True)
+            return SimpleNamespace(idx=idx, rows=rows, loc=loc, tj=tj[idx], nn=n_tok[idx],
+                                   pl=pL[idx], lml_new=lml_new[rows])
+
+        sel_val, sel_all = select(on_val), select(np.ones(tj.size, bool))
+
+        def token_mix(x, p_inh, lml, frac, sel):
             A, a_new, rho = self._unpack(x)
-            a_leaf = A * frac
-            w = self._inherit_prob(lml, lml_new, a_leaf, a_new, rho)[tl[m]]
-            a_tok = a_leaf[tl[m]]
-            nn, pl = n_tok[m], pL[m]
+            a_leaf = A * frac[sel.rows]
+            w = self._inherit_prob(lml[sel.rows], sel.lml_new, a_leaf, a_new, rho)[sel.loc]
+            a_tok = a_leaf[sel.loc]
+            nn, pl = sel.nn, sel.pl
             den = nn + a_tok
             with np.errstate(invalid="ignore", divide="ignore"):
-                shrunk = np.where(den > 0, (nn * pl + a_tok * p_inh[m]) / den, pl)
+                shrunk = np.where(den > 0, (nn * pl + a_tok * p_inh[sel.idx]) / den, pl)
             return w * shrunk + (1 - w) * pl
 
-        def token_ll(x, p_inh, lml, frac, m):
-            return np.log(token_mix(x, p_inh, lml, frac, m))
+        def token_ll(x, p_inh, lml, frac, sel):
+            return np.log(token_mix(x, p_inh, lml, frac, sel))
 
-        def thread_ll(x, tabs_j, m):
+        def thread_ll(x, tabs_j, sel):
             """Per-thread log likelihood; placebo draws are averaged inside the log (the
             predictive averaged over draws), as in the pooled fit."""
-            mix = np.mean([token_mix(x, *t, m) for t in tabs_j], 0)
-            return np.bincount(tj[m], np.log(mix), n_threads)
+            mix = np.mean([token_mix(x, *t, sel) for t in tabs_j], 0)
+            return np.bincount(sel.tj, np.log(mix), n_threads)
 
         lo = np.array([np.log(CONC_MIN)] * 2 + [-8.0])
         hi = np.array([np.log(CONC_GRID[-1])] * 2 + [8.0])
         starts = [np.array([la, 0.0, 0.0]) for la in (0.0, np.log(10.0), np.log(100.0))]
 
-        def profile(tab_sets, warm=None):
+        memo_room = [max(0, SWITCH_MEMO_BYTES // (8 * n_threads))]   # entries left
+
+        def val_ll(tabs_j, memo):
+            """Per-thread validation log likelihood at a parameter vector, memoized by its
+            exact bytes: the coordinate searches (the bootstrap draws' above all, which all
+            start from the same full-sample optima) revisit points, and a draw's objective
+            is only a reweighting of this vector. Stores stop at ``SWITCH_MEMO_BYTES``."""
+            def g(x):
+                key = x.tobytes()
+                v = memo.get(key)
+                if v is None:
+                    v = thread_ll(x, tabs_j, sel_val)
+                    if memo_room[0] > 0:
+                        memo[key] = v
+                        memo_room[0] -= 1
+                return v
+            return g
+
+        def profile(tab_sets, warm=None, memos=None):
             """Optimize (A, a_new, rho) on validation threads for every share; return the
             parameters and the per-thread log likelihood table (all threads)."""
             xs, tab = [], np.empty((len(shares), n_threads))
             for j in range(len(shares)):
                 tabs_j = [t[j] for t in tab_sets]
+                ll = val_ll(tabs_j, {} if memos is None else memos[j])
 
                 def f(x):
-                    return thread_ll(x, tabs_j, on_val)[val_idx].sum() / tok_t[val_idx].sum()
+                    return ll(x)[val_idx].sum() / tok_t[val_idx].sum()
                 s0 = starts if warm is None else [warm[j]]
                 x = max((_coord_search(f, x0, lo, hi) for x0 in s0), key=lambda r: r[1])[0]
                 xs.append(x)
-                tab[j] = thread_ll(x, tabs_j, np.ones(tj.size, bool))
+                tab[j] = thread_ll(x, tabs_j, sel_all)
             return xs, tab
 
         true_tabs = share_tables(ctx)
-        xs, tab = profile([true_tabs])
+        true_memos = [{} for _ in shares]      # shared by the profile and the bootstrap
+        xs, tab = profile([true_tabs], memos=true_memos)
         j_star = int(np.argmax(tab[:, val_idx].sum(1)))
         x_star = xs[j_star]
         base_t = np.bincount(tj, np.log(pL), n_threads)
@@ -1121,19 +1142,20 @@ class ThreadSmoother:
         # are evaluated at the point estimate and resampled over test threads, as in the
         # pooled fit.)
         boot_x, boot_j = [], []
+        boot_ll = [val_ll([true_tabs[j]], true_memos[j]) for j in range(len(shares))]
         for b in boot_val:
             wb = np.bincount(b, None, n_threads)
             best = None
             for j in np.argsort(tab[:, b].sum(1))[-3:]:
-                tabs_j = [true_tabs[j]]
-
-                def f(x, wb=wb, tabs_j=tabs_j):
-                    return thread_ll(x, tabs_j, on_val) @ wb / (tok_t @ wb)
+                def f(x, wb=wb, ll=boot_ll[j]):
+                    return ll(x) @ wb / (tok_t @ wb)
                 x, v = _coord_search(f, xs[j], lo, hi, step=0.25, min_step=0.05)
                 if best is None or v > best[2]:
                     best = (int(j), x, v)
             boot_j.append(best[0])
             boot_x.append(best[1])
+        memo_room[0] += sum(map(len, true_memos))       # the placebo arms never read it
+        true_memos = boot_ll = f = None                  # f holds the last share's memo
 
         def rate(num, idx):
             return num[idx].sum() / tok_t[idx].sum()
@@ -1152,8 +1174,7 @@ class ThreadSmoother:
 
         cuts = np.quantile(n_tok[on_val], [1 / 3, 2 / 3])
         ter = np.digitize(n_tok, cuts, right=True)
-        everything = np.ones(tj.size, bool)
-        tok_gain = token_ll(x_star, *true_tabs[j_star], everything) - np.log(pL)
+        tok_gain = token_ll(x_star, *true_tabs[j_star], sel_all) - np.log(pL)
         out["by_length"] = {"cuts": [float(c_) for c_ in cuts],
                             "gain": [float(tok_gain[~on_val & (ter == t_)].mean())
                                      if (~on_val & (ter == t_)).any() else float("nan")

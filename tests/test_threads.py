@@ -890,3 +890,74 @@ def test_semantic_masking_holds_across_refits():
               and len(d) >= 5]
     full = {" ".join(d) for d in leaves}
     assert seen and not (set(seen) & full)      # three calibrations, no whole leaf embedded
+
+
+# ------------------------------------------------ switch-calibration kernel (#907)
+
+
+def _sequential_log_ml_numpy(ids, prior_mean, conc_grid, beta):
+    """The pre-#907 numpy implementation of ``threads._sequential_log_ml``, kept as its
+    reference: a Python loop over token positions, vectorized over documents and the grid."""
+    n_docs, k = prior_mean.shape
+    conc = np.asarray(conc_grid, float)[:, None, None]
+    out = np.full((n_docs, conc.shape[0]), np.nan)
+    rows = np.flatnonzero(~np.isnan(prior_mean[:, 0]))
+    lens = np.array([len(ids[r]) for r in rows], int)
+    idm = np.zeros((rows.size, int(lens.max(initial=0))), int)
+    for j, r in enumerate(rows):
+        idm[j, :lens[j]] = ids[r]
+    am = conc * prior_mean[rows][None]
+    counts = np.zeros_like(am)
+    ll = np.zeros((conc.shape[0], rows.size))
+    for i in range(idm.shape[1]):
+        live = np.flatnonzero(lens > i)
+        p = (am[:, live] + counts[:, live]) * beta[:, idm[live, i]].T[None]
+        tot = p.sum(2)
+        ll[:, live] += np.log(tot / (conc[:, :, 0] + i))
+        counts[:, live] += p / tot[:, :, None]
+    out[rows] = ll.T
+    return out
+
+
+@pytest.mark.parametrize("k", [6, 30])     # numpy sums K >= 8 pairwise, Rust sequentially
+def test_sequential_log_ml_matches_numpy_reference(k):
+    rng = np.random.default_rng(13)
+    v, d = 40, 60
+    beta = rng.dirichlet(np.full(v, 0.2), k)
+    ids = [rng.integers(0, v, rng.integers(0, 30)) for _ in range(d)]   # includes empty docs
+    prior = rng.dirichlet(np.ones(k), d)
+    prior[::5] = np.nan                                                   # no context
+    got = threads._sequential_log_ml(ids, prior, threads.CONC_GRID, beta)
+    want = _sequential_log_ml_numpy(ids, prior, threads.CONC_GRID, beta)
+    assert got.shape == (d, len(threads.CONC_GRID))
+    assert np.array_equal(np.isnan(got), np.isnan(want))
+    np.testing.assert_allclose(got, want, rtol=1e-12, atol=1e-12)
+
+
+def test_sequential_log_ml_rejects_bad_input():
+    from topica._topica import _thread_sequential_log_ml
+    beta = np.full((2, 3), 1 / 3)
+    pm = np.full((1, 2), 0.5)
+    grid = [1.0]
+    for toks in ([3], [-1], [2**32 + 1]):
+        with pytest.raises(ValueError):
+            _thread_sequential_log_ml(np.array(toks, np.int64), np.array([0, 1], np.int64), pm,
+                                      grid, beta)
+    with pytest.raises(ValueError):                       # K = 0
+        _thread_sequential_log_ml(np.zeros(0, np.int64), np.array([0, 0], np.int64),
+                                  np.zeros((1, 0)), grid, np.zeros((0, 3)))
+
+
+def test_switch_memo_cap_does_not_change_results(monkeypatch):
+    docs, parents, _, _ = _simulate(inherit=0.5, n_threads=150, seed=4)
+
+    def fit():
+        sm = threads.ThreadSmoother(switch=True).fit(docs, parents, base=_lda, seed=3,
+                                                     n_boot=20, final=False)
+        return sm.alpha, sm.rho, sm.draws["alpha"], sm.draws["rho"], sm.edge_effect
+    full = fit()
+    monkeypatch.setattr(threads, "SWITCH_MEMO_BYTES", 0)   # nothing cached
+    capped = fit()
+    assert full[0] == capped[0] and full[1] == capped[1] and full[4] == capped[4]
+    np.testing.assert_array_equal(full[2], capped[2])
+    np.testing.assert_array_equal(full[3], capped[3])

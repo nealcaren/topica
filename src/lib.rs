@@ -77,6 +77,7 @@ pub mod sentence_ideal;
 pub mod slda;
 pub mod sts;
 pub mod tbip;
+pub mod thread_smoother;
 pub mod thread_tm;
 pub mod tlda;
 pub mod topical_ngrams;
