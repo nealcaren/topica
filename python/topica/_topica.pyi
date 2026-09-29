@@ -6013,6 +6013,7 @@ class SITS:
         min_shift_tokens: int = 5,
         init_shift_rate: float | None = None,
         compat: str | None = None,
+        sampler: str = "single",
         seed: int = 13,
     ) -> None:
         """num_topics is K. alpha is the symmetric segment-topic Dirichlet (default
@@ -6025,7 +6026,10 @@ class SITS:
         of Rossiter's fork, including its bookkeeping defect (short turns drawn as
         initial shifts stay segment boundaries and stay counted as shifts, which
         inflates shift rates); use it only to replicate published results, and pass
-        init_shift_rate = 1/I for the run being replicated (required)."""
+        init_shift_rate = 1/I for the run being replicated (required).
+        sampler="single" (default) is the reference one-turn-at-a-time sampler;
+        sampler="block" draws each conversation's whole segmentation at once from its
+        exact conditional (same posterior, much faster mixing; not with compat)."""
         ...
     def fit(
         self,

@@ -5,7 +5,7 @@
 //! save/load, array adapters, topic_words_helper, …).
 
 use super::*;
-use crate::sits::{Compat, SitsConfig, SitsData, SitsModel};
+use crate::sits::{Compat, Sampler, SitsConfig, SitsData, SitsModel};
 use numpy::{PyArray1, PyArray2};
 use pyo3::types::PyDict;
 use rand_chacha::rand_core::SeedableRng;
@@ -31,6 +31,7 @@ pub struct SITS {
     min_shift_tokens: usize,
     init_shift_rate: f64,
     compat: Option<String>,
+    sampler: String,
     seed: u64,
     fitted: bool,
     speaker_names: Vec<String>,
@@ -54,6 +55,7 @@ struct SitsState {
     min_shift_tokens: usize,
     init_shift_rate: f64,
     compat: Option<String>,
+    sampler: String,
     seed: u64,
     fitted: bool,
     speaker_names: Vec<String>,
@@ -226,9 +228,16 @@ impl SITS {
     /// raises every speaker's shift rate. Use it only to replicate published
     /// results. It requires an explicit ``init_shift_rate = 1/I`` for the run being
     /// replicated (or 0).
+    ///
+    /// ``sampler`` chooses how shift indicators are resampled. ``"single"``
+    /// (default) is the reference sampler: one turn at a time, π integrated out.
+    /// ``"block"`` draws each speaker's π from its Beta posterior and then each
+    /// conversation's whole segmentation at once from its exact conditional given
+    /// the topic assignments. Both target the same posterior; the block sampler
+    /// moves whole segment boundaries in one step and so mixes much faster.
     #[new]
     #[pyo3(signature = (num_topics, *, alpha=None, beta=0.1, gamma=1.0, min_shift_tokens=5,
-                        init_shift_rate=None, compat=None, seed=13))]
+                        init_shift_rate=None, compat=None, sampler="single".to_string(), seed=13))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         #[pyo3(from_py_with = "py_num_topics")] num_topics: usize,
@@ -238,8 +247,23 @@ impl SITS {
         min_shift_tokens: usize,
         init_shift_rate: Option<f64>,
         compat: Option<String>,
+        sampler: String,
         seed: u64,
     ) -> PyResult<Self> {
+        match (sampler.as_str(), compat.as_deref()) {
+            ("single", _) | ("block", None) => {}
+            ("block", Some(_)) => {
+                return Err(PyValueError::new_err(
+                    "compat='rossiter2022' replicates the reference sampler; use \
+                     sampler='single' with it",
+                ))
+            }
+            (other, _) => {
+                return Err(PyValueError::new_err(format!(
+                    "sampler must be 'single' or 'block', got {other:?}"
+                )))
+            }
+        }
         let init_shift_rate =
             match (init_shift_rate, compat.as_deref()) {
                 (Some(r), _) => r,
@@ -283,6 +307,7 @@ impl SITS {
             min_shift_tokens,
             init_shift_rate,
             compat,
+            sampler,
             seed,
             fitted: false,
             speaker_names: Vec::new(),
@@ -315,6 +340,7 @@ impl SITS {
         d.set_item("min_shift_tokens", self.min_shift_tokens)?;
         d.set_item("init_shift_rate", self.init_shift_rate)?;
         d.set_item("compat", self.compat.clone())?;
+        d.set_item("sampler", self.sampler.clone())?;
         d.set_item("seed", self.seed)?;
         Ok(d)
     }
@@ -474,6 +500,15 @@ impl SITS {
             min_shift_tokens: slf.min_shift_tokens,
             init_shift_rate: slf.init_shift_rate,
             compat,
+            sampler: if slf.sampler == "block" {
+                Sampler::Block
+            } else {
+                Sampler::Single
+            },
+            warmup: std::env::var("TOPICA_SITS_WARMUP")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
             iters,
             burn_in,
             sample_interval,
@@ -979,6 +1014,7 @@ impl SITS {
                 min_shift_tokens: self.min_shift_tokens,
                 init_shift_rate: self.init_shift_rate,
                 compat: self.compat.clone(),
+                sampler: self.sampler.clone(),
                 seed: self.seed,
                 fitted: self.fitted,
                 speaker_names: self.speaker_names.clone(),
@@ -1007,6 +1043,7 @@ impl SITS {
             min_shift_tokens: s.min_shift_tokens,
             init_shift_rate: s.init_shift_rate,
             compat: s.compat,
+            sampler: s.sampler,
             seed: s.seed,
             fitted: s.fitted,
             speaker_names: s.speaker_names,

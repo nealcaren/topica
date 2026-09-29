@@ -35,17 +35,18 @@ def speaker_table(models, level: float = 0.9):
 
     Returns
     -------
-    pandas.DataFrame, one row per speaker (in ``models[0].speakers`` order):
-
-    - ``turns``, ``openers`` (turns that open a conversation, always shifts),
-      ``short_turns`` (turns too short to be sampled, never shifts), ``eligible``;
-    - ``shift_propensity`` with ``shift_propensity_lo`` / ``_hi``: Rossiter's
-      readSits score over all of the speaker's turns;
-    - ``eligible_shift_rate`` with ``_lo`` / ``_hi``: the share of the speaker's
-      sampled turns that shift (openers and short turns left out);
-    - ``rhat_propensity`` and ``rhat_eligible``: split R-hat of each measure across
-      the chains (NaN with one chain). Values above about 1.01 mean the chains
-      disagree and need more sweeps.
+    pandas.DataFrame
+        One row per speaker, in ``models[0].speakers`` order. ``turns``,
+        ``openers`` (turns that open a conversation, always shifts),
+        ``short_turns`` (turns too short to be sampled, never shifts) and
+        ``eligible`` count the speaker's turns. ``shift_propensity`` with
+        ``shift_propensity_lo`` / ``shift_propensity_hi`` is Rossiter's readSits
+        score over all of the speaker's turns. ``eligible_shift_rate`` with
+        ``eligible_shift_rate_lo`` / ``eligible_shift_rate_hi`` is the share of the
+        speaker's sampled turns that shift (openers and short turns left out).
+        ``rhat_propensity`` and ``rhat_eligible`` are the split R-hat of each
+        measure across the chains (NaN with one chain); values above about 1.01
+        mean the chains disagree and need more sweeps.
 
     Pooled intervals reflect both within-chain and between-chain variation, unlike
     ``SITS.shift_propensity_interval``, which covers one chain.
