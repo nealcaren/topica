@@ -93,7 +93,15 @@ leaves or 2,000 held-out test tokens; `summary()["settings"]` has the counts.
 
 `draws` is a dict of NumPy arrays (`alpha`, `parent_share`, `completion`, `edge_effect`,
 `by_length` (draws x 3 terciles), and `rho`, `op_effect` and `inherit_rate` when they apply).
-`completion["by_length"]` carries `lo` and `hi` per tercile from those draws.
+`completion["by_length"]` carries `lo` and `hi` per tercile from those draws. Three conditions
+apply. Only leaf replies with at least `min_eval_tokens` tokens (default 5) are scored, so the
+shortest replies are not in any tercile. The `cuts` count *observed* tokens, after half of each
+scored leaf is held out, so a cut of 10 means about 20 tokens in the full reply. And with
+`groups=`, the overall terciles pool the communities, so a community with shorter replies fills
+the short tercile; use `by_group[g]["by_length"]` (same cuts) for the length gradient within a
+community. The tercile draws are paired with each other, so
+`draws["by_length"][:, 0] - draws["by_length"][:, 2]` gives an interval on the short-minus-long
+difference.
 
 ## Comparing communities
 
@@ -103,16 +111,41 @@ tokens and its effects are scored on its own test tokens. Every group's draws co
 resampled threads, so the difference of two groups' draws is a paired contrast:
 
 ```python
-model = topica.ThreadTM(20, seed=13).fit(docs, parents, groups=community, n_refit=4)
+community = data.subreddit                      # one label per document
+model = topica.ThreadTM(20, seed=13).fit(docs, parents, groups=community, n_refit=4,
+                                         iters=1000, corpus_kwargs={"min_cf": 5})
 model.by_group["askscience"]["edge_effect"]     # {"estimate", "lo", "hi"}
 model.by_group["askscience"]["parent_share"]    # with parent_share_ci, p_no_borrowing
 model.contrast("askscience", "pokemontrades")   # group minus other, with 95% intervals
 ```
 
-`by_group[g]` holds `alpha`, `alpha_ci`, `parent_share`, `parent_share_ci`, `p_no_borrowing`,
-`completion`, `edge_effect` and `op_effect` (as they apply); `draws["by_group"][g]` holds their
-draws. `contrast` drops draws where either group is undefined (no borrowing chosen, or none of
-the group's tokens in the resample). `groups=` is not yet supported with `switch=True`; for the
+`by_group[g]` holds `alpha`, `alpha_ci`, `parent_share`, `parent_share_ci`,
+`parent_share_at_bound`, `p_no_borrowing`, `completion`, `edge_effect`, `op_effect` and
+`by_length` (as they apply); `draws["by_group"][g]` holds their draws, plus `n_val_threads`, `n_test_threads`, `n_test_tokens` and `nan_draw_share` (the share
+of draws with none of the group's test tokens). A group resting on fewer than 10 validation or
+test threads warns: one test thread gives the same ratio in every resample, so its interval
+looks precise and is not. `contrast` drops draws where either group is undefined (no borrowing
+chosen, or none of the group's tokens in the resample) and reports how many it kept
+(`n_draws`). The contrast's `estimate` is the difference of the two groups' point estimates; its interval
+comes from the paired draw differences.
+
+Pick the quantity that answers your question:
+
+| Question | Quantity |
+|---|---|
+| Does the *specific* parent shape replies more in one community? | `edge_effect` |
+| Does context in general help predict replies more in one community? | `completion` |
+| Of what replies borrow, how much comes from the parent rather than the thread? | `parent_share` |
+
+`parent_share` is a composition, not an amount: a community can borrow more from parents in
+absolute terms (a larger `alpha["parent"]`) and still have a lower share, because it borrows
+even more from the thread. A share whose interval spans most of (0, 1), or that sits at the
+grid's edge (`parent_share_at_bound`), carries little information, and neither does its
+contrast. Effects are in nats per token, and communities with very different reply lengths
+and vocabularies differ in how much there is to predict, so read a contrast of effects as a
+difference in predictive gain on each community's own replies.
+
+`groups=` is not yet supported with `switch=True`; for the
 switch, fit each community separately and difference the draws, keeping in mind that the two
 fits have their own topics, so only the tree quantities (shares, effects, `rho`) compare.
 
