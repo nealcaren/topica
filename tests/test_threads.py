@@ -12,6 +12,7 @@ borrowing hurts the non-inheriting replies as much as it helps the others and th
 zero. The per-reply inherit-or-innovate switch (`switch=True`, #897) handles that case; its
 tests are at the end of this file.
 """
+import warnings
 from collections import Counter
 from itertools import permutations
 
@@ -961,3 +962,172 @@ def test_switch_memo_cap_does_not_change_results(monkeypatch):
     assert full[0] == capped[0] and full[1] == capped[1] and full[4] == capped[4]
     np.testing.assert_array_equal(full[2], capped[2])
     np.testing.assert_array_equal(full[3], capped[3])
+
+
+# --------------------------------------------------------------------------- #903 Tier 2
+
+
+def _two_communities(n_threads=150):
+    """Group "a" inherits from context, group "b" does not; one reply forest."""
+    da, pa, _, _ = _simulate(inherit=0.9, n_threads=n_threads, seed=0)
+    db, pb, _, _ = _simulate(inherit=0.0, n_threads=n_threads, seed=1)
+    parents = pa + [p + len(da) if p >= 0 else -1 for p in pb]
+    return da + db, parents, ["a"] * len(da) + ["b"] * len(db)
+
+
+@pytest.fixture(scope="module")
+def grouped():
+    docs, parents, groups = _two_communities()
+    sm = threads.ThreadSmoother().fit(docs, parents, base=_lda, groups=groups, seed=3,
+                                      n_boot=200, final=False)
+    return sm
+
+
+def test_group_effects_separate_an_inheriting_community(grouped):
+    sm = grouped
+    a, b = sm.by_group["a"], sm.by_group["b"]
+    assert a["completion"]["lo"] > 0, a["completion"]
+    assert b["completion"]["lo"] <= 0 <= b["completion"]["hi"], b["completion"]
+    c = sm.contrast("a", "b")
+    assert c["completion"]["lo"] > 0, c
+    assert np.isclose(c["completion"]["estimate"],
+                      a["completion"]["estimate"] - b["completion"]["estimate"])
+    assert set(c) == {"parent_share", "completion", "edge_effect"}
+    for g in ("a", "b"):
+        assert sm.by_group[g]["alpha"] == sm.alpha_by_group[g]
+        d = sm.draws["by_group"][g]
+        assert d["alpha"].shape == (200, 2) and d["completion"].shape == (200,)
+        assert 0 <= sm.by_group[g]["p_no_borrowing"] <= 1
+
+
+def test_contrast_is_paired_and_checks_its_arguments(grouped):
+    sm = grouped
+    da, db = sm.draws["by_group"]["a"], sm.draws["by_group"]["b"]
+    d = da["edge_effect"] - db["edge_effect"]
+    lo, hi = np.percentile(d[np.isfinite(d)], [2.5, 97.5])
+    c = sm.contrast("a", "b")["edge_effect"]
+    assert np.isclose(c["lo"], lo) and np.isclose(c["hi"], hi)
+    with pytest.raises(KeyError, match="zzz"):
+        sm.contrast("a", "zzz")
+    docs, parents, _ = _two_communities(n_threads=40)
+    plain = threads.ThreadSmoother().fit(docs, parents, base=_lda, seed=3, n_boot=20,
+                                         final=False)
+    assert plain.by_group is None
+    with pytest.raises(RuntimeError, match="groups="):
+        plain.contrast("a", "b")
+
+
+def test_group_draws_stay_aligned_across_refits():
+    docs, parents, groups = _two_communities(n_threads=60)
+    sm = threads.ThreadSmoother().fit(docs, parents, base=_lda, groups=groups, seed=3,
+                                      n_boot=30, n_refit=1, final=False)
+    for g in sm.by_group:
+        assert sm.draws["by_group"][g]["completion"].shape == (60,)
+        assert sm.draws["by_group"][g]["alpha"].shape == (60, 2)
+
+
+def test_by_length_has_intervals_and_draws(inherited):
+    sm = inherited[0]
+    bl = sm.completion["by_length"]
+    assert sm.draws["by_length"].shape == (300, 3)
+    for t in range(3):
+        assert bl["lo"][t] <= bl["gain"][t] <= bl["hi"][t]
+    assert bl["lo"][0] > 0                    # short replies gain, and the interval says so
+
+
+def test_by_length_draws_match_the_point_estimate_on_the_full_sample():
+    tj = np.array([0, 0, 1, 1, 2, 2])
+    ter = np.array([0, 1, 0, 1, 2, 2])
+    gain = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 7.0])
+    boot = np.array([[0, 1, 2], [2, 2, 2]])
+    d = threads._length_draws(gain, ter, tj, boot, 3)
+    assert np.allclose(d[0], [2.0, 3.0, 6.0])
+    assert np.isnan(d[1, 0]) and np.isnan(d[1, 1]) and d[1, 2] == 6.0
+
+
+def test_switch_inherit_rate_has_an_interval():
+    docs, parents, _, _ = _simulate(inherit=0.5, n_threads=200, seed=0)
+    sm = threads.ThreadSmoother(switch=True).fit(docs, parents, base=_lda, seed=3, n_boot=60)
+    lo, hi = sm.inherit_rate_ci
+    assert lo <= sm.inherit_rate <= hi and hi > lo
+    assert sm.draws["inherit_rate"].shape == (60,)
+    assert sm.summary()["inherit_rate_ci"] == sm.inherit_rate_ci
+    assert sm.completion["by_length"]["lo"][0] <= sm.completion["by_length"]["gain"][0]
+
+
+def test_refits_share_calibration_one_tercile_cuts(monkeypatch):
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=60, seed=2)
+    seen = []
+    orig = threads.ThreadSmoother._calibrate
+
+    def spy(self, *a, **kw):
+        out = orig(self, *a, **kw)
+        seen.append((kw.get("length_cuts"), out["by_length"]["cuts"]))
+        return out
+
+    monkeypatch.setattr(threads.ThreadSmoother, "_calibrate", spy)
+    threads.ThreadSmoother().fit(docs, parents, base=_lda, seed=3, n_boot=20, n_refit=2,
+                                 final=False)
+    assert seen[0][0] is None
+    assert all(np.allclose(cuts, seen[0][1]) for _, cuts in seen[1:])
+
+
+def test_a_group_calibration_one_missed_is_still_pooled(monkeypatch):
+    docs, parents, groups = _two_communities(n_threads=60)
+    orig = threads.ThreadSmoother._calibrate
+    calls = []
+
+    def drop_b_first(self, *a, **kw):
+        out = orig(self, *a, **kw)
+        if not calls:                           # calibration 1 "could not score" group b
+            out["by_group"].pop("b")
+            out["alpha_by_group"].pop("b")
+        calls.append(1)
+        return out
+
+    monkeypatch.setattr(threads.ThreadSmoother, "_calibrate", drop_b_first)
+    sm = threads.ThreadSmoother().fit(docs, parents, base=_lda, groups=groups, seed=3,
+                                      n_boot=20, n_refit=1, final=False)
+    assert set(sm.by_group) == {"a", "b"}
+    d = sm.draws["by_group"]["b"]["completion"]
+    assert d.shape == (40,) and np.isnan(d[:20]).all() and np.isfinite(d[20:]).any()
+    assert np.isfinite(sm.contrast("a", "b")["completion"]["estimate"])
+
+
+def test_a_group_on_few_threads_warns_and_reports_its_counts():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=100, seed=5)
+    _, root, _ = threads.thread_structure(parents)
+    rare_roots = set(sorted(set(root.tolist()))[:4])
+    groups = ["rare" if r in rare_roots else "common" for r in root]
+    with pytest.warns(UserWarning, match="rare"):
+        sm = threads.ThreadSmoother().fit(docs, parents, base=_lda, groups=groups, seed=3,
+                                          n_boot=50, final=False)
+    rare = sm.by_group["rare"]
+    assert rare["n_test_threads"] < threads.MIN_GROUP_THREADS
+    assert sm.by_group["common"]["n_test_threads"] >= threads.MIN_GROUP_THREADS
+    assert 0 <= rare["nan_draw_share"] <= 1
+    c = sm.contrast("rare", "common")["completion"]
+    assert 0 < c["n_draws"] <= 50
+
+
+def test_group_by_length_and_bound_flags(grouped):
+    sm = grouped
+    for g, e in sm.by_group.items():
+        assert len(e["by_length"]["gain"]) == 3 and len(e["by_length"]["lo"]) == 3
+        assert sm.draws["by_group"][g]["by_length"].shape == (200, 3)
+        assert isinstance(e["parent_share_at_bound"], bool)
+        assert e["n_eval_leaves"] > 0
+    with pytest.raises(ValueError, match="two different"):
+        sm.contrast("a", "a")
+
+
+def test_warnings_point_at_the_callers_line():
+    docs, parents, _, _ = _simulate(inherit=0.9, n_threads=30, seed=6)
+    for fit in (lambda: threads.ThreadSmoother().fit(docs, parents, base=_lda, seed=3,
+                                                     n_boot=10, final=False),
+                lambda: topica.ThreadTM(K, seed=3).fit(docs, parents, iters=50, n_boot=10)):
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            fit()
+        thin = [x for x in w if "evaluation leaves" in str(x.message)]
+        assert thin and all(x.filename == __file__ for x in thin), [x.filename for x in thin]

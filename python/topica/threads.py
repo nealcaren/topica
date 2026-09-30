@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import html
 import re
+import warnings
 from collections import defaultdict
 from itertools import product
 from types import SimpleNamespace
@@ -71,12 +72,23 @@ SWITCH_SHARE_STEPS = (25, 7)     # inherit-share lattice: two contexts, three (p
 SWITCH_MEMO_BYTES = 256 * 2**20
 DEFAULT_STRENGTH_GRID = np.geomspace(0.1, 1000.0, 40)
 MAX_PSEUDOCOUNT = 1e4
+MIN_GROUP_THREADS = 10     # below this, a group's intervals warn
 
 _QUOTE_LINE = re.compile(r"^\s*(>|&gt;)")
 _ITALIC = re.compile(r"<i>.*?</i>", re.S)
 
 
 # --------------------------------------------------------------------------- helpers
+
+
+def _warn(message: str) -> None:
+    """Issue a UserWarning attributed to the first caller outside this module, so it points at
+    the user's line whether they called ThreadTM or ThreadSmoother."""
+    import sys
+    frame, level = sys._getframe(0), 1
+    while frame is not None and frame.f_code.co_filename == __file__:
+        frame, level = frame.f_back, level + 1
+    warnings.warn(message, UserWarning, stacklevel=level)
 
 
 def strip_quotes(text: str) -> str:
@@ -452,6 +464,17 @@ def _interp_cols(table, x, grid):
     return table[r, j] * (1 - f) + table[r, j + 1] * f
 
 
+def _length_draws(tok_gain, ter, tj, boot_test, n_threads):
+    """Bootstrap draws ``(n_boot, 3)`` of the held-out gain per length tercile: per-thread
+    sums resampled over test threads, as for ``completion``. NaN when a draw has no token in
+    a tercile."""
+    s = np.stack([np.bincount(tj, np.where(ter == t_, tok_gain, 0.0), n_threads)
+                  for t_ in range(3)])
+    n = np.stack([np.bincount(tj, (ter == t_).astype(float), n_threads) for t_ in range(3)])
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return (s[:, boot_test].sum(2) / n[:, boot_test].sum(2)).T
+
+
 def _coord_search(f, x0, lo, hi, step=1.0, min_step=0.02, max_rounds=60):
     """Maximize ``f`` within the box ``[lo, hi]`` by coordinate steps of ``+-step`` that halve
     when nothing improves."""
@@ -567,6 +590,17 @@ class ThreadSmoother:
         bootstrap draws that chose no borrowing at all (share undefined); those draws are
         excluded from the interval and counted here.
     alpha_by_group : per-group pseudo-counts when ``groups`` is given to :meth:`fit`.
+    by_group : per-group estimates when ``groups`` is given: ``{group: {"alpha",
+        "alpha_ci", "parent_share", "parent_share_ci", "p_no_borrowing", "completion",
+        "edge_effect", "op_effect", "by_length", "parent_share_at_bound", "n_eval_leaves",
+        "n_val_threads", "n_test_threads", "n_test_tokens", "nan_draw_share"}}`` (as they
+        apply; the counts are the first scoring calibration's, ``nan_draw_share`` is the share
+        of draws with none of the group's test tokens, and ``by_length`` uses the overall
+        ``completion["by_length"]["cuts"]``). A thinly calibrated group warns, with the
+        pooled fit's thresholds per group. ``draws["by_group"][g]["alpha"]`` has one column
+        per context, in ``contexts`` order. Each group is calibrated
+        on its own validation tokens and scored on its own test tokens, within one base fit,
+        so the groups share a topic space; :meth:`contrast` differences two of them.
     rho, rho_ci : (``switch=True``) prior probability that a reply inherits, and its 95%
         bootstrap interval. ``alpha`` and ``parent_share`` then describe the inherit
         component: among replies that inherit, how much comes from each context.
@@ -575,7 +609,9 @@ class ThreadSmoother:
         the latest :meth:`transform`; NaN for thread roots and for documents with no
         in-vocabulary tokens. A short reply carries little evidence, so its weight stays near
         the prior ``rho``; long replies are the ones the data classify. ``inherit_rate`` is
-        their mean over replies (no interval; report ``rho`` and ``rho_ci`` as the estimate).
+        their mean over replies, and ``inherit_rate_ci`` its 95% interval: each bootstrap
+        draw's parameters applied to these documents, averaged over resampled threads. Report
+        ``rho`` and ``rho_ci`` as the model's estimate of the inheriting share.
     strength_at_bound : ``True`` when a pseudo-count is at the top of its search range (the
         switch's total at 1000; a pooled pseudo-count at the refinement cap): larger values
         fit about as well, so its size is not identified beyond that. A warning is issued.
@@ -584,7 +620,9 @@ class ThreadSmoother:
         ``{"estimate", "lo", "hi"}``. Both arms leave the root and that comment out of the
         thread mix, so they share one thread pool and differ only in the original post.
     completion : held-out gain over the base on test threads, nats per token:
-        ``{"estimate", "lo", "hi", "by_length"}``.
+        ``{"estimate", "lo", "hi", "by_length"}``. ``by_length`` has the tercile ``cuts``
+        (observed tokens, from calibration 1's validation leaves; refits reuse them) and
+        per-tercile ``gain``, ``lo`` and ``hi``.
     edge_effect : held-out gain of the true tree over the shuffled-parent placebo on test
         threads, nats per token: ``{"estimate", "lo", "hi"}``.
     uncertainty : ``"threads"`` (thread bootstrap on one calibration) or ``"refit"`` (pooled
@@ -595,8 +633,10 @@ class ThreadSmoother:
         parameters (``alpha``, ``parent_share``, ``rho``) stay calibration 1's, the set
         :meth:`transform` applies, with pooled intervals; ``replicates`` shows how they vary.
     draws : dict of the pooled bootstrap draws as NumPy arrays: ``alpha`` (draws x contexts),
-        ``parent_share``, ``completion``, ``edge_effect``, and ``rho`` and ``op_effect`` when
-        they apply. Difference two fits' draws for an interval on a contrast, e.g.
+        ``parent_share``, ``completion``, ``by_length`` (draws x 3), ``edge_effect``, and
+        ``rho``, ``op_effect`` and ``inherit_rate`` when they apply; ``by_group`` holds each
+        group's draws, aligned draw by draw across groups. Within one fit, use
+        :meth:`contrast`; across two fits, difference their draws, e.g.
         ``np.percentile(a.draws["parent_share"] - b.draws["parent_share"], [2.5, 97.5])``
         (drop NaN draws, where no borrowing was chosen).
     theta_tilde : ``(D, K)`` smoothed topic mixes of a full-data base fit, one row per input
@@ -635,7 +675,7 @@ class ThreadSmoother:
         self._embed = None
         self._embed_cache = {}
         self.alpha = None
-        self.alpha_by_group = None
+        self.alpha_by_group = self.by_group = self._switch_draws = None
 
     # -- parameterization ---------------------------------------------------------------
 
@@ -710,15 +750,15 @@ class ThreadSmoother:
             if strict:
                 raise ValueError(msg + "; lower semantic_min_tokens")
             import warnings
-            warnings.warn(msg + "; it is unavailable for this corpus", UserWarning,
-                          stacklevel=3)
+            _warn(msg + "; it is unavailable for this corpus")
             pool[:] = False
         return _Semantic(emb, pool, self.semantic_k, rows=rows)
 
     # -- one calibration -------------------------------------------------------------------
 
     def _calibrate(self, docs, parents, base, groups, *, heldout_frac, val_frac,
-                   min_eval_tokens, n_shuffle, n_boot, seed, corpus_kwargs, refine):
+                   min_eval_tokens, n_shuffle, n_boot, seed, corpus_kwargs, refine,
+                   length_cuts=None):
         import topica
 
         rng = np.random.default_rng(seed)
@@ -865,7 +905,7 @@ class ThreadSmoother:
             obs = [np.array([vidx[w] for w in kept_docs[row[i]]], int) for i, _ in leaves]
             out = self._calibrate_switch(leaves, obs, theta, beta, ctx, shuf_ctx, op_ctx, pL,
                                          n_tok, tj, val_idx, test_idx, n_boot, seed,
-                                         shuf_true=shuf_true)
+                                         shuf_true=shuf_true, length_cuts=length_cuts)
             out["settings"], out["model"] = settings, model
             return out
 
@@ -936,19 +976,22 @@ class ThreadSmoother:
 
         # Gain by observed-length tercile (cuts from validation leaves).
         val_tok = np.isin(tj, val_idx)
-        cuts = np.quantile(n_tok[val_tok], [1 / 3, 2 / 3])
+        # Refits reuse calibration 1's cuts, so pooled tercile draws share their bins.
+        cuts = (np.quantile(n_tok[val_tok], [1 / 3, 2 / 3]) if length_cuts is None
+                else np.asarray(length_cuts, float))
         ter = np.digitize(n_tok, cuts, right=True)
         tok_gain = token_ll(a_star, self.contexts, everything) - np.log(pL)
         out["by_length"] = {"cuts": [float(c_) for c_ in cuts],
                             "gain": [float(tok_gain[~val_tok & (ter == t_)].mean())
                                      if (~val_tok & (ter == t_)).any() else float("nan")
                                      for t_ in range(3)]}
+        out["draws_by_length"] = _length_draws(tok_gain, ter, tj, boot_test, n_threads)
 
-        def arm_ll(pre):
+        def arm_ll(pre, mask=everything):
             keys = tuple(pre + c for c in self.contexts)
-            tab_a, _, _ = tables(keys, everything)
-            a = refine_point(grid[int(np.argmax(tab_a[:, val_idx].sum(1)))], keys, everything)
-            return np.bincount(tj, token_ll(a, keys, everything), n_threads), a
+            tab_a, _, _ = tables(keys, mask)
+            a = refine_point(grid[int(np.argmax(tab_a[:, val_idx].sum(1)))], keys, mask)
+            return np.bincount(tj[mask], token_ll(a, keys, mask), n_threads), a
 
         if "parent" in self.contexts:
             ll_s, a_s = arm_ll("_shuffled_")
@@ -967,15 +1010,55 @@ class ThreadSmoother:
             out["op_placebo_alpha"] = a_o
 
         if groups is not None:
-            out["alpha_by_group"] = {}
+            # Each group is calibrated and scored on its own tokens, within the one base fit,
+            # so the groups share a topic space. Every group's draws use the same resampled
+            # threads, so a difference of two groups' draws is a paired contrast.
+            out["alpha_by_group"], out["by_group"] = {}, {}
+            leaf_grp = [groups[i] for i, _ in leaves]
             for g_lab in sorted(set(grp.tolist()), key=str):
                 m = grp == g_lab
-                tab_g, _, tok_g = tables(self.contexts, m)
+                tab_g, base_g, tok_g = tables(self.contexts, m)
                 if tok_g[val_idx].sum() == 0:
                     continue
                 a_g = refine_point(grid[int(np.argmax(tab_g[:, val_idx].sum(1)))],
                                    self.contexts, m)
                 out["alpha_by_group"][g_lab] = a_g
+                if tok_g[test_idx].sum() == 0:
+                    continue
+
+                def g_rate(num, tok_g=tok_g):
+                    with np.errstate(invalid="ignore", divide="ignore"):
+                        return (num[test_idx].sum() / tok_g[test_idx].sum(),
+                                num[boot_test].sum(1) / tok_g[boot_test].sum(1))
+
+                # A resampled validation set with none of the group's tokens chooses nothing.
+                d_alpha = np.array([grid[int(np.argmax(tab_g[:, b].sum(1)))]
+                                    if tok_g[b].sum() > 0 else np.full(len(self.contexts), np.nan)
+                                    for b in boot_val])
+                ll_g = np.bincount(tj[m], token_ll(a_g, self.contexts, m), n_threads)
+                blk = {"alpha": a_g, "draws_alpha": d_alpha,
+                       "n_eval_leaves": len({i for (i, _), gl in zip(leaves, leaf_grp)
+                                             if gl == g_lab}),
+                       "n_val_threads": int((tok_g[val_idx] > 0).sum()),
+                       "n_test_threads": int((tok_g[test_idx] > 0).sum()),
+                       "n_test_tokens": int(tok_g[test_idx].sum())}
+                blk["completion"], blk["draws_completion"] = g_rate(ll_g - base_g)
+                # Gain by length tercile within the group, on the overall cuts.
+                gain_g = token_ll(a_g, self.contexts, m) - np.log(pL[m])
+                test_g = ~val_tok[m]
+                blk["by_length"] = [float(gain_g[test_g & (ter[m] == t_)].mean())
+                                    if (test_g & (ter[m] == t_)).any() else float("nan")
+                                    for t_ in range(3)]
+                blk["draws_by_length"] = _length_draws(gain_g, ter[m], tj[m], boot_test,
+                                                       n_threads)
+                if "parent" in self.contexts:
+                    ll_ref_g = arm_ll("_shuftrue_", m)[0] if shuf_true else ll_g
+                    blk["edge_effect"], blk["draws_edge"] = g_rate(
+                        ll_ref_g - arm_ll("_shuffled_", m)[0])
+                if "op" in self.contexts and op_ctx:
+                    blk["op_effect"], blk["draws_op"] = g_rate(
+                        arm_ll("_optrue_", m)[0] - arm_ll("_opshuf_", m)[0])
+                out["by_group"][g_lab] = blk
 
         out["settings"] = settings
         out["model"] = model
@@ -1012,7 +1095,7 @@ class ThreadSmoother:
         return np.where(np.isnan(li), 0.0, w)
 
     def _calibrate_switch(self, leaves, obs, theta, beta, ctx, shuf_ctx, op_ctx, pL, n_tok,
-                          tj, val_idx, test_idx, n_boot, seed, shuf_true=()):
+                          tj, val_idx, test_idx, n_boot, seed, shuf_true=(), length_cuts=None):
         """Fit the switch: a two-component mixture prior per reply, *inherit* (the pooled
         multi-context shrinkage, centered on the share-weighted context mix with concentration
         A) or *new* (centered on the corpus mean mix). The inherit probability of each reply
@@ -1172,13 +1255,17 @@ class ThreadSmoother:
                "draws_rho": np.array([self._unpack(x)[2] for x in boot_x]),
                "draws_completion": gain_t[boot_test].sum(1) / tok_t[boot_test].sum(1)}
 
-        cuts = np.quantile(n_tok[on_val], [1 / 3, 2 / 3])
+        cuts = (np.quantile(n_tok[on_val], [1 / 3, 2 / 3]) if length_cuts is None
+                else np.asarray(length_cuts, float))
         ter = np.digitize(n_tok, cuts, right=True)
         tok_gain = token_ll(x_star, *true_tabs[j_star], sel_all) - np.log(pL)
         out["by_length"] = {"cuts": [float(c_) for c_ in cuts],
                             "gain": [float(tok_gain[~on_val & (ter == t_)].mean())
                                      if (~on_val & (ter == t_)).any() else float("nan")
                                      for t_ in range(3)]}
+        out["draws_by_length"] = _length_draws(tok_gain, ter, tj, boot_test, n_threads)
+        # Each draw's share and parameters, for the interval on inherit_rate at transform.
+        out["draws_switch"] = (np.array([shares[j] for j in boot_j]), np.array(boot_x))
 
         def arm(mixes):
             """Profile fit on a set of context draws: (per-thread ll, alpha)."""
@@ -1279,7 +1366,8 @@ class ThreadSmoother:
         runs = [self._calibrate(docs, parents, base, groups, seed=seed, **kw)]
         for r in range(1, n_refit + 1):
             runs.append(self._calibrate(docs, parents, base, groups,
-                                        seed=seed + 7919 * r, **kw))
+                                        seed=seed + 7919 * r,
+                                        length_cuts=runs[0]["by_length"]["cuts"], **kw))
         main = runs[0]
         self.uncertainty = "refit" if n_refit else "threads"
 
@@ -1303,6 +1391,7 @@ class ThreadSmoother:
                       "completion": np.concatenate([r_["draws_completion"] for r_ in runs])}
 
         self.rho = self.rho_ci = self.inherit_weights = self.inherit_rate = None
+        self.inherit_rate_ci = None
         if self.switch:
             self.draws["rho"] = np.concatenate([r_["draws_rho"] for r_ in runs])
             self.rho = float(main["rho"])
@@ -1334,8 +1423,16 @@ class ThreadSmoother:
             self.parent_share_at_bound = bool(np.isclose(self.parent_share, ends).any())
 
         lo, hi = pct(self.draws["completion"])
+        self.draws["by_length"] = np.vstack([r_["draws_by_length"] for r_ in runs])
+        with warnings.catch_warnings():     # a tercile no draw reaches is NaN, not an error
+            warnings.simplefilter("ignore", RuntimeWarning)
+            bl_lo, bl_hi = np.nanpercentile(self.draws["by_length"], [2.5, 97.5], axis=0)
+            gain = (np.nanmedian([r_["by_length"]["gain"] for r_ in runs], 0) if n_refit
+                    else main["by_length"]["gain"])
+        by_length = {"cuts": main["by_length"]["cuts"], "gain": [float(g) for g in gain],
+                     "lo": [float(v) for v in bl_lo], "hi": [float(v) for v in bl_hi]}
         self.completion = {"estimate": float(point("completion")), "lo": lo, "hi": hi,
-                           "by_length": main["by_length"]}
+                           "by_length": by_length}
         if "edge_effect" in main:
             self.draws["edge_effect"] = np.concatenate([r_["draws_edge"] for r_ in runs])
             lo, hi = pct(self.draws["edge_effect"])
@@ -1354,6 +1451,11 @@ class ThreadSmoother:
         self.alpha_by_group = ({g: {c: float(a) for c, a in zip(self.contexts, v)}
                                 for g, v in main["alpha_by_group"].items()}
                                if groups is not None else None)
+        self.by_group = (self._pool_groups(runs, n_refit, n_boot) if groups is not None
+                         else None)
+        # Pooled per-draw switch parameters; transform turns them into inherit_rate draws.
+        self._switch_draws = (tuple(np.concatenate([r_["draws_switch"][i] for r_ in runs])
+                                    for i in range(2)) if self.switch else None)
         self.replicates = None
         if n_refit:
             self.replicates = [{"alpha": {c: float(a) for c, a in zip(self.contexts, r_["alpha"])},
@@ -1387,6 +1489,133 @@ class ThreadSmoother:
                                               groups=groups)
         return self
 
+    def _pool_groups(self, runs, n_refit, n_boot):
+        """Per-group estimates and draws, pooled over calibrations as the overall ones are. A
+        group a calibration could not score contributes NaN draws, so every group's draws stay
+        aligned draw by draw (the pairing :meth:`contrast` relies on)."""
+        C = len(self.contexts)
+        ends = self._share_ends() if self._share(np.ones(C)) is not None else None
+        by, draws = {}, {}
+        # Every group any calibration scored, in first-seen order; a calibration that could not
+        # score a group gives it NaN draws. Its parameters come from the first calibration that
+        # scored it (calibration 1's when it did, the set transform applies).
+        labels = list(dict.fromkeys(g for r_ in runs for g in r_.get("by_group", {})))
+        for g in labels:
+            blks = [r_["by_group"].get(g) for r_ in runs]
+            first = next(b for b in blks if b is not None)
+
+            def cat(key, width=None, blks=blks):
+                fill = np.full((n_boot, width) if width else n_boot, np.nan)
+                return np.concatenate([b[key] if b is not None and key in b else fill
+                                       for b in blks])
+
+            def effect(key, dkey, blks=blks):
+                vals = np.array([b[key] if b is not None and key in b else np.nan
+                                 for b in blks], float)
+                d = cat(dkey)
+                lo, hi = (np.nanpercentile(d, [2.5, 97.5]) if np.isfinite(d).any()
+                          else (np.nan, np.nan))
+                est = (np.nanmedian(vals) if np.isfinite(vals).any() else np.nan) if n_refit \
+                    else vals[0]
+                return {"estimate": float(est), "lo": float(lo), "hi": float(hi)}, d
+
+            a_g = first["alpha"]
+            d_alpha = cat("draws_alpha", C)
+            fin = np.isfinite(d_alpha[:, 0])
+            est = {"alpha": {c: float(a) for c, a in zip(self.contexts, a_g)},
+                   "alpha_ci": {c: (tuple(float(v) for v in np.percentile(d_alpha[fin, j],
+                                                                           [2.5, 97.5]))
+                                    if fin.any() else (np.nan, np.nan))
+                                for j, c in enumerate(self.contexts)}}
+            dr = {"alpha": d_alpha}
+            for k in ("n_eval_leaves", "n_val_threads", "n_test_threads", "n_test_tokens"):
+                est[k] = first[k]
+            d_bl = cat("draws_by_length", 3)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                bl_lo, bl_hi = np.nanpercentile(d_bl, [2.5, 97.5], axis=0)
+                bl = [b["by_length"] if b is not None else [np.nan] * 3 for b in blks]
+                bl_gain = np.nanmedian(bl, 0) if n_refit else np.asarray(first["by_length"])
+            est["by_length"] = {"gain": [float(v) for v in bl_gain],
+                                "lo": [float(v) for v in bl_lo], "hi": [float(v) for v in bl_hi]}
+            dr["by_length"] = d_bl
+            d_comp = cat("draws_completion")
+            est["nan_draw_share"] = float(np.mean(np.isnan(d_comp)))
+            est["p_no_borrowing"] = (float(np.mean(d_alpha[fin].sum(1) == 0)) if fin.any()
+                                     else float("nan"))
+            share = self._share(a_g)
+            if share is not None:
+                sd = np.array([self._share(a) for a in d_alpha])
+                ok = sd[np.isfinite(sd)]
+                est["parent_share"] = float(np.clip(share, *ends)) if np.isfinite(share) \
+                    else float("nan")
+                est["parent_share_at_bound"] = bool(np.isclose(est["parent_share"], ends).any())
+                est["parent_share_ci"] = (tuple(float(v) for v in np.percentile(ok, [2.5, 97.5]))
+                                          if ok.size else (np.nan, np.nan))
+                dr["parent_share"] = sd
+            for key, dkey in (("completion", "draws_completion"), ("edge_effect", "draws_edge"),
+                              ("op_effect", "draws_op")):
+                if any(b is not None and key in b for b in blks):
+                    est[key], dr[key] = effect(key, dkey)
+            by[g], draws[g] = est, dr
+        self.draws["by_group"] = draws
+        # A group resting on a few threads gets intervals that look precise and are not: a
+        # single test thread gives the same ratio in every resample that contains it.
+        thin = [g for g, e in by.items()
+                if e["n_test_threads"] < MIN_GROUP_THREADS
+                or e["n_val_threads"] < MIN_GROUP_THREADS or e["nan_draw_share"] > 0.05
+                or e["n_eval_leaves"] < 200 or e["n_test_tokens"] < 2000]
+        unscored = [g for r_ in runs for g in r_.get("alpha_by_group", {}) if g not in by]
+        if thin:
+            _warn(
+                f"groups {thin} are thinly calibrated (fewer than 200 evaluation leaves, 2,000 "
+                f"held-out test tokens or {MIN_GROUP_THREADS} validation or test threads, or "
+                "missing from over 5% of the resamples); their estimates vary widely and their "
+                "intervals can understate the uncertainty. Use n_refit, and see by_group[g]'s "
+                "n_eval_leaves, n_test_tokens, n_test_threads and nan_draw_share.")
+        if unscored:
+            _warn(f"groups {sorted(set(unscored), key=str)} have no test tokens, so "
+                          "they have pseudo-counts (alpha_by_group) but no by_group estimates.")
+        return by
+
+    def contrast(self, group, other) -> dict:
+        """Difference between two groups of the same fit (``group`` minus ``other``), with
+        95% intervals from the paired thread-bootstrap draws. The groups share one base
+        model, and so one topic space.
+
+        The ``estimate`` is the difference of the two groups' point estimates (each the median
+        over calibrations with ``n_refit``); the interval comes from the paired differences of
+        their draws.
+
+        Returns ``{quantity: {"estimate", "lo", "hi"}}`` for ``parent_share``, ``completion``,
+        ``edge_effect`` and ``op_effect``, as they apply, each with ``n_draws``, the number of
+        draws used. Draws where either group is undefined (no borrowing chosen, or no tokens
+        in the resample) are dropped, so the interval is conditional on resamples where both
+        are defined; for well-populated groups that loses almost nothing (check
+        ``by_group[g]["nan_draw_share"]``).
+        """
+        if not self.by_group:
+            raise RuntimeError("contrast() needs a fit with groups=")
+        if group == other:
+            raise ValueError("contrast() needs two different groups")
+        for g in (group, other):
+            if g not in self.by_group:
+                raise KeyError(f"no estimates for group {g!r}; groups: {list(self.by_group)}")
+        a, b = self.by_group[group], self.by_group[other]
+        da, db = self.draws["by_group"][group], self.draws["by_group"][other]
+        out = {}
+        for q in ("parent_share", "completion", "edge_effect", "op_effect"):
+            if q not in a or q not in b:
+                continue
+            d = da[q] - db[q]
+            d = d[np.isfinite(d)]
+            pa, pb = (a[q], b[q]) if q == "parent_share" else (a[q]["estimate"],
+                                                                 b[q]["estimate"])
+            lo, hi = np.percentile(d, [2.5, 97.5]) if d.size else (np.nan, np.nan)
+            out[q] = {"estimate": float(pa - pb), "lo": float(lo), "hi": float(hi),
+                      "n_draws": int(d.size)}
+        return out
+
     def _warn_if_fragile(self, main):
         """Flag the two ways a calibration can look precise and not be: too little held-out
         data, and a total pseudo-count at the top of its range."""
@@ -1404,22 +1633,21 @@ class ThreadSmoother:
             at = a.sum() >= self.strength_grid[-1] * 0.999
         self.strength_at_bound = bool(a.sum() > 0 and at)
         if st["n_eval_leaves"] < 200 or st["n_test_tokens"] < 2000:
-            warnings.warn(
+            _warn(
                 f"ThreadSmoother calibrated on {st['n_eval_leaves']} evaluation leaves and "
                 f"{st['n_test_tokens']} held-out test tokens; estimates this thin vary widely "
                 "with the seed and mask. Use n_refit, and consider a lower min_eval_tokens for "
-                "communities of short comments.", UserWarning, stacklevel=3)
+                "communities of short comments.")
         cov = st.get("semantic_coverage")
         if cov is not None and cov < 0.5:
-            warnings.warn(
+            _warn(
                 f"only {cov:.0%} of the scored replies have a semantic context (neighbors with "
                 "positive similarity); check the encoder's output (all-zero or unrelated "
-                "vectors give none).", UserWarning, stacklevel=3)
+                "vectors give none).")
         if self.strength_at_bound:
-            warnings.warn(
+            _warn(
                 "a pseudo-count is at the top of its search range: larger values fit about as "
-                "well, so its size is not identified beyond that (see strength_at_bound).",
-                UserWarning, stacklevel=3)
+                "well, so its size is not identified beyond that (see strength_at_bound).")
 
     # -- application -------------------------------------------------------------------
 
@@ -1500,6 +1728,41 @@ class ThreadSmoother:
         iw[(np.asarray(parents) < 0) | (n == 0)] = np.nan
         self.inherit_weights = iw
         self.inherit_rate = float(np.nanmean(iw)) if np.isfinite(iw).any() else np.nan
+        self.inherit_rate_ci = None
+        if self._switch_draws is not None and np.isfinite(iw).any():
+            d = self._inherit_rate_draws(ids, mix, lml_new, iw, parents, beta)
+            self.draws["inherit_rate"] = d
+            self.inherit_rate_ci = tuple(float(v) for v in np.percentile(d, [2.5, 97.5]))
+        return out
+
+    def _inherit_rate_draws(self, ids, mix, lml_new, iw, parents, beta):
+        """Draws of ``inherit_rate``: each calibration draw's share and parameters, applied to
+        these documents, averaged over replies in resampled threads. The interval so carries
+        both the parameter uncertainty and the sampling of threads."""
+        shares, xs = self._switch_draws
+        ok = np.isfinite(iw)
+        _, root, _ = thread_structure(parents)
+        uniq, tix = np.unique(root[ok], return_inverse=True)
+        rng = np.random.default_rng(self.settings["seed"] + 2)
+        picks = rng.integers(0, len(uniq), (len(xs), len(uniq)))
+        ok_ids = [ids[i] for i in np.flatnonzero(ok)]
+        avail = ~np.isnan(mix[ok][:, :, 0])
+        mix_ok = np.nan_to_num(mix[ok])
+        cache, out = {}, np.empty(len(xs))
+        for b, (s, x) in enumerate(zip(shares, xs)):
+            key = s.tobytes()
+            if key not in cache:
+                wts = avail * s
+                frac = wts.sum(1)
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    center = np.einsum("dc,dck->dk", wts / frac[:, None], mix_ok)
+                cache[key] = (_sequential_log_ml(ok_ids, center, CONC_GRID, beta),
+                              frac)
+            lml_inh, frac = cache[key]
+            A, a_new, rho = self._unpack(x)
+            w = self._inherit_prob(lml_inh, lml_new[ok], A * frac, a_new, rho)
+            wt = np.bincount(picks[b], None, len(uniq))[tix]
+            out[b] = (w * wt).sum() / wt.sum()
         return out
 
     def summary(self) -> dict:
@@ -1513,7 +1776,9 @@ class ThreadSmoother:
                 "replicates": self.replicates,
                 "completion": self.completion, "edge_effect": self.edge_effect,
                 "op_effect": self.op_effect,
-                "alpha_by_group": self.alpha_by_group, "rho": self.rho, "rho_ci": self.rho_ci,
+                "alpha_by_group": self.alpha_by_group, "by_group": self.by_group,
+                "rho": self.rho, "rho_ci": self.rho_ci,
+                "inherit_rate": self.inherit_rate, "inherit_rate_ci": self.inherit_rate_ci,
                 "strength_at_bound": self.strength_at_bound,
                 "settings": self.settings}
 
@@ -1561,8 +1826,8 @@ class ThreadTM:
     doc_topic_all : ``(D, K)`` smoothed topic mixes, one row per input document.
     base_doc_topic : the unsmoothed base mixes, one row per document the corpus kept.
     alpha, alpha_ci, parent_share, parent_share_ci, parent_share_at_bound, p_no_borrowing,
-    edge_effect, completion, alpha_by_group, draws, replicates, rho, rho_ci,
-    inherit_weights : see :class:`ThreadSmoother`.
+    edge_effect, completion, alpha_by_group, by_group, draws, replicates, rho, rho_ci,
+    inherit_weights, inherit_rate, inherit_rate_ci, contrast : see :class:`ThreadSmoother`.
     base_model, corpus, smoother : the full-data base fit, its Corpus, and the calibrated
         :class:`ThreadSmoother`.
     """
@@ -1704,7 +1969,8 @@ class ThreadTM:
         if name in ("alpha", "alpha_ci", "parent_share", "parent_share_ci",
                     "parent_share_at_bound", "p_no_borrowing", "edge_effect", "completion",
                     "alpha_by_group", "draws", "replicates", "uncertainty", "rho", "rho_ci",
-                    "inherit_weights", "op_effect", "inherit_rate", "strength_at_bound"):
+                    "inherit_weights", "op_effect", "inherit_rate", "inherit_rate_ci",
+                    "strength_at_bound", "by_group", "contrast"):
             if not self.__dict__.get("_fitted"):
                 raise AttributeError(f"{name} is available after fit()")
             return getattr(self.__dict__["smoother"], name)
