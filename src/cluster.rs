@@ -161,37 +161,58 @@ pub fn kmeans_labels(points: &[Vec<f64>], k: usize, seed: u64) -> Vec<i64> {
 
 /// One k-means++ start followed by Lloyd iterations. Returns the final
 /// within-cluster sum of squares and the (not yet densified) labels.
+fn kmeans_single(points: &[Vec<f64>], k: usize, seed: u64) -> (f64, Vec<i64>) {
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let centroids = kmeanspp_init(points, k, &mut rng);
+    lloyd(points, centroids)
+}
+
+/// Assign every point to its nearest centroid, recording the squared distance.
+/// Returns whether any label changed.
+fn kmeans_assign(
+    points: &[Vec<f64>],
+    centroids: &[Vec<f64>],
+    labels: &mut [i64],
+    dist: &mut [f64],
+) -> bool {
+    let mut changed = false;
+    for i in 0..points.len() {
+        let mut best = 0usize;
+        let mut bestd = f64::INFINITY;
+        for (c, cen) in centroids.iter().enumerate() {
+            let d = sqdist(&points[i], cen);
+            if d < bestd {
+                bestd = d;
+                best = c;
+            }
+        }
+        dist[i] = bestd;
+        if labels[i] != best as i64 {
+            labels[i] = best as i64;
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Lloyd iterations from the given centroids. Returns the within-cluster sum of
+/// squares and labels, both from the same final assignment pass.
 ///
 /// When a centroid loses all its points it is moved to the point farthest from
 /// its current centroid (which splits the worst-fit cluster), the same repair
 /// scikit-learn and e-means (Bessa et al. 2026) use instead of letting the
 /// cluster die and silently returning fewer than `k` topics.
-fn kmeans_single(points: &[Vec<f64>], k: usize, seed: u64) -> (f64, Vec<i64>) {
+fn lloyd(points: &[Vec<f64>], mut centroids: Vec<Vec<f64>>) -> (f64, Vec<i64>) {
     let n = points.len();
     let dim = points[0].len();
-    let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    let mut centroids = kmeanspp_init(points, k, &mut rng);
-
     let kc = centroids.len();
     let mut labels = vec![-1i64; n];
     let mut dist = vec![0.0f64; n];
+    let mut converged = false;
     for _ in 0..100 {
-        let mut changed = false;
-        for i in 0..n {
-            let mut best = 0usize;
-            let mut bestd = f64::INFINITY;
-            for (c, cen) in centroids.iter().enumerate() {
-                let d = sqdist(&points[i], cen);
-                if d < bestd {
-                    bestd = d;
-                    best = c;
-                }
-            }
-            dist[i] = bestd;
-            if labels[i] != best as i64 {
-                labels[i] = best as i64;
-                changed = true;
-            }
+        if !kmeans_assign(points, &centroids, &mut labels, &mut dist) {
+            converged = true;
+            break;
         }
         let mut sums = vec![vec![0.0; dim]; kc];
         let mut counts = vec![0usize; kc];
@@ -211,7 +232,8 @@ fn kmeans_single(points: &[Vec<f64>], k: usize, seed: u64) -> (f64, Vec<i64>) {
         }
         // Revive empty clusters at the worst-fit points. A point with zero
         // distance already sits on a centroid, so moving there would only
-        // create a duplicate that can never win a point; skip it.
+        // create a duplicate that can never win a point; skip it. Zeroing the
+        // chosen point's distance keeps two empty clusters off the same point.
         for c in 0..kc {
             if counts[c] > 0 {
                 continue;
@@ -222,12 +244,13 @@ fn kmeans_single(points: &[Vec<f64>], k: usize, seed: u64) -> (f64, Vec<i64>) {
             if let Some(i) = far {
                 centroids[c] = points[i].clone();
                 dist[i] = 0.0;
-                changed = true;
             }
         }
-        if !changed {
-            break;
-        }
+    }
+    // Hit the iteration cap: reassign once so the inertia used to pick the best
+    // start matches the returned labels and the final centroids.
+    if !converged {
+        kmeans_assign(points, &centroids, &mut labels, &mut dist);
     }
     (dist.iter().sum(), labels)
 }
@@ -1028,6 +1051,25 @@ mod tests {
                 assert_eq!(max + 1, k, "seed {seed}: asked {k}, got {}", max + 1);
             }
         }
+    }
+
+    // A centroid that starts far from every point wins nothing on the first
+    // pass; it must be revived (splitting the worse-fit blob) rather than
+    // dropped, so all three clusters survive.
+    #[test]
+    fn lloyd_revives_empty_centroid() {
+        let pts = two_blobs();
+        let init = vec![vec![0.15, 0.15], vec![5.15, 5.15], vec![100.0, -100.0]];
+        let (inertia, labels) = lloyd(&pts, init);
+        let mut ids = labels.clone();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(
+            ids,
+            vec![0, 1, 2],
+            "empty centroid was not revived: {labels:?}"
+        );
+        assert!(inertia.is_finite());
     }
 
     // Fewer distinct points than k: no duplicate revivals, just the distinct ones.
