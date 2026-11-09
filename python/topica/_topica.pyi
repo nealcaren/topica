@@ -4351,7 +4351,8 @@ class SeededLDA:
 class Top2Vec:
     """Top2Vec (Angelov 2020): topics by clustering document embeddings. The
     embeddings are reduced with UMAP (matching the original, which always uses
-    UMAP; pass ``reducer="pca"`` for a linear projection), density-clustered
+    UMAP; pass ``reducer="pca"`` for a linear projection or ``reducer="none"`` to
+    cluster the L2-normalized raw embeddings), density-clustered
     (HDBSCAN), and
     each topic is read off its cluster: the topic vector is the mean of its
     documents' embeddings and its words are the nearest vocabulary terms. You
@@ -4491,7 +4492,8 @@ class BERTopic:
     topica defaults to ``reducer="umap"`` to match the upstream package (its
     UMAP is the in-house, seed-reproducible reducer); pass ``reducer="pca"`` for a
     linear, lighter projection (L2-normalized onto the unit sphere before
-    clustering). topica keeps ``min_cluster_size=15`` where upstream uses
+    clustering), or ``reducer="none"`` (same as ``n_components=0``) to cluster the
+    L2-normalized raw embeddings. topica keeps ``min_cluster_size=15`` where upstream uses
     ``min_topic_size=10`` (issue #488).
     No embedder of your own? ``topica.llm_embed(texts, model=...)`` builds it."""
     @property

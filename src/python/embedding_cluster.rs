@@ -28,6 +28,48 @@ fn umap_notice(_py: Python<'_>, use_umap: bool) -> PyResult<()> {
     Ok(())
 }
 
+/// Resolve the `reducer` argument. ``"none"`` skips reduction (stored as
+/// `n_components = 0`, so saved models need no new field); ``"umap"`` /
+/// ``"pca"`` keep the requested `n_components`.
+fn parse_reducer_dims(reducer: &str, n_components: usize) -> PyResult<(bool, usize)> {
+    if reducer == "none" {
+        return Ok((false, 0));
+    }
+    Ok((parse_reducer(reducer)?, n_components))
+}
+
+/// The reducer actually in effect, as reported by `settings()`.
+fn reducer_name(use_umap: bool, n_components: usize) -> &'static str {
+    match (n_components, use_umap) {
+        (0, _) => "none",
+        (_, true) => "umap",
+        (_, false) => "pca",
+    }
+}
+
+/// HDBSCAN needs a low-dimensional space: in hundreds of raw embedding
+/// dimensions distances concentrate and it labels most documents noise. Warn
+/// rather than refuse, since a user may pass already-reduced embeddings.
+fn raw_hdbscan_notice(
+    py: Python<'_>,
+    model: &str,
+    clusterer: &str,
+    n_components: usize,
+    emb_dim: usize,
+) -> PyResult<()> {
+    if clusterer == "hdbscan" && n_components == 0 && emb_dim > 50 {
+        py.import_bound("warnings")?.call_method1(
+            "warn",
+            (format!(
+                "{model}: clusterer='hdbscan' on unreduced {emb_dim}-dimensional embeddings \
+                 usually marks most documents as noise. Use reducer='umap' (default) or \
+                 'pca', or a fixed-K clusterer such as clusterer='kmeans'."
+            ),),
+        )?;
+    }
+    Ok(())
+}
+
 /// Normalize the BERTopic `weighting` argument to a canonical scheme name.
 /// Accepts the two topica names and the reference package's spellings:
 /// `"c-tf-idf"` (BERTopic class-based TF-IDF; aliases `"ctfidf"`, `"c_tf_idf"`) and
@@ -177,7 +219,7 @@ impl Top2Vec {
         d.set_item("n_components", self.n_components)?;
         d.set_item("min_cluster_size", self.min_cluster_size)?;
         d.set_item("min_samples", self.min_samples)?;
-        d.set_item("reducer", if self.use_umap { "umap" } else { "pca" })?;
+        d.set_item("reducer", reducer_name(self.use_umap, self.n_components))?;
         d.set_item("n_neighbors", self.n_neighbors)?;
         d.set_item("clusterer", self.clusterer.as_str())?;
         d.set_item("num_clusters", self.num_clusters)?;
@@ -211,7 +253,9 @@ impl Top2Vec {
     /// `reducer` is the dimensionality-reduction method, ``"umap"`` (default,
     /// matching the original Top2Vec, which always reduces with UMAP; topica's
     /// in-house UMAP is seed-reproducible) or ``"pca"`` (linear, lighter,
-    /// L2-normalized onto the unit sphere before clustering); `n_neighbors`
+    /// L2-normalized onto the unit sphere before clustering), or ``"none"`` (same
+    /// as ``n_components=0``: cluster the L2-normalized raw embeddings; fine for
+    /// fixed-K clusterers, poor for HDBSCAN, which warns); `n_neighbors`
     /// (default 15, ``metric="cosine"``) matches the original Top2Vec's default
     /// UMAP config (``{n_neighbors: 15, n_components: 5, metric: "cosine"}``).
     /// `resolution` (default 1.0) and
@@ -255,7 +299,7 @@ impl Top2Vec {
         if min_cluster_size < 2 {
             return Err(PyValueError::new_err("min_cluster_size must be >= 2"));
         }
-        let use_umap = parse_reducer(reducer)?;
+        let (use_umap, n_components) = parse_reducer_dims(reducer, n_components)?;
         let (clusterer, num_clusters) = parse_clusterer(clusterer, num_clusters)?;
         let (resolution, knn_neighbors) = parse_graph_params(resolution, knn_neighbors)?;
         let umap_params = parse_umap_params(
@@ -393,7 +437,14 @@ impl Top2Vec {
         slf.id_to_word = corpus.id_to_word.clone();
         slf.docs = corpus.docs.clone();
 
-        umap_notice(py, slf.use_umap)?;
+        umap_notice(py, slf.use_umap && slf.n_components > 0)?;
+        raw_hdbscan_notice(
+            py,
+            "Top2Vec",
+            &slf.clusterer,
+            slf.n_components,
+            doc_emb.first().map_or(0, |r| r.len()),
+        )?;
         let (nc, uu, nn, mcs, ms, seed) = (
             slf.n_components,
             slf.use_umap,
@@ -1082,7 +1133,7 @@ impl BERTopic {
         d.set_item("nr_topics", self.nr_topics)?;
         d.set_item("window", self.window)?;
         d.set_item("stride", self.stride)?;
-        d.set_item("reducer", if self.use_umap { "umap" } else { "pca" })?;
+        d.set_item("reducer", reducer_name(self.use_umap, self.n_components))?;
         d.set_item("n_neighbors", self.n_neighbors)?;
         d.set_item("bm25", self.bm25)?;
         d.set_item("reduce_frequent", self.reduce_frequent)?;
@@ -1131,8 +1182,9 @@ impl BERTopic {
     /// core-point neighborhood (defaults to `min_cluster_size`). `reducer` is
     /// ``"umap"`` (default, matching upstream BERTopic; topica's in-house UMAP is
     /// seed-reproducible) or ``"pca"`` (linear, lighter, L2-normalized onto the
-    /// unit sphere before clustering) and
-    /// `n_neighbors` its neighborhood size. `bm25` switches the c-TF-IDF term
+    /// unit sphere before clustering), or ``"none"`` (same as ``n_components=0``:
+    /// cluster the L2-normalized raw embeddings; fine for fixed-K clusterers,
+    /// poor for HDBSCAN, which warns), and `n_neighbors` its neighborhood size. `bm25` switches the c-TF-IDF term
     /// weighting to class-based BM25 (matching upstream's formula, including the
     /// unclamped idf that goes negative for terms common across every class; note
     /// upstream truncates the average class size to an integer, topica does not) and
@@ -1202,7 +1254,7 @@ impl BERTopic {
         if min_cluster_size < 2 {
             return Err(PyValueError::new_err("min_cluster_size must be >= 2"));
         }
-        let use_umap = parse_reducer(reducer)?;
+        let (use_umap, n_components) = parse_reducer_dims(reducer, n_components)?;
         let (clusterer, num_clusters) = parse_clusterer(clusterer, num_clusters)?;
         let (resolution, knn_neighbors) = parse_graph_params(resolution, knn_neighbors)?;
         let umap_params = parse_umap_params(
@@ -1287,7 +1339,14 @@ impl BERTopic {
         let num_types = corpus.num_types();
         slf.id_to_word = corpus.id_to_word.clone();
         slf.docs = corpus.docs.clone();
-        umap_notice(py, slf.use_umap)?;
+        umap_notice(py, slf.use_umap && slf.n_components > 0)?;
+        raw_hdbscan_notice(
+            py,
+            "BERTopic",
+            &slf.clusterer,
+            slf.n_components,
+            doc_emb.first().map_or(0, |r| r.len()),
+        )?;
         let (nc, uu, nn, mcs, ms, nr, win, st, b25, rf, msim, seed) = (
             slf.n_components,
             slf.use_umap,
