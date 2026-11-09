@@ -729,7 +729,8 @@ For statistically-selected phrases instead of every bigram, use
   geometry sentence embeddings are trained for. Without this the few highest-variance
   PCA directions dominate the metric and the clusterer under-splits real embeddings
   into a couple of broad topics.
-- `reducer="none"` (equivalently `n_components=0`) clusters the raw embeddings,
+- `reducer="none"` (equivalently `n_components=0`; any `n_components` you pass is
+  ignored) clusters the raw embeddings,
   L2-normalized onto the unit sphere so the clusterer measures cosine distance
   rather than vector length. It is fast and has no layout to tune, which suits
   fixed-K clusterers (`clusterer="kmeans"`/`"gmm"`/`"agglomerative"`), but it is
@@ -770,7 +771,7 @@ For statistically-selected phrases instead of every bigram, use
   ```python
   model = topica.BERTopic(reducer="umap", min_dist=0.1, n_neighbors=30, seed=1)
   ```
-- Results are reproducible for a fixed `seed`, under either reducer.
+- Results are reproducible for a fixed `seed`, under any reducer.
 
 !!! note "Faithful to the references"
     On a shared task with shared document embeddings, topica's `Top2Vec` and

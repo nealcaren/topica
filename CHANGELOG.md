@@ -72,6 +72,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   interval; parameters stay calibration 1's, the set the smoother applies), warn when a calibration rests on fewer than 200 evaluation leaves or 2,000 test
   tokens, and flag a total pseudo-count at the top of its range (`strength_at_bound`).
 
+### Fixed
+
+- **`BERTopic` / `Top2Vec` with `n_components=0` now cluster L2-normalized embeddings**, so
+  the partition follows direction (cosine), not vector length. Refits of existing
+  `n_components=0` models give different labels. `reducer="none"` is the explicit spelling
+  (`n_components` is ignored with it), and `clusterer="hdbscan"` on unreduced embeddings
+  above 50 dimensions now warns.
+
 ## [0.62.0] - 2026-09-23
 
 ### Added
