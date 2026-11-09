@@ -122,24 +122,59 @@ fn kmeanspp_init(points: &[Vec<f64>], k: usize, rng: &mut ChaCha8Rng) -> Vec<Vec
     centroids
 }
 
+/// Number of independent k-means++ starts `kmeans_labels` runs, keeping the one
+/// with the lowest within-cluster sum of squares (scikit-learn's long-standing
+/// `n_init=10`). A single start lands in a visibly worse local minimum often
+/// enough to matter for topic recovery.
+const KMEANS_N_INIT: u64 = 10;
+
 /// K-means (Lloyd) with k-means++ seeding. Every point is assigned to its nearest
 /// centroid, so there is no `-1` noise label — useful when every document must
-/// land in a topic. Deterministic for a fixed `seed`; `k` is clamped to `1..=n`,
-/// and empty clusters are dropped so the returned ids are a dense `0..m` range.
+/// land in a topic. Runs `KMEANS_N_INIT` seeded starts in parallel and keeps the
+/// lowest-inertia one; deterministic for a fixed `seed` regardless of thread
+/// count. `k` is clamped to `1..=n`. A cluster that empties mid-run is revived at
+/// the worst-fit point rather than dropped, so the returned ids are a dense
+/// `0..k` range unless the data has fewer than `k` distinct points.
 pub fn kmeans_labels(points: &[Vec<f64>], k: usize, seed: u64) -> Vec<i64> {
+    use rayon::prelude::*;
     let n = points.len();
     if n == 0 {
         return Vec::new();
     }
-    let dim = points[0].len();
     let k = k.clamp(1, n);
-    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let runs: Vec<(f64, Vec<i64>)> = (0..KMEANS_N_INIT)
+        .into_par_iter()
+        .map(|r| {
+            // Start 0 keeps the historical single-start seed stream.
+            let s = seed.wrapping_add(r.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            kmeans_single(points, k, s)
+        })
+        .collect();
+    // Lowest inertia wins; ties go to the earliest start (stable, order-fixed).
+    let (_, mut labels) = runs
+        .into_iter()
+        .reduce(|best, run| if run.0 < best.0 { run } else { best })
+        .unwrap();
+    densify(&mut labels);
+    labels
+}
 
+/// One k-means++ start followed by Lloyd iterations. Returns the final
+/// within-cluster sum of squares and the (not yet densified) labels.
+///
+/// When a centroid loses all its points it is moved to the point farthest from
+/// its current centroid (which splits the worst-fit cluster), the same repair
+/// scikit-learn and e-means (Bessa et al. 2026) use instead of letting the
+/// cluster die and silently returning fewer than `k` topics.
+fn kmeans_single(points: &[Vec<f64>], k: usize, seed: u64) -> (f64, Vec<i64>) {
+    let n = points.len();
+    let dim = points[0].len();
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let mut centroids = kmeanspp_init(points, k, &mut rng);
 
-    // Lloyd iterations.
     let kc = centroids.len();
-    let mut labels = vec![0i64; n];
+    let mut labels = vec![-1i64; n];
+    let mut dist = vec![0.0f64; n];
     for _ in 0..100 {
         let mut changed = false;
         for i in 0..n {
@@ -152,6 +187,7 @@ pub fn kmeans_labels(points: &[Vec<f64>], k: usize, seed: u64) -> Vec<i64> {
                     best = c;
                 }
             }
+            dist[i] = bestd;
             if labels[i] != best as i64 {
                 labels[i] = best as i64;
                 changed = true;
@@ -173,12 +209,27 @@ pub fn kmeans_labels(points: &[Vec<f64>], k: usize, seed: u64) -> Vec<i64> {
                 }
             }
         }
+        // Revive empty clusters at the worst-fit points. A point with zero
+        // distance already sits on a centroid, so moving there would only
+        // create a duplicate that can never win a point; skip it.
+        for c in 0..kc {
+            if counts[c] > 0 {
+                continue;
+            }
+            let far = (0..n)
+                .filter(|&i| dist[i] > 0.0)
+                .max_by(|&a, &b| dist[a].total_cmp(&dist[b]).then(b.cmp(&a)));
+            if let Some(i) = far {
+                centroids[c] = points[i].clone();
+                dist[i] = 0.0;
+                changed = true;
+            }
+        }
         if !changed {
             break;
         }
     }
-    densify(&mut labels);
-    labels
+    (dist.iter().sum(), labels)
 }
 
 /// Agglomerative clustering (average linkage, Lance-Williams) cut at `k`
@@ -962,6 +1013,64 @@ mod tests {
         // dense: every id in 0..=max appears.
         for id in 0..=max {
             assert!(labels.contains(&id), "id {id} missing -> not dense");
+        }
+    }
+
+    // With enough distinct points, asking for k returns exactly k clusters: a
+    // centroid that empties is revived rather than dropped.
+    #[test]
+    fn kmeans_returns_requested_k() {
+        let pts = two_blobs();
+        for seed in 0..20 {
+            for k in [2, 5, 9] {
+                let labels = kmeans_labels(&pts, k, seed);
+                let max = *labels.iter().max().unwrap() as usize;
+                assert_eq!(max + 1, k, "seed {seed}: asked {k}, got {}", max + 1);
+            }
+        }
+    }
+
+    // Fewer distinct points than k: no duplicate revivals, just the distinct ones.
+    #[test]
+    fn kmeans_duplicate_points_cap_k() {
+        let pts: Vec<Vec<f64>> = (0..30).map(|i| vec![(i % 3) as f64, 0.0]).collect();
+        let labels = kmeans_labels(&pts, 5, 0);
+        assert_eq!(*labels.iter().max().unwrap(), 2);
+        for i in 0..30 {
+            assert_eq!(labels[i], labels[i % 3]);
+        }
+    }
+
+    // Eight blobs on a grid with unequal sizes: a single k-means++ start
+    // sometimes merges two blobs and splits another; the best of several starts
+    // recovers all eight on every seed.
+    #[test]
+    fn kmeans_restarts_recover_all_blobs() {
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let mut pts = Vec::new();
+        let mut truth = Vec::new();
+        for b in 0..8 {
+            let (cx, cy) = ((b % 4) as f64 * 3.0, (b / 4) as f64 * 3.0);
+            for _ in 0..(10 + 15 * (b % 3)) {
+                pts.push(vec![
+                    cx + rng.gen::<f64>() - 0.5,
+                    cy + rng.gen::<f64>() - 0.5,
+                ]);
+                truth.push(b);
+            }
+        }
+        for seed in 0..30 {
+            let labels = kmeans_labels(&pts, 8, seed);
+            for i in 0..pts.len() {
+                for j in 0..pts.len() {
+                    assert_eq!(
+                        truth[i] == truth[j],
+                        labels[i] == labels[j],
+                        "seed {seed}: partition differs from truth"
+                    );
+                }
+            }
+            assert_eq!(labels, kmeans_labels(&pts, 8, seed), "not deterministic");
         }
     }
 
