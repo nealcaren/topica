@@ -70,10 +70,10 @@ pub fn exact_knn(data: &[Vec<f64>], k: usize, metric: Metric) -> Vec<Vec<(u32, f
         return vec![Vec::new(); n];
     }
     let dim = data[0].len();
-    let rows: Vec<Vec<f64>> = if metric == Metric::Cosine {
-        unit_rows(data)
+    let rows: std::borrow::Cow<[Vec<f64>]> = if metric == Metric::Cosine {
+        std::borrow::Cow::Owned(unit_rows(data))
     } else {
-        data.to_vec()
+        std::borrow::Cow::Borrowed(data)
     };
     let flat: Vec<f64> = rows.iter().flat_map(|r| r.iter().copied()).collect();
     let sq: Vec<f64> = rows
@@ -113,9 +113,12 @@ pub fn exact_knn(data: &[Vec<f64>], k: usize, metric: Metric) -> Vec<Vec<(u32, f
                 // Keep everything the screen cannot separate from the k-th: the
                 // GEMM's rounding (~1e-15 relative) must not decide membership.
                 let tol = 1e-9 * (1.0 + kth.abs() + sq[i] + max_sq);
+                // Non-finite screen values (overflowing norms above ~1e154, or NaN
+                // input) cannot bound anything: score every candidate exactly.
+                let screen_ok = tol.is_finite() && cand[..k].iter().all(|c| c.0.is_finite());
                 let mut exact_d: Vec<(f64, u32)> = cand
                     .iter()
-                    .filter(|c| c.0 <= kth + tol)
+                    .filter(|c| !screen_ok || c.0 <= kth + tol)
                     .map(|&(_, j)| (exact(metric, &rows[i], &rows[j as usize]), j))
                     .collect();
                 exact_d.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
@@ -181,6 +184,35 @@ mod tests {
         }
         for metric in [Metric::Cosine, Metric::Euclidean, Metric::SqEuclidean] {
             assert_eq!(exact_knn(&data, 12, metric), naive(&data, 12, metric));
+        }
+    }
+
+    // Far from the origin the Euclidean expansion |a|²+|b|²−2a·b cancels badly;
+    // the tolerance must widen the candidate set enough to stay exact.
+    #[test]
+    fn large_offset_stays_exact() {
+        for &(offset, jitter) in &[(1e6, 1e-3), (1e8, 1e-4), (1e4, 1e-6)] {
+            let data: Vec<Vec<f64>> = cloud(200, 8, 5)
+                .into_iter()
+                .map(|r| r.into_iter().map(|v| offset + jitter * v).collect())
+                .collect();
+            for metric in [Metric::Euclidean, Metric::SqEuclidean, Metric::Cosine] {
+                assert_eq!(exact_knn(&data, 10, metric), naive(&data, 10, metric));
+            }
+        }
+    }
+
+    // Overflowing norms make the screen non-finite; fall back to exact scoring.
+    #[test]
+    fn overflowing_norms_fall_back_to_exact() {
+        let data: Vec<Vec<f64>> = cloud(60, 3, 9)
+            .into_iter()
+            .map(|r| r.into_iter().map(|v| 1e155 * v).collect())
+            .collect();
+        for metric in [Metric::Euclidean, Metric::SqEuclidean] {
+            let got = exact_knn(&data, 7, metric);
+            assert!(got.iter().all(|row| row.len() == 7));
+            assert_eq!(got, naive(&data, 7, metric));
         }
     }
 
