@@ -104,66 +104,26 @@ pub fn find_ab_params(spread: f64, min_dist: f64) -> (f64, f64) {
 /// Brute-force k-nearest-neighbor graph. Returns, per point, the indices and
 /// distances of its `k` neighbors **including itself** at column 0 (distance 0),
 /// matching `umap-learn`'s convention. `metric` is `"cosine"` (default; rows are
-/// L2-normalized and distance is `1 − cos`) or `"euclidean"`.
+/// L2-normalized and distance is `1 − cos`) or `"euclidean"`. The search is
+/// `crate::knn::exact_knn` (GEMM-screened, exact, ties by index).
 fn knn_graph(data: &[Vec<f64>], k: usize, metric: &str) -> (Vec<Vec<u32>>, Vec<Vec<f64>>) {
-    let n = data.len();
-    let cosine = metric != "euclidean";
-    // For cosine, precompute unit rows so the neighbor distance is 1 − dot.
-    let unit: Vec<Vec<f64>> = if cosine {
-        data.iter()
-            .map(|row| {
-                let norm: f64 = row.iter().map(|&v| v * v).sum::<f64>().sqrt();
-                if norm > 0.0 {
-                    row.iter().map(|&v| v / norm).collect()
-                } else {
-                    row.clone()
-                }
-            })
-            .collect()
+    let metric = if metric == "euclidean" {
+        crate::knn::Metric::Euclidean
     } else {
-        Vec::new()
+        crate::knn::Metric::Cosine
     };
-
-    let rows: Vec<(Vec<u32>, Vec<f64>)> = (0..n)
-        .into_par_iter()
-        .map(|i| {
-            let mut d: Vec<(f64, u32)> = (0..n)
-                .filter(|&j| j != i)
-                .map(|j| {
-                    let dist = if cosine {
-                        let dot: f64 = unit[i].iter().zip(&unit[j]).map(|(&x, &y)| x * y).sum();
-                        (1.0 - dot).max(0.0)
-                    } else {
-                        data[i]
-                            .iter()
-                            .zip(&data[j])
-                            .map(|(&x, &y)| (x - y) * (x - y))
-                            .sum::<f64>()
-                            .sqrt()
-                    };
-                    (dist, j as u32)
-                })
-                .collect();
-            // k-1 real neighbors; column 0 is self. Full sort is negligible next
-            // to the O(n·dim) distance computation above.
-            d.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-            let take = k.saturating_sub(1).min(d.len());
-            d.truncate(take);
-            let mut idx = Vec::with_capacity(k);
-            let mut dst = Vec::with_capacity(k);
-            idx.push(i as u32);
-            dst.push(0.0);
-            for (dd, jj) in d {
-                idx.push(jj);
-                dst.push(dd);
-            }
-            (idx, dst)
-        })
-        .collect();
-
-    let mut indices = Vec::with_capacity(n);
-    let mut dists = Vec::with_capacity(n);
-    for (idx, dst) in rows {
+    let nn = crate::knn::exact_knn(data, k.saturating_sub(1), metric);
+    let mut indices = Vec::with_capacity(nn.len());
+    let mut dists = Vec::with_capacity(nn.len());
+    for (i, row) in nn.into_iter().enumerate() {
+        let mut idx = Vec::with_capacity(row.len() + 1);
+        let mut dst = Vec::with_capacity(row.len() + 1);
+        idx.push(i as u32);
+        dst.push(0.0);
+        for (j, d) in row {
+            idx.push(j);
+            dst.push(d);
+        }
         indices.push(idx);
         dists.push(dst);
     }

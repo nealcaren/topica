@@ -95,7 +95,10 @@ pub mod wordshoal;
 pub mod bertopic;
 #[cfg(feature = "embeddings")]
 pub mod cluster;
+// Exact brute-force kNN (GEMM-screened), shared by UMAP and the graph clusterers.
 pub mod fastopic;
+#[cfg(feature = "embeddings")]
+pub mod knn;
 // Faithful HDBSCAN* cluster extraction (replaces petal-clustering's diverging
 // selection, issue #555). Behind `embeddings`, its only consumer (`cluster`).
 #[cfg(feature = "embeddings")]
