@@ -554,29 +554,18 @@ fn self_loop_at(sl: &[f64], i: usize) -> f64 {
 /// track cosine nearest-neighbors). Each node keeps its `knn_k` nearest others; an
 /// undirected edge exists if either endpoint kept the other (union symmetrization)
 /// and is unweighted (weight 1.0) — the classic, scale-free kNN graph for
-/// modularity clustering. O(n²·d), the same complexity class as
-/// `agglomerative_labels`. Neighbor lists are sorted for deterministic traversal.
+/// modularity clustering. O(n²·d) via `crate::knn::exact_knn`, the same
+/// complexity class as `agglomerative_labels`. Neighbor lists are sorted for deterministic traversal.
 fn knn_graph(points: &[Vec<f64>], knn_k: usize) -> Graph {
     let n = points.len();
     let k = knn_k.min(n.saturating_sub(1)).max(1);
 
+    // k nearest by squared distance, ties broken by ascending index.
+    let nn = crate::knn::exact_knn(points, k, crate::knn::Metric::SqEuclidean);
     let mut edges: HashMap<(usize, usize), f64> = HashMap::new();
-    let mut dists: Vec<(usize, f64)> = Vec::with_capacity(n);
-    for i in 0..n {
-        dists.clear();
-        for j in 0..n {
-            if i == j {
-                continue;
-            }
-            dists.push((j, sqdist(&points[i], &points[j])));
-        }
-        // k nearest by distance asc; ties broken by ascending index for determinism.
-        dists.sort_by(|a, b| {
-            a.1.partial_cmp(&b.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then(a.0.cmp(&b.0))
-        });
-        for &(j, _) in dists.iter().take(k) {
+    for (i, row) in nn.iter().enumerate() {
+        for &(j, _) in row {
+            let j = j as usize;
             let key = if i < j { (i, j) } else { (j, i) };
             edges.insert(key, 1.0);
         }

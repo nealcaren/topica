@@ -72,6 +72,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   interval; parameters stay calibration 1's, the set the smoother applies), warn when a calibration rests on fewer than 200 evaluation leaves or 2,000 test
   tokens, and flag a total pseudo-count at the top of its range (`strength_at_bound`).
 
+- **Exact k-nearest-neighbor search is GEMM-screened and parallel** (`src/knn.rs`), shared
+  by the UMAP reducer and the `"louvain"` / `"leiden"` clusterers. Results are unchanged
+  bit for bit (candidates are re-scored with the old per-pair formula, ties by index).
+  On 20 Newsgroups (18,144 MiniLM embeddings) BERTopic fits drop from 15.8 s to 10.8 s
+  with UMAP, 19.4 s to 0.8 s for PCA + Leiden, and 89 s to 2.3 s for Leiden on raw
+  embeddings (that path's neighbor search was single-threaded).
+
 ### Fixed
 
 - **`BERTopic` / `Top2Vec` with `n_components=0` now cluster L2-normalized embeddings**, so
