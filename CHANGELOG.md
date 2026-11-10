@@ -77,7 +77,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once released.
   bit for bit (candidates are re-scored with the old per-pair formula, ties by index).
   On 20 Newsgroups (18,144 MiniLM embeddings) BERTopic fits drop from 15.8 s to 10.8 s
   with UMAP, 19.4 s to 0.8 s for PCA + Leiden, and 89 s to 2.3 s for Leiden on raw
-  embeddings (that path's neighbor search was single-threaded).
+  embeddings (that path's neighbor search was single-threaded). UMAP's spectral
+  initialization now runs its power-iteration matrix-vector products as a parallel CSR
+  gather in the same summation order (bit-identical, 2.5 s to 0.5 s on the same corpus),
+  bringing the UMAP + k-means fit to 8.8 s.
 
 ### Fixed
 

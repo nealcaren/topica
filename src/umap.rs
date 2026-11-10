@@ -491,15 +491,35 @@ fn spectral_init(
         .map(|&d| if d > 0.0 { 1.0 / d.sqrt() } else { 0.0 })
         .collect();
 
-    // y = P x from the edge list: y[h] = D^{-1/2}[h] Σ_edges(h→t) w · D^{-1/2}[t] · x[t].
+    // y = P x: y[h] = Σ_edges(h→t) w · D^{-1/2}[h] · D^{-1/2}[t] · x[t]. Stored as CSR
+    // (rows in edge-list order within each head, via a stable sort) so each row is a
+    // gather summed in the same order the old edge-list scatter used: the result is
+    // bit-identical, but rows run in parallel.
+    let mut order: Vec<usize> = (0..edges.len()).collect();
+    order.sort_by_key(|&e| edges[e].0);
+    let mut row_ptr = vec![0usize; n + 1];
+    for &(h, _, _) in edges {
+        row_ptr[h as usize + 1] += 1;
+    }
+    for i in 0..n {
+        row_ptr[i + 1] += row_ptr[i];
+    }
+    let cols: Vec<u32> = order.iter().map(|&e| edges[e].1).collect();
+    let coef: Vec<f64> = order
+        .iter()
+        .map(|&e| {
+            let (h, t, w) = edges[e];
+            w * inv_sqrt_d[h as usize] * inv_sqrt_d[t as usize]
+        })
+        .collect();
     let matvec = |x: &[f64], y: &mut [f64]| {
-        for v in y.iter_mut() {
-            *v = 0.0;
-        }
-        for &(h, t, w) in edges {
-            let (h, t) = (h as usize, t as usize);
-            y[h] += w * inv_sqrt_d[h] * inv_sqrt_d[t] * x[t];
-        }
+        y.par_iter_mut().enumerate().for_each(|(h, yh)| {
+            let mut acc = 0.0;
+            for e in row_ptr[h]..row_ptr[h + 1] {
+                acc += coef[e] * x[cols[e] as usize];
+            }
+            *yh = acc;
+        });
     };
 
     // Top m = n_components+1 eigenvectors (the +1 is the trivial ~constant vector,
@@ -867,5 +887,66 @@ mod tests {
         // Deterministic for a fixed seed.
         let again = spectral_init(&edges, n, 2, 42).unwrap();
         assert_eq!(layout, again, "spectral init must be reproducible");
+    }
+}
+
+#[cfg(test)]
+mod stage_timing {
+    use super::*;
+    use std::time::Instant;
+    // Per-stage UMAP timing on real embeddings (a development aid, not run in CI):
+    // UMAP_TIMING_DATA=emb.f64 cargo test --lib --release --features embeddings,umap \
+    //     -- --ignored umap_stage_timing --nocapture
+    // where emb.f64 is a raw little-endian f64 dump of an (n, 384) array.
+    #[test]
+    #[ignore]
+    fn umap_stage_timing() {
+        let path = std::env::var("UMAP_TIMING_DATA").expect("set UMAP_TIMING_DATA");
+        let bytes = std::fs::read(path).unwrap();
+        let vals: Vec<f64> = bytes
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|c| f64::from_le_bytes(*c))
+            .collect();
+        let data: Vec<Vec<f64>> = vals.chunks(384).map(|r| r.to_vec()).collect();
+        let (n, k, n_epochs, dim) = (data.len(), 15usize, 200usize, 5usize);
+        let t = Instant::now();
+        let (ki, kd) = knn_graph(&data, k, "cosine");
+        eprintln!("knn            {:6.2}s", t.elapsed().as_secs_f64());
+        let t = Instant::now();
+        let (sig, rho) = smooth_knn_dist(&kd, k, 1.0, 1.0);
+        let mut edges = fuzzy_simplicial_set(&ki, &kd, &sig, &rho, 1.0);
+        eprintln!(
+            "smooth+fuzzy   {:6.2}s  edges {}",
+            t.elapsed().as_secs_f64(),
+            edges.len()
+        );
+        let max_w = edges.iter().map(|e| e.2).fold(f64::NEG_INFINITY, f64::max);
+        edges.retain(|e| e.2 >= max_w / n_epochs as f64);
+        edges.sort_by_key(|&(h, t, _)| (h, t));
+        let t = Instant::now();
+        let mut emb = spectral_init(&edges, n, dim, 13).unwrap();
+        let h: u64 = emb
+            .iter()
+            .fold(0u64, |acc, v| acc.rotate_left(5) ^ v.to_bits());
+        eprintln!(
+            "spectral_init  {:6.2}s  checksum {h:016x}",
+            t.elapsed().as_secs_f64()
+        );
+        rescale_unit_box(&mut emb, n, dim);
+        let head: Vec<u32> = edges.iter().map(|e| e.0).collect();
+        let tail: Vec<u32> = edges.iter().map(|e| e.1).collect();
+        let w: Vec<f64> = edges.iter().map(|e| e.2).collect();
+        let eps = make_epochs_per_sample(&w, n_epochs);
+        let (a, b) = find_ab_params(1.0, 0.0);
+        let t = Instant::now();
+        optimize_layout(
+            &mut emb, n, dim, &head, &tail, &eps, a, b, 1.0, n_epochs, 5, 13,
+        );
+        eprintln!(
+            "optimize_layout{:6.2}s  (a={a:.3}, b={b:.3})",
+            t.elapsed().as_secs_f64()
+        );
     }
 }
