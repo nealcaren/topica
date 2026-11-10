@@ -729,6 +729,16 @@ For statistically-selected phrases instead of every bigram, use
   geometry sentence embeddings are trained for. Without this the few highest-variance
   PCA directions dominate the metric and the clusterer under-splits real embeddings
   into a couple of broad topics.
+- `reducer="none"` (equivalently `n_components=0`; any `n_components` you pass is
+  ignored) clusters the raw embeddings,
+  L2-normalized onto the unit sphere so the clusterer measures cosine distance
+  rather than vector length. It is fast and has no layout to tune, which suits
+  fixed-K clusterers (`clusterer="kmeans"`/`"gmm"`/`"agglomerative"`), but it is
+  not free of cost: on the bundled 20-Newsgroups MiniLM sample, k-means at the true
+  K=5 recovers the groups with ARI 0.65 on raw embeddings, 0.68 after PCA, and 0.74
+  after UMAP, at roughly a twentieth of UMAP's runtime. Avoid it with the default
+  `clusterer="hdbscan"`: density clustering in hundreds of dimensions labels most
+  documents noise (about 80% on the same sample), and topica warns when you try.
 - `reducer="umap"` switches to topica's in-house UMAP reducer (with `n_neighbors`),
   which separates real document embeddings much better than a linear projection
   and, on closely spaced themes, splits clusters PCA would merge. It is a faithful
@@ -761,7 +771,7 @@ For statistically-selected phrases instead of every bigram, use
   ```python
   model = topica.BERTopic(reducer="umap", min_dist=0.1, n_neighbors=30, seed=1)
   ```
-- Results are reproducible for a fixed `seed`, under either reducer.
+- Results are reproducible for a fixed `seed`, under any reducer.
 
 !!! note "Faithful to the references"
     On a shared task with shared document embeddings, topica's `Top2Vec` and

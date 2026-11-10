@@ -381,7 +381,11 @@ pub fn fit_top2vec(
     // already cosine-structured, and `use_umap` silently falls back to PCA when
     // the `umap` feature is absent, so gate on what actually ran.
     let did_pca = did_reduce && !(use_umap && reduce::umap_available());
-    if did_pca {
+    // `n_components == 0` (`reducer="none"`) clusters the raw embeddings; put
+    // them on the unit sphere too, or rows with larger norms (common for
+    // embedding models that do not normalize their output) dominate the
+    // Euclidean clusterer and the partition tracks vector length, not meaning.
+    if did_pca || n_components == 0 {
         reduce::l2_normalize_rows(&mut reduced);
     }
 

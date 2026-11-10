@@ -15185,7 +15185,7 @@ fn parse_reducer(reducer: &str) -> PyResult<bool> {
         "pca" => Ok(false),
         "umap" => Ok(true),
         other => Err(PyValueError::new_err(format!(
-            "unknown reducer {other:?}; expected 'pca' or 'umap'"
+            "unknown reducer {other:?}; expected 'umap', 'pca', or 'none'"
         ))),
     }
 }
