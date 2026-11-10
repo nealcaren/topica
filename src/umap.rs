@@ -624,6 +624,30 @@ fn spectral_init(
     Some(out)
 }
 
+/// Spectral embedding of UMAP's fuzzy k-NN graph: the top `n_eig` non-trivial
+/// eigenvectors of the normalized adjacency `D^{-1/2} A D^{-1/2}`, one row per
+/// point. This is the first stage of spectral clustering (Ng, Jordan & Weiss
+/// 2002) and the same eigenmap UMAP uses to initialize its layout, without the
+/// SGD refinement. `None` when the graph is mostly isolated vertices.
+pub fn spectral_embedding(
+    data: &[Vec<f64>],
+    n_eig: usize,
+    n_neighbors: usize,
+    metric: &str,
+    seed: u64,
+) -> Option<Vec<Vec<f64>>> {
+    let n = data.len();
+    if n <= n_eig + 1 || n_eig == 0 {
+        return None;
+    }
+    let k = n_neighbors.clamp(2, n);
+    let (knn_indices, knn_dists) = knn_graph(data, k, metric);
+    let (sigmas, rhos) = smooth_knn_dist(&knn_dists, k, 1.0, 1.0);
+    let edges = fuzzy_simplicial_set(&knn_indices, &knn_dists, &sigmas, &rhos, 1.0);
+    let flat = spectral_init(&edges, n, n_eig, seed)?;
+    Some(flat.chunks(n_eig).map(|r| r.to_vec()).collect())
+}
+
 /// Reduce `data` (`n × features`) to `n_components` with UMAP. `n_neighbors` is
 /// the graph neighborhood; `min_dist`/`spread` shape the embedding; `n_epochs`
 /// the SGD length (0 ⇒ 500 for ≤10k rows, else 200); `negative_sample_rate` and

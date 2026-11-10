@@ -60,6 +60,12 @@ pub fn cluster_points(
         "kmeans" => kmeans_labels(points, num_clusters.unwrap_or(min_cluster_size), seed),
         "gmm" => gmm_labels(points, num_clusters.unwrap_or(min_cluster_size), seed),
         "agglomerative" => agglomerative_labels(points, num_clusters.unwrap_or(min_cluster_size)),
+        "spectral" => spectral_labels(
+            points,
+            num_clusters.unwrap_or(min_cluster_size),
+            knn_k,
+            seed,
+        ),
         "louvain" => graph_labels(points, resolution, knn_k, seed, false),
         "leiden" => graph_labels(points, resolution, knn_k, seed, true),
         _ => hdbscan_labels(points, min_cluster_size, min_samples),
@@ -253,6 +259,23 @@ fn lloyd(points: &[Vec<f64>], mut centroids: Vec<Vec<f64>>) -> (f64, Vec<i64>) {
         kmeans_assign(points, &centroids, &mut labels, &mut dist);
     }
     (dist.iter().sum(), labels)
+}
+
+/// Spectral clustering (Ng, Jordan & Weiss 2002) on UMAP's fuzzy k-NN graph
+/// (`knn_k` neighbors, cosine): embed each point by the top `k` non-trivial
+/// eigenvectors of the normalized graph, L2-normalize the rows, then k-means.
+/// Like UMAP→k-means it groups points by graph connectivity rather than distance
+/// to a centroid, but without UMAP's stochastic layout. Falls back to k-means on
+/// the input when the build lacks UMAP or the graph is mostly isolated vertices.
+pub fn spectral_labels(points: &[Vec<f64>], k: usize, knn_k: usize, seed: u64) -> Vec<i64> {
+    #[cfg(feature = "umap")]
+    {
+        if let Some(mut emb) = crate::umap::spectral_embedding(points, k, knn_k, "cosine", seed) {
+            crate::reduce::l2_normalize_rows(&mut emb);
+            return kmeans_labels(&emb, k, seed);
+        }
+    }
+    kmeans_labels(points, k, seed)
 }
 
 /// Agglomerative clustering (average linkage, Lance-Williams) cut at `k`

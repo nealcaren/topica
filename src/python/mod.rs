@@ -15202,7 +15202,7 @@ fn parse_clusterer(
 ) -> PyResult<(String, Option<usize>)> {
     match clusterer {
         "hdbscan" | "louvain" | "leiden" => Ok((clusterer.to_string(), None)),
-        "kmeans" | "gmm" | "agglomerative" => {
+        "kmeans" | "gmm" | "agglomerative" | "spectral" => {
             let k = num_clusters.ok_or_else(|| {
                 PyValueError::new_err(format!(
                     "clusterer={clusterer:?} needs num_clusters (the number of clusters to form)"
@@ -15217,7 +15217,7 @@ fn parse_clusterer(
         }
         other => Err(PyValueError::new_err(format!(
             "unknown clusterer {other:?}; expected 'hdbscan', 'louvain', 'leiden', \
-             'kmeans', 'gmm', or 'agglomerative'"
+             'kmeans', 'gmm', 'agglomerative', or 'spectral'"
         ))),
     }
 }
